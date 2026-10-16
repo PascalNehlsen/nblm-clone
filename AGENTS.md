@@ -39,6 +39,7 @@ The main session is the **builder**. Subagents: `planner` (read-only), `test-aut
 
 Flow for **high**: planner → human approves plan → test-author (red) → builder (green) → reviewer → PR with evidence → CI incl. Codex review and eval → human merges.
 Flow for **normal**: builder → PR with evidence → CI incl. Codex review → human merges.
+Flow for **Dependabot** PRs that only bump pinned versions: no planner or test-author; a human reads the changelog and diff, CI and the Codex review must pass, the human merges. Major bumps and any change to `release.yml` get the high flow.
 
 ## How to work
 

@@ -19,3 +19,14 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+
+  # Only the remote hook repo; gitleaks is a local hook with its own checksum pin.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: chore
+      include: scope
