@@ -2,7 +2,7 @@
 # Left to the defaults: AWS keys, GitHub tokens, Sentry tokens and any JWT (the last two
 # verified with fake tokens before this file was written).
 # Local:  gitleaks git --config .gitleaks.toml --redact
-# The pre-commit hook and CI (.github/workflows/guardrails.yml) use this file and the same version.
+# The pre-commit hook and CI both run it through scripts/gitleaks.sh (one pinned version).
 title = "nblm-clone"
 
 [extend]
