@@ -75,7 +75,7 @@ Manual checks, run once and recorded here:
 
 ## Gate log
 
-Every PR records what a reviewer, Codex or CI caught. Real defects get the label `caught-by-gate`. At the end, the numbers in the README come from counting those labels, not from memory.
+Every PR records what a reviewer, Codex or CI caught. The label `caught-by-gate` marks only a defect or risk that would otherwise have reached `main` or production; a gate that just blocked work is recorded as friction, without the label (rule since PR #3). At the end, the numbers in the README come from counting those labels, not from memory.
 
 | Date | Where | What was caught | Fix |
 |---|---|---|---|

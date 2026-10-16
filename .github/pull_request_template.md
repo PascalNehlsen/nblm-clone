@@ -24,7 +24,8 @@ Eval score (if retrieval or a prompt changed):
 ## Gate log
 
 <!-- What did the reviewer subagent, the Codex review or CI catch in this PR? Write "nothing" if nothing.
-     If a gate caught a real defect, add the label `caught-by-gate` and name the gate. -->
+     Add the label `caught-by-gate` only if, without the gate, something wrong or unsafe would have reached
+     main or production. A gate that only blocked work is friction: list it here, no label. -->
 
 | Gate | Finding | Real defect? | Fixed in |
 |---|---|---|---|
