@@ -1,0 +1,34 @@
+# Local gate before every commit. Install once: `pre-commit install`.
+# The same checks run in CI (.github/workflows/guardrails.yml); this only makes them fail earlier.
+# Hooks are pinned to commit SHAs; the tag is in the comment for humans and Dependabot-style updates.
+minimum_pre_commit_version: "3.5.0"
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1
+    hooks:
+      - id: gitleaks
+        args: ["--config=.gitleaks.toml", "--redact"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-json
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: agent-guard-tests
+        name: agent guard tests
+        language: system
+        entry: node --test .claude/hooks/agent-guard.test.mjs
+        files: ^\.claude/hooks/
+        pass_filenames: false

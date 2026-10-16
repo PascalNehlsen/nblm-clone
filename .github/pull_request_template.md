@@ -1,0 +1,40 @@
+<!-- The PR title becomes the squash commit: use a Conventional Commit, e.g. `feat(rag): validate citations server-side`. -->
+
+## What and why
+
+<!-- One or two sentences. Link the issue or roadmap item. -->
+
+## Risk class
+
+- [ ] **high**: touches `supabase/`, `infra/`, auth, prompts or retrieval, `.github/workflows/`, `.claude/`
+- [ ] **normal**
+
+High risk: link the approved plan and confirm the tests were red before the implementation.
+
+## Evidence
+
+<!-- Paste real output, not "tests pass". -->
+
+```text
+pnpm lint && pnpm typecheck && pnpm test && pnpm test:rls
+```
+
+Eval score (if retrieval or a prompt changed):
+
+## Gate log
+
+<!-- What did the reviewer subagent, the Codex review or CI catch in this PR? Write "nothing" if nothing.
+     If a gate caught a real defect, add the label `caught-by-gate` and name the gate. -->
+
+| Gate | Finding | Real defect? | Fixed in |
+|---|---|---|---|
+|  |  |  |  |
+
+## Rollout and rollback
+
+<!-- Migration: expand-only? backward compatible with the current app version? Backout?
+     Infra: expected plan (add/change/destroy)? How to revert? -->
+
+## Not done / known gaps
+
+-

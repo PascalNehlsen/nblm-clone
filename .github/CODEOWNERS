@@ -1,0 +1,9 @@
+# Paths that hold a gate or isolate data. With a second maintainer, the main ruleset will require
+# a code-owner review for them; solo, the file documents ownership (see docs/ownership.md).
+*                         @PascalNehlsen
+/.github/                 @PascalNehlsen
+/.claude/                 @PascalNehlsen
+/AGENTS.md                @PascalNehlsen
+/CLAUDE.md                @PascalNehlsen
+/infra/                   @PascalNehlsen
+/supabase/migrations/     @PascalNehlsen
