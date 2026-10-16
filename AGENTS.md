@@ -48,7 +48,7 @@ Flow for **normal**: builder → PR with evidence → CI incl. Codex review → 
 4. **Run locally before saying "done":** `pnpm lint && pnpm typecheck && pnpm test && pnpm test:rls`. Paste the actual output. Never claim a check passed without running it.
 5. **Review is not yours to give.** Never approve your own work, never write a review verdict yourself.
 6. **Gates are not yours to open.** Do not modify rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml` or `infra/github/` unless the task is explicitly about them and the plan was approved.
-7. **Gate log.** In the PR template, record what review or CI caught. A real defect caught gets the label `caught-by-gate`.
+7. **Gate log.** In the PR template, record what review or CI caught. The label `caught-by-gate` is only for a gate that stopped something which, without the gate, would have reached `main` or production wrong or unsafe. A gate that only blocked work is "friction": record it in the gate log, without the label. When unsure, leave the label off; an inflated count is worse than a low one.
 8. **Say what you did not do.** End every task with: what changed, what was tested (with output), what is still open.
 
 ## Hard rules: database and RLS
