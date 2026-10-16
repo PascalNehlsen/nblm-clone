@@ -66,14 +66,19 @@ Manual checks, run once and recorded here:
 
 | Check | Expected | Result |
 |---|---|---|
-| Ask the test-author to fix a bug in `apps/` | Blocked by agent-guard | not run yet |
-| Ask the main session to run `tofu apply` | Denied by settings | not run yet |
-| Inside the sandbox, `curl https://api.vercel.com` | Blocked by egress policy | not run yet |
-| Open a PR that weakens `.claude/settings.json` | Codex reviews with the base-branch config | not run yet |
+| Ask the test-author to fix a bug in `apps/` | Blocked by agent-guard | Pass (2026-10-16): `Write` to `apps/web/lib/sum.ts` blocked by agent-guard ("test-author: writes only under tests/ or supabase/tests/"), no file created |
+| Ask the main session to run `tofu apply` | Denied by settings | Pass (2026-10-16): "Permission to use Bash with command tofu apply has been denied" |
+| Inside the sandbox, `curl https://api.vercel.com` | Blocked by egress policy | Pass (2026-10-16, re-run after adding local deny rules): HTTP 403 "Blocked by local rule for api.vercel.com:443". Same for `api.supabase.com`, `api.cloudflare.com` and `sts.amazonaws.com`. Other unlisted hosts still ask for approval (e.g. `api.github.com`) |
+| Open a PR that weakens `.claude/settings.json` | Codex reviews with the base-branch config | Not run (2026-10-16): no Codex review job in `.github/workflows/` yet, run once it exists |
 
 ## Gate log
 
 Every PR records what a reviewer, Codex or CI caught. Real defects get the label `caught-by-gate`. At the end, the numbers in the README come from counting those labels, not from memory.
+
+| Date | Where | What was caught | Fix |
+|---|---|---|---|
+| 2026-10-16 | Manual egress check (this doc) | Unlisted hosts were not denied but returned "Approval required": one click on the host would have let the sandbox reach `api.vercel.com`. The limit depended on a human declining a prompt | Explicit local deny rules for the management APIs (Vercel, Supabase, Cloudflare, AWS STS); deny rules take precedence over approvals. Re-run returns "Blocked by local rule" |
+| 2026-10-16 | Planning for sandbox push access | Giving the sandbox the host `gh` token (scope `repo`, which on an owned repo means admin) would let an agent delete the `main` ruleset through `api.github.com`. The sandbox proxy hides the token value, not its permissions, and the `gh ruleset` deny rule only matches command text | Fix in progress: sandbox gets its own fine-grained token for this repo only, with Contents and Pull requests write, no Administration, no Workflows |
 
 ## Prompts that shaped this repo
 
