@@ -1,6 +1,6 @@
 name: actions-audit
 
-# Online zizmor audits that the offline required check cannot run: known-vulnerable-actions
+# Online zizmor audits that the offline required check cannot run, among them known-vulnerable-actions
 # (advisories for the pinned actions, which Dependabot does not alert on for SHA pins) and
 # impostor-commit (the pinned SHA really belongs to the action's repository).
 # Not a required check: it depends on the GitHub API. The weekly run catches new advisories
