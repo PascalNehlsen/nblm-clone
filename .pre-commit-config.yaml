@@ -4,12 +4,6 @@
 minimum_pre_commit_version: "3.5.0"
 default_stages: [pre-commit]
 repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1
-    hooks:
-      - id: gitleaks
-        args: ["--config=.gitleaks.toml", "--redact"]
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
     hooks:
@@ -26,6 +20,13 @@ repos:
 
   - repo: local
     hooks:
+      # Release binary with a pinned checksum instead of the upstream hook, which
+      # builds from Go source and would need proxy.golang.org (see the script).
+      - id: gitleaks
+        name: gitleaks (staged)
+        language: system
+        entry: scripts/gitleaks.sh git --pre-commit --staged --config=.gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
       - id: agent-guard-tests
         name: agent guard tests
         language: system
