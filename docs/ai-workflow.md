@@ -53,10 +53,14 @@ The sandbox signs commits with its own SSH key "nblm sandbox agent" (`SHA256:sJX
 high risk:   planner -> human approves -> test-author (red) -> builder (green)
              -> reviewer -> PR -> CI + Codex + eval -> human merges
 normal:      builder -> PR -> CI + Codex -> human merges
+dependabot:  bot PR (version bumps only) -> human reads changelog + diff -> CI
+             (+ reviewer for majors and gate workflows) -> human merges
 release:     tag -> production approval (human) -> migrate -> staged deploy -> canary -> promote
 ```
 
 Risk class **high** means the change touches `supabase/`, `infra/`, auth, prompts or retrieval, `.github/workflows/` or `.claude/`.
+
+Dependabot PRs touch `.github/workflows/` and stay labelled high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.
 
 ## Checking that the limits hold
 

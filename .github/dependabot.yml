@@ -1,0 +1,32 @@
+# Keeps the SHA-pinned actions current. Without it the pins only age.
+# The cooldown matches the zizmor pin in guardrails.yml: a new release waits two
+# weeks before it is proposed. Dependabot raises no security alerts for actions
+# pinned to a SHA, so a fixed vulnerability also arrives through this schedule.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    # Minor and patch bumps come as one PR; majors come one by one, so a breaking
+    # change is not hidden among routine updates.
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # Only the remote hook repo; gitleaks is a local hook with its own checksum pin.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: chore
+      include: scope

@@ -39,6 +39,7 @@ The main session is the **builder**. Subagents: `planner` (read-only), `test-aut
 
 Flow for **high**: planner → human approves plan → test-author (red) → builder (green) → reviewer → PR with evidence → CI incl. Codex review and eval → human merges.
 Flow for **normal**: builder → PR with evidence → CI incl. Codex review → human merges.
+Flow for **Dependabot**: applies only while every commit on the branch is from `dependabot[bot]` and the diff only changes pinned versions (`uses:` SHAs, `rev:` lines, version comments). No planner, test-author or red tests; a version bump is not a bug fix in the sense of rule 3. The human reads the changelog and diff, CI passes, the human merges. The reviewer subagent runs for a major bump and for any bump in a gate workflow (`release.yml`, or any workflow with `id-token: write`, an environment or secrets); for a major the changelog review is the plan. Once anyone else pushes to the branch, the risk class from the paths applies again. CI still labels these PRs high; the exception is an instruction, not enforced.
 
 ## How to work
 

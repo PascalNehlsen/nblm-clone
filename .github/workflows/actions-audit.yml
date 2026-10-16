@@ -1,0 +1,38 @@
+name: actions-audit
+
+# Online zizmor audits that the offline required check cannot run, among them known-vulnerable-actions
+# (advisories for the pinned actions, which Dependabot does not alert on for SHA pins) and
+# impostor-commit (the pinned SHA really belongs to the action's repository).
+# Not a required check: it depends on the GitHub API. The weekly run catches new advisories
+# when no PR is open.
+
+on:
+  pull_request:
+    paths: [".github/**"]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: actions-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  online:
+    name: actions audit (zizmor online)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same pinned version as the offline job in guardrails.yml.
+      - name: Audit with online checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pipx run zizmor==1.30.1 --min-severity low .github
