@@ -1,0 +1,17 @@
+# Keeps the SHA-pinned actions current. Without it the pins only age.
+# The cooldown matches the zizmor pin in guardrails.yml: a new release waits two
+# weeks before it is proposed. Security updates ignore the cooldown.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
