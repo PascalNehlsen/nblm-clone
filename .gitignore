@@ -1,0 +1,47 @@
+# Dependencies and build output
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment and secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OpenTofu: state and local variables never enter git; the lock file does
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+*.tfplan
+
+# Supabase local stack
+supabase/.branches/
+supabase/.temp/
+
+# Test and eval artifacts
+playwright-report/
+test-results/
+tests/eval/results/
+
+# Vercel CLI link (holds project and org ids)
+.vercel/
+
+# Claude Code local files
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,43 @@
+# Gitleaks: default rules plus the token formats this project uses that the defaults miss.
+# Left to the defaults: AWS keys, GitHub tokens, Sentry tokens and any JWT (the last two
+# verified with fake tokens before this file was written).
+# Local:  gitleaks git --config .gitleaks.toml --redact
+# The pre-commit hook and CI (.github/workflows/guardrails.yml) use this file and the same version.
+title = "nblm-clone"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key (replaces the legacy service_role JWT)"
+regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+[[rules]]
+id = "supabase-legacy-service-role-jwt"
+description = "Supabase legacy service_role JWT (payload contains role service_role)"
+# "service_role" encodes differently depending on its byte offset in the payload, so all three
+# base64 alignments are listed. The default `jwt` rule flags any JWT; this one names the
+# dangerous case (it bypasses RLS) so the finding is triaged correctly.
+regex = '''eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]*(?:c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG)[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}'''
+keywords = ["eyJ"]
+
+[[rules]]
+id = "vercel-token"
+description = "Vercel access token"
+regex = '''(?i)(?:vercel[_-]?token|VERCEL_TOKEN)\s*[:=]\s*["']?([A-Za-z0-9]{24})["']?'''
+secretGroup = 1
+keywords = ["vercel"]
+
+[allowlist]
+description = "Placeholders and example files"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''\.gitleaks\.toml$''',
+]
+regexes = [
+  '''REPLACE_ME[A-Z0-9_]*''',
+  '''<[a-z0-9_-]+>''',
+  '''example\.invalid''',
+]
