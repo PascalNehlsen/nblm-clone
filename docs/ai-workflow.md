@@ -45,6 +45,8 @@ The `sbx` network policy is global per machine, so the effective allowlist is th
 sbx policy ls --json | python3 -m sbx_audit -
 ```
 
+The sandbox signs commits with its own SSH key "nblm sandbox agent" (`SHA256:sJXVDJI4LgEiazQtG4Wm2mzHFY4/Y5zzMCtAxiZakU8`), set through `GIT_CONFIG_*` env vars in the sandbox shell so the shared `.git/config` keeps the host key. The signature proves a commit came from the sandbox, not that a human reviewed it; the human merge is the review. Revoke the key on GitHub after the challenge. The sandbox token has no Administration and no Workflows permission, so workflow changes are pushed from the host.
+
 ## Flow per change
 
 ```text
