@@ -9,6 +9,7 @@ import {
   DENY_OUTSIDE_EU_CENTRAL_1_NOT_ACTION,
   DENY_OUTSIDE_EU_CENTRAL_1_REGIONS,
   EXPECTED_SIDS,
+  IDENTITY_CENTER_FAMILIES,
   US_EAST_1_GLOBAL_SERVICES_NOT_ACTION,
 } from "./region-guard-fixtures";
 
@@ -57,12 +58,19 @@ describe("infra/bootstrap/policies/scp-region-guard.json: shape", () => {
     expect(sids).toHaveLength(EXPECTED_SIDS.length);
   });
 
-  it("DenyOutsideEuCentral1: NotAction is Bedrock actions + Identity Center families, condition is StringNotEquals over {eu-central-1, unspecified, us-east-1}", () => {
+  it("DenyOutsideEuCentral1: NotAction is exactly the 14 Bedrock actions (no Identity Center exemption), condition is StringNotEquals over {eu-central-1, unspecified, us-east-1}", () => {
     const policy = loadPolicy();
     const statement = statementBySid(policy, "DenyOutsideEuCentral1");
 
     expect(asSet(statement.NotAction)).toEqual(new Set(DENY_OUTSIDE_EU_CENTRAL_1_NOT_ACTION));
     expect(statement.Action).toBeUndefined();
+
+    // Human decision for PR 1: Identity Center's home region is eu-central-1,
+    // owned by the management account, so it gets no cross-region exemption.
+    const notActionSet = asSet(statement.NotAction);
+    for (const family of IDENTITY_CENTER_FAMILIES) {
+      expect(notActionSet.has(family)).toBe(false);
+    }
 
     const condition = statement.Condition?.StringNotEquals?.["aws:RequestedRegion"];
     expect(asSet(condition)).toEqual(new Set(DENY_OUTSIDE_EU_CENTRAL_1_REGIONS));
@@ -145,16 +153,19 @@ describe("infra/bootstrap/policies/scp-region-guard.json: behaviour", () => {
     expect(isDenied(policy, "signin:AuthenticateCredentials", "us-east-1")).toBe(false);
     expect(isDenied(policy, "organizations:ListPolicies", "us-east-1")).toBe(false);
     expect(isDenied(policy, "budgets:ViewBudget", "us-east-1")).toBe(false);
+    // sso:* is still in UsEast1GlobalServicesOnly's NotAction (the wizard's
+    // global service list), so Identity Center in us-east-1 stays allowed
+    // even without the DenyOutsideEuCentral1 exemption.
+    expect(isDenied(policy, "sso:ListInstances", "us-east-1")).toBe(false);
 
     expect(isDenied(policy, "sts:GetCallerIdentity", "eu-central-1")).toBe(false);
+    // Identity Center's home region: always allowed there regardless of any exemption.
+    expect(isDenied(policy, "sso:ListInstances", "eu-central-1")).toBe(false);
 
     for (const region of BEDROCK_EU_REGIONS) {
       expect(isDenied(policy, "bedrock:InvokeModel", region)).toBe(false);
       expect(isDenied(policy, "bedrock:InvokeModelWithResponseStream", region)).toBe(false);
     }
-
-    expect(isDenied(policy, "sso:ListInstances", "eu-north-1")).toBe(false);
-    expect(isDenied(policy, "identitystore:ListUsers", "eu-north-1")).toBe(false);
   });
 
   it("denies the documented denied cases", () => {
@@ -175,6 +186,12 @@ describe("infra/bootstrap/policies/scp-region-guard.json: behaviour", () => {
     // includes it), eu-west-1 is not.
     expect(isDenied(policy, "bedrock:CreateModelCustomizationJob", "eu-central-1")).toBe(false);
     expect(isDenied(policy, "bedrock:CreateModelCustomizationJob", "eu-west-1")).toBe(true);
+
+    // Human decision for PR 1: no Identity Center exemption outside
+    // eu-central-1 (its home region, owned by the management account).
+    expect(isDenied(policy, "sso:ListInstances", "eu-north-1")).toBe(true);
+    expect(isDenied(policy, "identitystore:ListUsers", "eu-north-1")).toBe(true);
+    expect(isDenied(policy, "sso:ListInstances", "us-west-2")).toBe(true);
   });
 
   it("handles the 'unspecified' region (requests with no inferable region, e.g. global.* inference profiles)", () => {
@@ -190,10 +207,10 @@ describe("infra/bootstrap/policies/scp-region-guard.json: behaviour", () => {
     expect(isDenied(policy, "s3:CreateBucket", "unspecified")).toBe(false);
   });
 
-  it("us-west-2 is not a specially allowed region: only Identity Center stays reachable, everything else not in the Bedrock/global exceptions is denied", () => {
+  it("us-west-2 is not a specially allowed region: nothing outside the Bedrock/global exceptions is allowed there", () => {
     const policy = loadPolicy();
 
-    expect(isDenied(policy, "sso:ListInstances", "us-west-2")).toBe(false);
+    expect(isDenied(policy, "sso:ListInstances", "us-west-2")).toBe(true);
     expect(isDenied(policy, "kms:Decrypt", "us-west-2")).toBe(true);
   });
 });

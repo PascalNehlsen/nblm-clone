@@ -18,12 +18,7 @@
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
         "bedrock:ListFoundationModels",
-        "bedrock:ListInferenceProfiles",
-        "sso:*",
-        "sso-directory:*",
-        "sso-oauth:*",
-        "identitystore:*",
-        "identitystore-auth:*"
+        "bedrock:ListInferenceProfiles"
       ],
       "Resource": "*",
       "Condition": {

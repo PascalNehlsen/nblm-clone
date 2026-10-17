@@ -22,17 +22,18 @@ export const BEDROCK_ACTIONS = [
   "bedrock:ListInferenceProfiles",
 ] as const;
 
-/** The 5 AWS Identity Center action families that must also stay reachable. */
-export const IDENTITY_CENTER_FAMILIES = [
-  "sso:*",
-  "sso-directory:*",
-  "sso-oauth:*",
-  "identitystore:*",
-  "identitystore-auth:*",
-] as const;
+/**
+ * The 5 AWS Identity Center action families. Human decision for PR 1: no
+ * exemption for them in `DenyOutsideEuCentral1`, because Identity Center's
+ * home region is eu-central-1, owned by the management account, so it does
+ * not need a cross-region carve-out. Kept only so a test can assert none of
+ * these families appear in that statement's `NotAction` (a regression guard,
+ * not an expected value).
+ */
+export const IDENTITY_CENTER_FAMILIES = ["sso:*", "sso-directory:*", "sso-oauth:*", "identitystore:*", "identitystore-auth:*"] as const;
 
-/** `DenyOutsideEuCentral1.NotAction`: Bedrock actions plus Identity Center families, 19 entries. */
-export const DENY_OUTSIDE_EU_CENTRAL_1_NOT_ACTION = [...BEDROCK_ACTIONS, ...IDENTITY_CENTER_FAMILIES];
+/** `DenyOutsideEuCentral1.NotAction`: exactly the 14 Bedrock actions, no Identity Center exemption. */
+export const DENY_OUTSIDE_EU_CENTRAL_1_NOT_ACTION: readonly string[] = BEDROCK_ACTIONS;
 
 /** `DenyOutsideEuCentral1` condition set: `StringNotEquals aws:RequestedRegion`. */
 export const DENY_OUTSIDE_EU_CENTRAL_1_REGIONS = ["eu-central-1", "unspecified", "us-east-1"];

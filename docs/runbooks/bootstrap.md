@@ -30,8 +30,6 @@ Before the plan:
 aws organizations list-tags-for-resource --resource-id p-ivy9gxl6 --profile nblm-mgmt-ro   # expect no tags
 ```
 
-Identity Center's home region is `sso_region` of the `nblm` sso-session in `~/.aws/config`. In the Identity Center console (Settings, Management), check the encryption: if it uses a customer managed KMS key, stop. Its home region then needs `kms:Decrypt` and `kms:DescribeKey` outside eu-central-1, which the new SCP denies.
-
 Expected plan: 3 to import (p-ivy9gxl6, its Root attachment, the Root attachment of p-grnvof89), 2 to add (`nblm-region-guard` and its Root attachment), 0 to change, 0 to destroy.
 
 Both SCPs are now attached, so the allowed set is their intersection. Check after a minute:
@@ -45,7 +43,7 @@ aws organizations list-policies-for-target --target-id r-tmxq \
   --filter SERVICE_CONTROL_POLICY --profile nblm-mgmt-ro                              # FullAWSAccess, p-grnvof89, p-ivy9gxl6, nblm-region-guard
 ```
 
-Then sign in to the console through the SSO portal into the workload account, and open IAM Identity Center in the Identity Delegated Admin account (996270854231) in its home region. Both must work.
+Then sign in to the console through the SSO portal into the workload account; it must work. (IAM Identity Center itself runs in eu-central-1 in the management account, checked 2026-10-17: AWS owned key, no SCPs apply.)
 
 S3 and KMS in eu-central-1 are still denied by p-grnvof89 at this point; that is expected.
 

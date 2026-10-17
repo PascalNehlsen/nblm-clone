@@ -17,11 +17,16 @@ What every other stack needs before CI can plan and apply it: the region SCP, th
 | eu-central-1 | everything |
 | us-east-1 | global services only (IAM, STS, sign-in, Organizations, billing, Route 53, CloudFront, ACM and the rest of the wizard's list) |
 | eu-north-1, eu-south-1, eu-south-2, eu-west-1, eu-west-3 | Bedrock inference only (targets of the `eu.*` cross-region inference profiles) |
-| any region | IAM Identity Center actions (it only exists in its home region; `sso:CreateInstance` stays blocked by p-ivy9gxl6) |
-| everything else | nothing |
 | `unspecified` (requests without a region) | everything except Bedrock, as in the wizard policy; this blocks the `global.*` inference profiles |
+| everything else | nothing |
 
-Known gaps: the us-east-1 list is the wizard's and allows more than identity and billing, for example `q:*`, `cloudshell:*`, `logs:*` and `kms:*`. Trimming it is a later change. When the Bedrock model is chosen, check that its `eu.*` inference profile routes only to the five EU regions above plus eu-central-1 (`aws bedrock get-inference-profile`).
+IAM Identity Center needs no exemption: its home region is eu-central-1, in the management account, where SCPs do not apply.
+
+Known gaps:
+
+- The us-east-1 list is the wizard's and allows more than identity and billing, for example `q:*`, `cloudshell:*`, `logs:*` and `kms:*`. Trimming it is a later change.
+- When the Bedrock model is chosen, check that its `eu.*` inference profile routes only to the five EU regions above plus eu-central-1 (`aws bedrock get-inference-profile`).
+- Account 996270854231 is delegated administrator for `account-access.amazonaws.com`, which likely gives it a path to AccountFullAccessRole in the workload account. The aws stack imports `aws_organizations_delegated_administrator` and then removes it (deregisters the delegation); after that, decide whether AccountFullAccessRole is still needed. No manual change.
 
 Checks without AWS access:
 
