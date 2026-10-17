@@ -14,5 +14,7 @@ export default defineConfig([
       "@typescript-eslint/no-unused-vars": "error",
     },
   },
-  globalIgnores(["**/.next/**", "**/node_modules/**", "**/next-env.d.ts", "coverage/**"]),
+  // .claude/ holds guardrail files: node --test covers the hooks, and a lint rule bump
+  // must not turn the app job red on a file that needs an approved plan to change.
+  globalIgnores([".claude/**", "**/.next/**", "**/node_modules/**", "**/next-env.d.ts", "coverage/**"]),
 ]);

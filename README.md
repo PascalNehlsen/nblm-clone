@@ -24,7 +24,7 @@ Claude Code writes most of the code; Codex reviews every PR. What limits them, a
 
 ## Run locally
 
-Needs Node.js 22.12 or newer and pnpm (the version is pinned in `package.json`).
+Needs Node.js 24 (as in CI and on Vercel) and pnpm (the version is pinned in `package.json`).
 
 ```bash
 pnpm install

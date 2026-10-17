@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   app:
+    # The name is the required status check context: renaming it leaves the ruleset
+    # waiting for a check that never reports. Change both together.
     name: app (lint, typecheck, test, build)
     runs-on: ubuntu-latest
     timeout-minutes: 15

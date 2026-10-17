@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ReactElement, ReactNode } from "react";
+import RootLayout, { metadata } from "../../apps/web/app/layout";
+import Page from "../../apps/web/app/page";
 
 // Resolve relative to this test file so it is independent of the cwd vitest is
 // invoked from.
@@ -10,12 +11,7 @@ const repoRoot = path.resolve(import.meta.dirname, "../..");
 const webDir = path.join(repoRoot, "apps/web");
 
 describe("apps/web/app/layout.tsx", () => {
-  it("renders <html lang=\"de\"> with children inside <body>", async () => {
-    const layoutModule = (await import("../../apps/web/app/layout")) as {
-      default: (props: { children: ReactNode }) => ReactElement;
-    };
-    const RootLayout = layoutModule.default;
-
+  it("renders <html lang=\"de\"> with children inside <body>", () => {
     const markup = renderToStaticMarkup(
       RootLayout({ children: <p data-testid="marker">Inhalt</p> }),
     );
@@ -30,12 +26,7 @@ describe("apps/web/app/layout.tsx", () => {
     expect(bodyContent).toContain("Inhalt");
   });
 
-  it("exports metadata with the exact German title and a non-empty German description", async () => {
-    const layoutModule = (await import("../../apps/web/app/layout")) as {
-      metadata: { title?: unknown; description?: unknown };
-    };
-    const { metadata } = layoutModule;
-
+  it("exports metadata with title \"nblm-clone\" and a non-empty description", () => {
     expect(metadata).toBeDefined();
     expect(metadata.title).toBe("nblm-clone");
     expect(typeof metadata.description).toBe("string");
@@ -44,12 +35,7 @@ describe("apps/web/app/layout.tsx", () => {
 });
 
 describe("apps/web/app/page.tsx", () => {
-  it("renders exactly one <h1> with text 'Deine Notizbücher'", async () => {
-    const pageModule = (await import("../../apps/web/app/page")) as {
-      default: () => ReactElement;
-    };
-    const Page = pageModule.default;
-
+  it("renders exactly one <h1> with text 'Deine Notizbücher'", () => {
     const markup = renderToStaticMarkup(Page());
 
     const h1Matches = markup.match(/<h1[^>]*>.*?<\/h1>/gs) ?? [];
@@ -61,30 +47,18 @@ describe("apps/web/app/page.tsx", () => {
 });
 
 describe("rendered shell loads no remote content", () => {
-  it("has no http:// or https:// in src/href attributes and no Google Fonts <link>", async () => {
-    const layoutModule = (await import("../../apps/web/app/layout")) as {
-      default: (props: { children: ReactNode }) => ReactElement;
-    };
-    const pageModule = (await import("../../apps/web/app/page")) as {
-      default: () => ReactElement;
-    };
-
-    const pageMarkup = renderToStaticMarkup(pageModule.default());
-    const fullMarkup = renderToStaticMarkup(
-      layoutModule.default({ children: <>{pageModule.default()}</> }),
+  it("has no http://, https:// or protocol-relative URLs in src/href attributes", () => {
+    const markup = renderToStaticMarkup(
+      RootLayout({ children: <>{Page()}</> }),
     );
-    const combined = `${fullMarkup}\n${pageMarkup}`;
 
     const remoteAttrMatches =
-      combined.match(/(?:src|href)=["'](https?:)[^"']*["']/gi) ?? [];
+      markup.match(/(?:src|href)=["'](?:https?:|\/\/)[^"']*["']/gi) ?? [];
     expect(remoteAttrMatches).toEqual([]);
-
-    expect(combined).not.toMatch(/<link[^>]*fonts\.googleapis\.com/i);
-    expect(combined).not.toMatch(/<link[^>]*fonts\.gstatic\.com/i);
   });
 });
 
-describe("static source guard: no next/font/google usage", () => {
+describe("static source guard: no remote fonts or assets", () => {
   const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".css"]);
   const skippedDirNames = new Set(["node_modules", ".next"]);
 
@@ -109,6 +83,15 @@ describe("static source guard: no next/font/google usage", () => {
     return files;
   }
 
+  // Matches a CSS `url(...)` or `@import ...` whose target is remote: an
+  // absolute http(s) URL or a protocol-relative `//host/...` URL, with or
+  // without quotes. Local absolute paths (`/foo.woff2`) and `data:` URIs must
+  // not match.
+  function hasRemoteCssReference(content: string): boolean {
+    const remoteCssPattern = /(?:@import\s+|url\(\s*)["']?(?:https?:|\/\/)/i;
+    return remoteCssPattern.test(content);
+  }
+
   it("apps/web exists and contains at least one source file", () => {
     expect(fs.existsSync(webDir)).toBe(true);
     expect(fs.statSync(webDir).isDirectory()).toBe(true);
@@ -122,6 +105,37 @@ describe("static source guard: no next/font/google usage", () => {
     const offenders = sourceFiles.filter((file) => {
       const content = fs.readFileSync(file, "utf8");
       return content.includes("next/font/google");
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("hasRemoteCssReference flags remote url()/@import targets and ignores local/data ones", () => {
+    const mustFlag = [
+      '@import url("https://fonts.googleapis.com/css2")',
+      '@import "//x.example/a.css"',
+      "src: url(https://x/y.woff2)",
+    ];
+    const mustNotFlag = [
+      'url("/local.woff2")',
+      "url(data:font/woff2;base64,AAA)",
+    ];
+
+    for (const css of mustFlag) {
+      expect(hasRemoteCssReference(css)).toBe(true);
+    }
+    for (const css of mustNotFlag) {
+      expect(hasRemoteCssReference(css)).toBe(false);
+    }
+  });
+
+  it("no .css file under apps/web contains a remote url() or @import target", () => {
+    const cssFiles = collectSourceFiles(webDir).filter(
+      (file) => path.extname(file) === ".css",
+    );
+    const offenders = cssFiles.filter((file) => {
+      const content = fs.readFileSync(file, "utf8");
+      return hasRemoteCssReference(content);
     });
 
     expect(offenders).toEqual([]);
