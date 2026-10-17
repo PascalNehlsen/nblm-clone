@@ -30,3 +30,19 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+
+  # pnpm workspace (root and apps/web), read from pnpm-lock.yaml. Same cooldown and
+  # grouping as the actions; the fixed prefix gives chore(deps) for dev dependencies too.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps)
