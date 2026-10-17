@@ -24,7 +24,16 @@ Claude Code writes most of the code; Codex reviews every PR. What limits them, a
 
 ## Run locally
 
-*(added with the first app code)*
+Needs Node.js 22.12 or newer and pnpm (the version is pinned in `package.json`).
+
+```bash
+pnpm install
+pnpm --filter web dev        # http://localhost:3000
+
+pnpm lint && pnpm typecheck && pnpm test && pnpm build   # what CI runs
+```
+
+Dependency install scripts are blocked unless `pnpm-workspace.yaml` allows them (`allowBuilds`). The app loads no remote fonts; it uses system fonts.
 
 ## Documentation
 

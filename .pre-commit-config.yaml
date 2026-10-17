@@ -14,6 +14,9 @@ repos:
         args: ["--maxkb=1024"]
       - id: check-json
       - id: check-yaml
+        # pnpm 11+ writes the lockfile as two YAML documents (its own binary, then the
+        # dependencies); pnpm validates it on every `--frozen-lockfile` install.
+        exclude: ^pnpm-lock\.yaml$
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: check-merge-conflict

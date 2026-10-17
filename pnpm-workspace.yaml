@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+
+# Dependency install scripts are off unless listed here with a reason.
+allowBuilds:
+  # napi-postinstall only fetches a native binding when the matching optional
+  # package is missing; pnpm installs that package, so the script is not needed.
+  unrs-resolver: false
