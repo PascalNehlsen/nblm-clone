@@ -6,20 +6,14 @@
 -- -- including its behaviour under bulk (multi-row) delete/update, which a
 -- single-row-at-a-time mental model misses.
 --
--- The migration is applied locally. Most assertions below are expected to
--- pass; the ones added for the bulk-operation regression below are expected
--- to currently FAIL against the applied migration: with two owners A and B,
--- A running a bulk `delete ... where notebook_id = X` (or a bulk `update
--- ... set role = 'viewer' where notebook_id = X`) deletes/demotes both
--- instead of raising. Root cause: `private.guard_last_owner()` is currently
--- SECURITY INVOKER, so its "does the parent notebook still exist" lock
--- query runs under RLS as the acting role; once that role's own membership
--- row has been processed earlier in the same multi-row statement, the
--- notebook looks invisible (not "deleted", just RLS-hidden to that role),
--- and the guard's cascade-escape-hatch wrongly treats that as "the notebook
--- was deleted out from under me, allow it". The fix (SECURITY DEFINER,
--- allowlisted, `for no key update`) is for the builder; this file only
--- proves the gap and will keep proving the fix once it lands.
+-- Bulk-operation regression (found in review of PR 3): with two owners A and
+-- B, A running a bulk `delete ... where notebook_id = X` (or a bulk `update
+-- ... set role = 'viewer' where notebook_id = X`) deleted or demoted both.
+-- The guard was SECURITY INVOKER, so its "does the notebook still exist"
+-- lock ran under RLS; once A's own row was processed earlier in the same
+-- statement, the notebook was hidden from A and looked deleted. The guard is
+-- now a SECURITY DEFINER trigger (allowlisted, `for no key update`). The
+-- scenarios use fixed uuids because the bug depended on primary key order.
 --
 -- Whether a probe currently fails because a schema object errors out, a
 -- business rule isn't met, or (post-fix) succeeds, every probe must produce
