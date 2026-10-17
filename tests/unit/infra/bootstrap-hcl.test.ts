@@ -77,17 +77,36 @@ describe("infra/bootstrap providers: exactly two `provider \"aws\"` blocks", () 
   });
 
   it("no access_key, secret_key or token anywhere under infra/", () => {
+    // Back to the original broad word-boundary scan over every file under
+    // infra/ (not just .tf). The one legitimate exception: PR 3's GitHub OIDC
+    // trust policy templates (policies/trust-github-*.json.tftpl) use the
+    // literal claim name "token.actions.githubusercontent.com" in their
+    // condition keys, which is the OIDC issuer's claim, not a credential.
+    // Strip exactly that literal before scanning, so it is still a bare-word
+    // scan everywhere else and still catches, for example, `access_key = "x"`
+    // in a .tf file or `"secret_key": "x"` in a .tftpl.
     const files = walkFiles(infraDir).filter((file) => !file.includes(`${path.sep}.terraform${path.sep}`));
 
-    const offenders: string[] = [];
+    const wordOffenders: string[] = [];
+    const keyIdOffenders: string[] = [];
+
     for (const file of files) {
       const content = fs.readFileSync(file, "utf8");
-      if (/\b(access_key|secret_key|token)\b/i.test(content)) {
-        offenders.push(path.relative(repoRoot, file));
+      const relative = path.relative(repoRoot, file);
+      const withoutOidcClaim = content.split("token.actions.githubusercontent.com").join("");
+
+      if (/\b(access_key|secret_key|token)\b/i.test(withoutOidcClaim)) {
+        wordOffenders.push(relative);
+      }
+      if (/\b(AKIA|ASIA)[0-9A-Z]{16}\b/.test(content)) {
+        keyIdOffenders.push(relative);
       }
     }
 
-    expect(offenders).toEqual([]);
+    expect(wordOffenders, "no bare access_key, secret_key or token word anywhere under infra/ (outside the OIDC claim name)").toEqual(
+      [],
+    );
+    expect(keyIdOffenders, "no AWS access key id literal anywhere under infra/").toEqual([]);
   });
 });
 

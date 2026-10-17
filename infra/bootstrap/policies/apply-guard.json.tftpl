@@ -1,0 +1,101 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KeepStateBucket",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteBucket",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutReplicationConfiguration"
+      ],
+      "Resource": [
+        "${bucket_arn}"
+      ]
+    },
+    {
+      "Sid": "KeepStateHistory",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": [
+        "${bucket_arn}/*"
+      ]
+    },
+    {
+      "Sid": "NeverWriteBootstrapState",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "${bucket_arn}/bootstrap/*"
+      ]
+    },
+    {
+      "Sid": "KeepStateKey",
+      "Effect": "Deny",
+      "Action": [
+        "kms:ScheduleKeyDeletion",
+        "kms:DisableKey",
+        "kms:PutKeyPolicy",
+        "kms:DisableKeyRotation",
+        "kms:CreateGrant"
+      ],
+      "Resource": [
+        "${key_arn}"
+      ]
+    },
+    {
+      "Sid": "KeepStateKeyAlias",
+      "Effect": "Deny",
+      "Action": [
+        "kms:UpdateAlias",
+        "kms:DeleteAlias"
+      ],
+      "Resource": [
+        "${key_alias_arn}"
+      ]
+    },
+    {
+      "Sid": "KeepCiRoles",
+      "Effect": "Deny",
+      "Action": [
+        "iam:UpdateAssumeRolePolicy",
+        "iam:DeleteRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:PutRolePermissionsBoundary",
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:UpdateRole"
+      ],
+      "Resource": [
+        "${plan_role_arn}",
+        "${apply_role_arn}"
+      ]
+    },
+    {
+      "Sid": "KeepGitHubOidcProvider",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:AddClientIDToOpenIDConnectProvider",
+        "iam:RemoveClientIDFromOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint"
+      ],
+      "Resource": [
+        "${oidc_provider_arn}"
+      ]
+    }
+  ]
+}
