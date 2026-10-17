@@ -27,17 +27,18 @@ sbx create --name nblm-clone claude .
 sbx run --name nblm-clone claude
 ```
 
-Network allowlist for this project (**proposed, verify on day 1** with `pnpm install`, `supabase start` and `pnpm exec playwright install`, then update this table):
+Network allowlist for this project. Rows marked *verified* were measured inside the sandbox; the others are still proposed until `pnpm exec playwright install` and the first use of each host:
 
 | Host | Why |
 |---|---|
 | `api.anthropic.com` | Claude Code itself (nonessential traffic is disabled in `.claude/settings.json`) |
-| `registry.npmjs.org` | pnpm |
+| `registry.npmjs.org` | pnpm; also the Supabase CLI, whose binary is an optional npm package pinned by integrity hash in `pnpm-lock.yaml` (no postinstall download). *Verified 2026-10-17* |
 | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` | git, gh (read and PR only), CLI release downloads |
-| `public.ecr.aws` | Supabase local stack images |
+| `public.ecr.aws` | Supabase local stack images and `pg_prove` (`supabase start`, `supabase test db`). GET/HEAD only, scoped to this sandbox. *Verified 2026-10-17* |
+| `d2glxqk2uabbnd.cloudfront.net` | Blob redirect target of ECR Public (image layers). GET/HEAD only, scoped to this sandbox. *Verified 2026-10-17* |
 | `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` | Playwright browsers |
 
-Deliberately **not** allowed: `*.amazonaws.com`, `*.supabase.co`, `api.vercel.com`, `api.cloudflare.com`, `sentry.io`, and every wildcard on a domain where anyone can register a subdomain (`*.workers.dev`, `*.vercel.app`, `*.github.io`). A leaked token cannot reach the management APIs, and a poisoned README cannot pick an exfiltration host it controls.
+Deliberately **not** allowed: `ghcr.io` and Docker Hub (the Supabase CLI falls back to them; ECR is enough), PostHog (Supabase CLI telemetry, also switched off with `SUPABASE_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`), `results-receiver.actions.githubusercontent.com` (Actions job logs; read them in the browser), `*.amazonaws.com`, `*.supabase.co`, `api.vercel.com`, `api.cloudflare.com`, `sentry.io`, and every wildcard on a domain where anyone can register a subdomain (`*.workers.dev`, `*.vercel.app`, `*.github.io`). A leaked token cannot reach the management APIs, and a poisoned README cannot pick an exfiltration host it controls.
 
 The `sbx` network policy is global per machine, so the effective allowlist is the union of every project's entries. Before a session, audit what is really allowed:
 
@@ -85,6 +86,7 @@ Every PR records what a reviewer, Codex or CI caught. The label `caught-by-gate`
 |---|---|---|---|
 | 2026-10-16 | Manual egress check (this doc) | Unlisted hosts were not denied but returned "Approval required": one click on the host would have let the sandbox reach `api.vercel.com`. The limit depended on a human declining a prompt | Explicit local deny rules for the management APIs (Vercel, Supabase, Cloudflare, AWS STS); deny rules take precedence over approvals. Re-run returns "Blocked by local rule" |
 | 2026-10-16 | Planning for sandbox push access | Giving the sandbox the host `gh` token (scope `repo`, which on an owned repo means admin) would let an agent delete the `main` ruleset through `api.github.com`. The sandbox proxy hides the token value, not its permissions, and the `gh ruleset` deny rule only matches command text | Sandbox now has its own fine-grained token for this repo only (Contents and Pull requests write, no Administration, no Workflows). Verified 2026-10-16: no `X-OAuth-Scopes` header, expiry 2026-11-15; admin-only endpoints (`hooks`, `keys`, `actions/permissions`) return 403 "Resource not accessible by personal access token". `.permissions` still reports `admin: true` because it shows the owner's role, not the token's, and `GET rulesets` succeeds because reading rulesets needs only read access. Direct write test: `POST rulesets` for a disabled ruleset targeting `refs/heads/never-exists-probe` returned 403 with `X-Accepted-GitHub-Permissions: administration=write`; no ruleset was created (only `main` listed afterwards) |
+| 2026-10-17 | `supabase start` in the sandbox (PR 2) | Friction, no defect: the image pull hit "Approval required" for `public.ecr.aws`, then the CLI fell back to `ghcr.io` and Docker Hub, also blocked. The first request to allow the registry was denied until the reason was stated | Human allowed only `public.ecr.aws` and `d2glxqk2uabbnd.cloudfront.net` (measured blob redirect), GET/HEAD, this sandbox only. `ghcr.io`, Docker Hub, PostHog and `results-receiver` stay blocked. CLI telemetry and update check off via env in the sandbox and in CI |
 
 ## Prompts that shaped this repo
 

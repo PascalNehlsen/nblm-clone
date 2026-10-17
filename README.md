@@ -33,6 +33,18 @@ pnpm --filter web dev        # http://localhost:3000
 pnpm lint && pnpm typecheck && pnpm test && pnpm build   # what CI runs
 ```
 
+Database tests need Docker and the local Supabase stack (CLI pinned as a dev dependency):
+
+```bash
+export SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_NO_UPDATE_NOTIFIER=1   # CLI telemetry and update check off
+pnpm db:start                # images from public.ecr.aws
+pnpm test:db                 # pgTAP: catalog checks, each with a negative self-test
+pnpm test:rls                # RLS matrix: real sign-ins and JWTs, never the service role
+pnpm db:stop
+```
+
+GitHub login reads `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET` from the environment (names in `.env.example`); the stack also starts without them.
+
 Dependency install scripts are blocked unless `pnpm-workspace.yaml` allows them (`allowBuilds`). The app loads no remote fonts; it uses system fonts.
 
 ## Documentation
