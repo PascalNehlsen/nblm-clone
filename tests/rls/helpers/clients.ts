@@ -16,11 +16,13 @@
 //
 // SUPABASE_URL (from the environment or from the CLI) must resolve to
 // 127.0.0.1 or localhost: this harness signs up real users and must never be
-// pointed at a real project by a stray environment variable.
+// pointed at a real project by a stray environment variable. The key, from
+// either source, must act as anon (assertAnonKey in key-guard.ts).
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { assertAnonKey } from "./key-guard";
 
 export interface DecodedJwt {
   sub?: string;
@@ -142,12 +144,14 @@ export function supabaseLocalConfig(): SupabaseLocalConfig {
   const envAnonKey = process.env.SUPABASE_ANON_KEY;
   if (envUrl && envAnonKey) {
     assertLocalHost(envUrl);
+    assertAnonKey(envAnonKey);
     cachedConfig = { url: envUrl, anonKey: envAnonKey };
     return cachedConfig;
   }
 
   const config = readConfigFromCli();
   assertLocalHost(config.url);
+  assertAnonKey(config.anonKey);
   cachedConfig = config;
   return cachedConfig;
 }
