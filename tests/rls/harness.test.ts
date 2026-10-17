@@ -134,13 +134,34 @@ describe("static guard: no admin credential material under tests/rls", () => {
     return files;
   }
 
-  it("contains none of the forbidden substrings outside this guard test", () => {
-    const rlsDir = path.resolve(import.meta.dirname, ".");
-    const selfFile = path.resolve(import.meta.dirname, "harness.test.ts");
+  const rlsDir = path.resolve(import.meta.dirname, ".");
+
+  // key-guard.ts and its test are the only places allowed to even name a
+  // secret prefix/claim (so they can reject it); the guard test itself is
+  // exempt because this very list of forbidden substrings has to live
+  // somewhere. A silently-missing exempt file would make this scan pass for
+  // the wrong reason (nothing there to flag), so its own existence is
+  // asserted separately below instead of just skipped over.
+  const exemptFiles = [
+    path.resolve(rlsDir, "harness.test.ts"),
+    path.resolve(rlsDir, "helpers/key-guard.ts"),
+    path.resolve(rlsDir, "key-guard.test.ts"),
+  ];
+
+  it("has every exempt file present", () => {
+    for (const file of exemptFiles) {
+      expect(fs.existsSync(file), `expected exempt file to exist: ${path.relative(rlsDir, file)}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("contains none of the forbidden substrings outside the exempt files", () => {
+    const exempt = new Set(exemptFiles.map((file) => path.resolve(file)));
 
     const offenders: string[] = [];
     for (const file of collectFiles(rlsDir)) {
-      if (path.resolve(file) === selfFile) continue;
+      if (exempt.has(path.resolve(file))) continue;
 
       const content = fs.readFileSync(file, "utf8");
       for (const needle of forbidden) {
@@ -151,5 +172,36 @@ describe("static guard: no admin credential material under tests/rls", () => {
     }
 
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("static guard: key-guard.ts cannot read or exfiltrate a secret itself", () => {
+  // key-guard.ts is the one file allowed to name a secret prefix/claim (to
+  // reject it), so it must be structurally unable to read one from the
+  // environment, the filesystem or a subprocess, or send one anywhere: a
+  // pure function of the string it is handed, nothing else.
+  const keyGuardPath = path.resolve(import.meta.dirname, "helpers/key-guard.ts");
+
+  it("exists", () => {
+    expect(fs.existsSync(keyGuardPath)).toBe(true);
+  });
+
+  it("contains none of process.env, node:fs, fs, child_process or fetch(, and imports only types", () => {
+    const content = fs.readFileSync(keyGuardPath, "utf8");
+
+    const forbidden = ["process.env", "node:fs", "fs", "child_process", "fetch("];
+    for (const needle of forbidden) {
+      expect(content.includes(needle), `key-guard.ts must not contain "${needle}"`).toBe(false);
+    }
+
+    const importLines = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("import "));
+
+    for (const line of importLines) {
+      const isTypeOnly = /^import\s+type\b/.test(line) || /^import\s*\{\s*type\b/.test(line);
+      expect(isTypeOnly, `key-guard.ts may only import types: "${line}"`).toBe(true);
+    }
   });
 });

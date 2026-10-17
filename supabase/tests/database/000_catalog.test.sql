@@ -61,7 +61,7 @@
 
 begin;
 
-select plan(47);
+select plan(49);
 
 -- ---------------------------------------------------------------------------
 -- Check definitions
@@ -228,7 +228,7 @@ create function pg_temp.check_anon_privileges() returns setof text as $$
     where
       case when relkind <> 'S' then
         has_table_privilege('anon', oid,
-          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
       end
       or
       case when relkind <> 'S' then
@@ -287,7 +287,7 @@ create function pg_temp.check_authenticated_private_privileges() returns setof t
   where
     case when relkind <> 'S' then
       has_table_privilege('authenticated', oid,
-        'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+        'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
     end
     or
     case when relkind <> 'S' then
@@ -819,6 +819,23 @@ select set_eq(
   'anon_privileges flags a sequence granted to anon'
 );
 
+-- check_anon_privileges: MAINTAIN (added in PG17) granted to anon, with every
+-- other privilege explicitly revoked first. The current has_table_privilege
+-- list predates MAINTAIN, so a MAINTAIN-only grant must still be flagged, not
+-- silently waved through because it isn't SELECT/INSERT/UPDATE/DELETE/
+-- TRUNCATE/REFERENCES/TRIGGER.
+create table public.catalog_probe_maintain_anon (id int);
+revoke all privileges on public.catalog_probe_maintain_anon from public, anon, authenticated;
+grant maintain on public.catalog_probe_maintain_anon to anon;
+select set_eq(
+  $sql$
+    select * from pg_temp.check_anon_privileges() as v
+    where v like '%catalog_probe_maintain_anon%'
+  $sql$,
+  array['public.catalog_probe_maintain_anon'],
+  'anon_privileges flags a MAINTAIN-only grant to anon (PG17 privilege, not in the old has_table_privilege list)'
+);
+
 -- check_authenticated_private_privileges
 create schema if not exists private;
 create table private.catalog_probe_auth_priv (id int);
@@ -858,6 +875,23 @@ select set_eq(
   $sql$,
   array['private.catalog_probe_auth_seq'],
   'authenticated_private_privileges flags a private sequence granted to authenticated'
+);
+
+-- check_authenticated_private_privileges: MAINTAIN (added in PG17) granted to
+-- authenticated, with every other privilege explicitly revoked first. Same
+-- gap as the anon check above: MAINTAIN predates the current
+-- has_table_privilege list.
+create schema if not exists private;
+create table private.catalog_probe_maintain_auth (id int);
+revoke all privileges on private.catalog_probe_maintain_auth from public, anon, authenticated;
+grant maintain on private.catalog_probe_maintain_auth to authenticated;
+select set_eq(
+  $sql$
+    select * from pg_temp.check_authenticated_private_privileges() as v
+    where v like '%catalog_probe_maintain_auth%'
+  $sql$,
+  array['private.catalog_probe_maintain_auth'],
+  'authenticated_private_privileges flags a MAINTAIN-only grant to authenticated (PG17 privilege, not in the old has_table_privilege list)'
 );
 
 -- check_views_not_security_invoker
