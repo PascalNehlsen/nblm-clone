@@ -114,7 +114,12 @@ run "every_s3_bucket_sub_resource_targets_the_state_bucket" {
   }
 }
 
-run "plan_role_trust_is_scoped_to_pull_request_on_the_immutable_subject" {
+# P1 fix from the Codex review: the plan role no longer trusts every
+# pull_request run (anyone who can push a branch, the sandbox included, could
+# otherwise run arbitrary code with it). It now trusts only the GitHub
+# environment "plan", which has a required reviewer, like the apply role's
+# "infra".
+run "plan_role_trust_is_scoped_to_the_plan_environment_on_the_immutable_subject" {
   command = plan
 
   override_resource {
@@ -130,8 +135,8 @@ run "plan_role_trust_is_scoped_to_pull_request_on_the_immutable_subject" {
   }
 
   assert {
-    condition     = jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:PascalNehlsen@164803589/nblm-clone@1421836505:pull_request"
-    error_message = "tofu_plan must trust only the pull_request subject on the immutable repo id"
+    condition     = jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:plan"
+    error_message = "tofu_plan must trust only the plan environment subject on the immutable repo id, not every pull_request run"
   }
 }
 

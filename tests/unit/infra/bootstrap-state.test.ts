@@ -85,7 +85,12 @@ const TEMPLATES = [
   "policies/state-bucket.json.tftpl",
 ];
 
-const PLAN_SUBJECT = "repo:PascalNehlsen@164803589/nblm-clone@1421836505:pull_request";
+// P1 fix from the Codex review: the plan role must not trust every
+// pull_request run. Anyone who can push a branch (the sandbox included)
+// could then run arbitrary code (scripts/tofu.sh, an external data source)
+// with the plan role. The plan job now runs in the GitHub environment "plan",
+// which has a required reviewer, exactly like the apply role's "infra".
+const PLAN_SUBJECT = "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:plan";
 const APPLY_SUBJECT = "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:infra";
 const MUTABLE_SUBJECT_PREFIX = "repo:PascalNehlsen/nblm-clone";
 
@@ -139,6 +144,14 @@ function expectTrustPolicy(relativePath: string, expectedSub: string) {
 
   expect(sub[0]).not.toContain(MUTABLE_SUBJECT_PREFIX);
 
+  // P1 review fix: neither role may trust a plain pull_request run or a
+  // branch/tag ref (anyone who can push one, including the sandbox, could
+  // then run arbitrary code with that role). Both must be scoped to a GitHub
+  // environment, which has a required reviewer.
+  expect(sub[0], "must not trust every pull_request run").not.toContain(":pull_request");
+  expect(sub[0], "must not trust a branch or tag ref").not.toContain(":ref:");
+  expect(sub[0], "must be scoped to a GitHub environment").toMatch(/:environment:[a-z-]+$/);
+
   const raw = JSON.stringify(policy);
   expect(raw).not.toContain("StringLike");
   expect(raw).not.toContain("ForAnyValue");
@@ -146,7 +159,7 @@ function expectTrustPolicy(relativePath: string, expectedSub: string) {
 }
 
 describe("infra/bootstrap/policies/trust-github-plan.json.tftpl", () => {
-  it("trusts the GitHub OIDC provider for pull_request runs on the immutable repo subject", () => {
+  it("trusts the GitHub OIDC provider for the plan environment only, on the immutable repo subject", () => {
     expectTrustPolicy("policies/trust-github-plan.json.tftpl", PLAN_SUBJECT);
   });
 });
@@ -154,6 +167,25 @@ describe("infra/bootstrap/policies/trust-github-plan.json.tftpl", () => {
 describe("infra/bootstrap/policies/trust-github-apply.json.tftpl", () => {
   it("trusts the GitHub OIDC provider for the infra environment on the immutable repo subject", () => {
     expectTrustPolicy("policies/trust-github-apply.json.tftpl", APPLY_SUBJECT);
+  });
+});
+
+describe("infra/bootstrap: the plan and apply trust subjects", () => {
+  it("are different GitHub environments, so neither role can be assumed via the other's environment", () => {
+    const planSub = toArray(
+      readPolicyTemplate("policies/trust-github-plan.json.tftpl").Statement[0]?.Condition?.StringEquals?.[
+        "token.actions.githubusercontent.com:sub"
+      ] as string | string[] | undefined,
+    )[0];
+    const applySub = toArray(
+      readPolicyTemplate("policies/trust-github-apply.json.tftpl").Statement[0]?.Condition?.StringEquals?.[
+        "token.actions.githubusercontent.com:sub"
+      ] as string | string[] | undefined,
+    )[0];
+
+    expect(planSub).toBeDefined();
+    expect(applySub).toBeDefined();
+    expect(planSub).not.toEqual(applySub);
   });
 });
 

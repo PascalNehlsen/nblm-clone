@@ -84,9 +84,12 @@ gh api repos/PascalNehlsen/nblm-clone/environments/infra \
 # required_reviewers with PascalNehlsen, custom_branch_policies: true
 gh api repos/PascalNehlsen/nblm-clone/environments/infra/deployment-branch-policies --jq '[.branch_policies[].name]'
 # ["main"]
+gh api repos/PascalNehlsen/nblm-clone/environments/plan \
+  --jq '{r: [.protection_rules[] | {type, reviewers: [.reviewers[]?.reviewer.login]}], b: .deployment_branch_policy}'
+# required_reviewers with PascalNehlsen; no branch restriction (b: null)
 ```
 
-Checked 2026-10-17 from the sandbox (read-only): all three as expected. The environment was created by hand; the github stack imports it later.
+Checked 2026-10-17 from the sandbox (read-only): OIDC subject and `infra` as expected; `plan` did not exist yet (404). Do not apply until it exists with a required reviewer. Both environments are created by hand; the github stack imports them later.
 
 Expected plan: `Plan: 16 to add, 0 to change, 0 to destroy.` All in the workload account: KMS key and alias; bucket `nblm-tofu-state-278311879197` with versioning, public access block, ownership controls, encryption, lifecycle and bucket policy; GitHub OIDC provider; `nblm-tofu-plan` with SecurityAudit and the state-read policy; `nblm-tofu-apply` with AdministratorAccess and the guard policy. State stays local in this step.
 
@@ -103,7 +106,7 @@ aws s3api get-bucket-ownership-controls --bucket "$B"                           
 aws s3api get-bucket-encryption --bucket "$B"                                    # aws:kms, KMSMasterKeyID = $K, BucketKeyEnabled: true
 aws s3api get-bucket-policy --bucket "$B" --query Policy --output text           # only DenyInsecureTransport
 aws kms get-key-rotation-status --key-id "$K"                                    # KeyRotationEnabled: true (aliases are not accepted here)
-aws iam get-role --role-name nblm-tofu-plan --query Role.AssumeRolePolicyDocument    # sub ...:pull_request, StringEquals only
+aws iam get-role --role-name nblm-tofu-plan --query Role.AssumeRolePolicyDocument    # sub ...:environment:plan, StringEquals only
 aws iam get-role --role-name nblm-tofu-apply --query Role.AssumeRolePolicyDocument   # sub ...:environment:infra
 aws iam simulate-principal-policy \
   --policy-source-arn arn:aws:iam::278311879197:role/nblm-tofu-plan \

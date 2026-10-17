@@ -11,8 +11,10 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# Plan in pull requests: config reads (SecurityAudit) and state reads, no writes.
-# Any branch can run a pull_request workflow, so this role must stay read-only.
+# Plan for pull requests: config reads (SecurityAudit) and state reads, no writes.
+# Trusts only jobs in the GitHub environment `plan` (required reviewer), never
+# plain pull_request runs: anyone who can push a branch, agents included, could
+# otherwise run their own code with this role through CI.
 resource "aws_iam_role" "tofu_plan" {
   name                 = "nblm-tofu-plan"
   max_session_duration = 3600

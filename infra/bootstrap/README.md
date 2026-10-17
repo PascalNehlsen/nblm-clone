@@ -8,7 +8,7 @@ What every other stack needs before CI can plan and apply it: the region SCP, th
 | `providers.tf` | Workload account (default) and management account (`aws.management`), each locked with `allowed_account_ids` |
 | `scp.tf` | `nblm-region-guard` (p-82q6pnrv) and the wizard policy p-ivy9gxl6 (imported unchanged), both attached to Root |
 | `state.tf` | State bucket `nblm-tofu-state-278311879197` (versioned, private, SSE-KMS, TLS only, old versions kept 90 days) and KMS key `alias/nblm-tofu-state` (rotation, 30-day deletion window) |
-| `oidc.tf` | GitHub OIDC provider; `nblm-tofu-plan` (pull requests: SecurityAudit plus state read, writes denied) and `nblm-tofu-apply` (environment `infra`: AdministratorAccess plus a guard deny on the state bucket, key, CI roles and OIDC provider) |
+| `oidc.tf` | GitHub OIDC provider; `nblm-tofu-plan` (environment `plan`: SecurityAudit plus state read, writes denied) and `nblm-tofu-apply` (environment `infra`: AdministratorAccess plus a guard deny on the state bucket, key, CI roles and OIDC provider) |
 | `outputs.tf` | Bucket, key and role ARNs for the other stacks and workflows |
 | `policies/` | Policy documents as plain JSON, checked by `tests/unit/infra/` |
 
@@ -31,10 +31,10 @@ Known gaps:
 - The us-east-1 list is the wizard's and allows more than identity and billing, for example `q:*`, `cloudshell:*`, `logs:*` and `kms:*`. Trimming it is a later change.
 - When the Bedrock model is chosen, check that its `eu.*` inference profile routes only to the five EU regions above plus eu-central-1 (`aws bedrock get-inference-profile`).
 - Account 996270854231 is delegated administrator for `account-access.amazonaws.com`, which likely gives it a path to AccountFullAccessRole in the workload account. The aws stack imports `aws_organizations_delegated_administrator` and then removes it (deregisters the delegation); after that, decide whether AccountFullAccessRole is still needed. No manual change.
-- The plan role can decrypt and read all state, and any branch can run a `pull_request` workflow. State encryption protects state at rest, not from that path: secrets that a provider forces into state are readable by anyone who can push a workflow. Today only the human can push workflows (the sandbox's GitHub credential has no Workflows permission).
+- The plan role can decrypt and read all state. It trusts only the `plan` environment, so every use needs the human's approval of that job run; the approver must check what the PR changes before approving (workflows, `scripts/`, data sources in `.tf`). State encryption protects state at rest, not from an approved run.
 - SecurityAudit reads some configuration that can hold secrets (for example Lambda environment variables, EC2 user data). Keep secrets out of resource configuration. It also lacks some Get calls a plan needs (for example parts of Bedrock); expect AccessDenied in the first aws stack plans and add targeted reads then.
-- OpenTofu's `aws_kms` key provider may need `kms:GenerateDataKey` for the plan role even to read encrypted state. Decided and tested in the state migration PR.
-- The `infra` environment (required reviewer, `main` only) was created by hand; the github stack imports it.
+- State migration PR: OpenTofu state and plan encryption with the `aws_kms` key provider needs `kms:GenerateDataKey` to write an encrypted plan file (and may need it even to read state). Decide there whether the plan role gets it or the plan file stays unencrypted.
+- The `infra` environment (required reviewer, `main` only) and the `plan` environment (required reviewer, no branch restriction) are created by hand; the github stack imports them.
 - Nothing notices yet if the account wizard reattaches p-grnvof89 to Root. The nightly drift check (later PR) covers the Root SCP list.
 
 Checks without AWS access:
