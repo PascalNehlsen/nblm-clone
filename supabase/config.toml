@@ -1,3 +1,8 @@
+# LOCAL STACK ONLY. Nothing pushes this file to a remote project yet. Before any config push,
+# add [remotes.*] overrides: email/password sign-up (used here by the RLS tests), confirmations
+# off, the 6-character password minimum, no captcha and the local redirect must not go live.
+# The roadmap's remote sign-in methods are GitHub and anonymous (behind Turnstile) only.
+#
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
@@ -202,11 +207,13 @@ email_sent = 2
 # Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
 sms_sent = 30
 # Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
-anonymous_users = 30
+# Raised for the local RLS matrix, which signs in many users from one IP. Remote limits come later.
+anonymous_users = 1000
 # Number of sessions that can be refreshed in a 5 minute interval per IP address.
 token_refresh = 150
 # Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
-sign_in_sign_ups = 30
+# Raised for the local RLS matrix (see anonymous_users).
+sign_in_sign_ups = 1000
 # Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
 token_verifications = 30
 # Number of Web3 logins that can be made in a 5 minute interval per IP address.

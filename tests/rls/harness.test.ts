@@ -1,20 +1,31 @@
 // Proves the RLS test harness itself works against the real local Supabase
 // stack, before any table or policy exists (PR 3 adds those). Every client
 // here is built from a real sign-in and a real JWT -- never service_role.
+//
+// Users are created once per describe block (beforeAll), not per `it`, to
+// stay well below the local Auth rate limits (sign_in_sign_ups / anonymous
+// sign-in limits apply per IP) as the RLS matrix in PR 3 adds many more cases.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   anonClient,
+  assertLocalHost,
   decodeJwt,
   signInAnonymousUser,
   signUpUser,
   supabaseLocalConfig,
+  type SignedInUser,
 } from "./helpers/clients";
 
 describe("signUpUser", () => {
-  it("returns a JWT for an authenticated, non-anonymous user whose sub is the user id", async () => {
-    const user = await signUpUser("owner");
+  let user: SignedInUser;
+
+  beforeAll(async () => {
+    user = await signUpUser("owner");
+  });
+
+  it("returns a JWT for an authenticated, non-anonymous user whose sub is the user id", () => {
     const claims = decodeJwt(user.accessToken);
 
     expect(claims.role).toBe("authenticated");
@@ -24,8 +35,13 @@ describe("signUpUser", () => {
 });
 
 describe("signInAnonymousUser", () => {
-  it("returns a JWT for an authenticated, anonymous user", async () => {
-    const user = await signInAnonymousUser();
+  let user: SignedInUser;
+
+  beforeAll(async () => {
+    user = await signInAnonymousUser();
+  });
+
+  it("returns a JWT for an authenticated, anonymous user", () => {
     const claims = decodeJwt(user.accessToken);
 
     expect(claims.role).toBe("authenticated");
@@ -63,6 +79,12 @@ describe("local Auth settings", () => {
 });
 
 describe("schema exposure: private is not reachable through PostgREST", () => {
+  let stranger: SignedInUser;
+
+  beforeAll(async () => {
+    stranger = await signUpUser("stranger");
+  });
+
   it("rejects an anon request to the private schema with PGRST106", async () => {
     const client = anonClient();
     const { data, error } = await client.schema("private").from("anything").select();
@@ -72,16 +94,32 @@ describe("schema exposure: private is not reachable through PostgREST", () => {
   });
 
   it("rejects a signed-up user's request to the private schema with PGRST106", async () => {
-    const user = await signUpUser("stranger");
-    const { data, error } = await user.client.schema("private").from("anything").select();
+    const { data, error } = await stranger.client.schema("private").from("anything").select();
 
     expect(data).toBeNull();
     expect(error?.code).toBe("PGRST106");
   });
 });
 
+describe("assertLocalHost", () => {
+  it("accepts 127.0.0.1 and localhost URLs", () => {
+    expect(() => assertLocalHost("http://127.0.0.1:54321")).not.toThrow();
+    expect(() => assertLocalHost("http://localhost:54321")).not.toThrow();
+  });
+
+  it("refuses a non-loopback host", () => {
+    expect(() => assertLocalHost("https://project-ref.supabase.co")).toThrow(
+      /refusing to use SUPABASE_URL/,
+    );
+  });
+
+  it("refuses a value that is not a URL at all", () => {
+    expect(() => assertLocalHost("not-a-url")).toThrow(/not a valid URL/);
+  });
+});
+
 describe("static guard: no admin credential material under tests/rls", () => {
-  const forbidden = ["service_role", "SERVICE_ROLE_KEY", "SECRET_KEY", "sb_secret_"];
+  const forbidden = ["service_role", "SERVICE_ROLE_KEY", "SECRET_KEY", "sb_secret_", "JWT_SECRET"];
 
   function collectFiles(dir: string): string[] {
     const files: string[] = [];

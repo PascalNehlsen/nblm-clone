@@ -1,13 +1,22 @@
 // Helpers for the RLS matrix: real sign-ins against the local Supabase Auth,
 // real PostgREST clients built from the resulting JWTs. Per AGENTS.md this
-// file must never touch the admin/service credential (the long-lived secret
+// file must never use the admin/service credential (the long-lived secret
 // that bypasses RLS) or the JWT signing secret -- only the public API URL and
 // the anon/publishable key, which are safe to use from a browser.
 //
 // Config comes from SUPABASE_URL / SUPABASE_ANON_KEY if set, otherwise from
-// `supabase status -o env`. When parsing that output we only ever look at the
-// two lines we need; every other line (including the admin credential and the
-// JWT signing secret) is skipped before it is ever assigned to a variable.
+// `supabase status -o env`. That command's raw stdout does contain the admin
+// credential and the JWT signing secret: it is held in memory only long
+// enough to be scanned line by line below, with stderr discarded outright
+// and a failure re-thrown as a plain message instead of the original error,
+// so neither a successful nor a failed invocation's full output ever leaves
+// this function. Every line except API_URL, ANON_KEY and PUBLISHABLE_KEY is
+// skipped before it is ever assigned to a named variable, so nothing beyond
+// those two values is ever held, logged or returned.
+//
+// SUPABASE_URL (from the environment or from the CLI) must resolve to
+// 127.0.0.1 or localhost: this harness signs up real users and must never be
+// pointed at a real project by a stray environment variable.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -42,19 +51,58 @@ export interface SupabaseLocalConfig {
 
 let cachedConfig: SupabaseLocalConfig | undefined;
 
+// This harness signs up real users with real passwords against whatever
+// SUPABASE_URL resolves to; refusing anything but loopback hosts means a
+// stray/misconfigured environment variable can never point it at a real
+// project.
+const ALLOWED_HOSTNAMES = new Set(["127.0.0.1", "localhost"]);
+
+/** Exported so the harness tests can exercise it directly, independent of
+ * supabaseLocalConfig()'s module-level cache. */
+export function assertLocalHost(url: string): void {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new Error(`clients.ts: SUPABASE_URL is not a valid URL: ${url}`);
+  }
+
+  if (!ALLOWED_HOSTNAMES.has(hostname)) {
+    throw new Error(
+      `clients.ts: refusing to use SUPABASE_URL with host "${hostname}" -- only 127.0.0.1 ` +
+        "and localhost are allowed. This harness signs up real users and must never run against a real project.",
+    );
+  }
+}
+
 // Only these two keys are ever read from `supabase status -o env`. Every
 // other line -- including the admin credential and the JWT signing secret --
 // is skipped by the `continue` below before its value is ever read into a
-// variable, so this process can neither hold nor leak it.
+// variable, so only API_URL/ANON_KEY/PUBLISHABLE_KEY ever leave this function
+// (see the file header for how the raw stdout itself is handled).
 const WANTED_KEYS = new Set(["API_URL", "ANON_KEY", "PUBLISHABLE_KEY"]);
 
 function readConfigFromCli(): SupabaseLocalConfig {
   const repoRoot = path.resolve(import.meta.dirname, "../../..");
   const supabaseBinary = path.join(repoRoot, "node_modules", ".bin", "supabase");
-  const output = execFileSync(supabaseBinary, ["status", "-o", "env"], {
-    encoding: "utf8",
-    cwd: repoRoot,
-  });
+
+  let output: string;
+  try {
+    output = execFileSync(supabaseBinary, ["status", "-o", "env"], {
+      encoding: "utf8",
+      cwd: repoRoot,
+      // stderr is discarded outright; stdout is captured only so this
+      // function can scan it below, never to be echoed back whole.
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    // Deliberately not including the caught error: on failure, Node attaches
+    // whatever stdout/stderr it captured to the error object, and that can
+    // include partial `supabase status` output (admin credential included).
+    throw new Error(
+      "clients.ts: `supabase status -o env` failed. Is the local stack running (`pnpm db:start`)?",
+    );
+  }
 
   let url: string | undefined;
   let anonKey: string | undefined;
@@ -93,11 +141,14 @@ export function supabaseLocalConfig(): SupabaseLocalConfig {
   const envUrl = process.env.SUPABASE_URL;
   const envAnonKey = process.env.SUPABASE_ANON_KEY;
   if (envUrl && envAnonKey) {
+    assertLocalHost(envUrl);
     cachedConfig = { url: envUrl, anonKey: envAnonKey };
     return cachedConfig;
   }
 
-  cachedConfig = readConfigFromCli();
+  const config = readConfigFromCli();
+  assertLocalHost(config.url);
+  cachedConfig = config;
   return cachedConfig;
 }
 
