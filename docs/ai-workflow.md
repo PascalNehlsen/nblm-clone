@@ -33,6 +33,7 @@ Network allowlist for this project. Rows marked *verified* were measured inside 
 |---|---|
 | `api.anthropic.com` | Claude Code itself (nonessential traffic is disabled in `.claude/settings.json`) |
 | `registry.npmjs.org` | pnpm; also the Supabase CLI, whose binary is an optional npm package pinned by integrity hash in `pnpm-lock.yaml` (no postinstall download). *Verified 2026-10-17* |
+| `registry.opentofu.org` | OpenTofu provider index for `tofu init`; the provider binaries come from GitHub release assets and are checked against `.terraform.lock.hcl`. The `tofu` binary itself is a GitHub release checked by `scripts/tofu.sh`. GET/HEAD only, scoped to this sandbox. *Verified 2026-10-17* |
 | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` | git, gh (read and PR only), CLI release downloads |
 | `public.ecr.aws` | Supabase local stack images and `pg_prove` (`supabase start`, `supabase test db`). GET/HEAD only, scoped to this sandbox. *Verified 2026-10-17* |
 | `d2glxqk2uabbnd.cloudfront.net` | Blob redirect target of ECR Public (image layers). GET/HEAD only, scoped to this sandbox. *Verified 2026-10-17* |
