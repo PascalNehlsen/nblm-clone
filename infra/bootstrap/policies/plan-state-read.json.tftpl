@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListStateBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": ["${bucket_arn}"]
+    },
+    {
+      "Sid": "ReadState",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": ["${bucket_arn}/*"]
+    },
+    {
+      "Sid": "DecryptState",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": ["${key_arn}"]
+    },
+    {
+      "Sid": "NeverWriteState",
+      "Effect": "Deny",
+      "Action": ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"],
+      "Resource": ["${bucket_arn}/*"]
+    }
+  ]
+}
