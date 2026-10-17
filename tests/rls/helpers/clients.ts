@@ -19,10 +19,10 @@
 // pointed at a real project by a stray environment variable. The key, from
 // either source, must act as anon (assertAnonKey in key-guard.ts).
 import { execFileSync } from "node:child_process";
-import { assertAnonKey } from "./key-guard";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { assertAnonKey } from "./key-guard";
 
 export interface DecodedJwt {
   sub?: string;

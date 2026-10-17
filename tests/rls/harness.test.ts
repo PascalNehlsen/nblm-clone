@@ -135,36 +135,42 @@ describe("static guard: no admin credential material under tests/rls", () => {
   }
 
   const rlsDir = path.resolve(import.meta.dirname, ".");
+  const selfFile = path.resolve(rlsDir, "harness.test.ts");
+  const keyGuardFile = path.resolve(rlsDir, "helpers/key-guard.ts");
+  const keyGuardTestFile = path.resolve(rlsDir, "key-guard.test.ts");
 
   // key-guard.ts and its test are the only places allowed to even name a
-  // secret prefix/claim (so they can reject it); the guard test itself is
-  // exempt because this very list of forbidden substrings has to live
-  // somewhere. A silently-missing exempt file would make this scan pass for
-  // the wrong reason (nothing there to flag), so its own existence is
-  // asserted separately below instead of just skipped over.
-  const exemptFiles = [
-    path.resolve(rlsDir, "harness.test.ts"),
-    path.resolve(rlsDir, "helpers/key-guard.ts"),
-    path.resolve(rlsDir, "key-guard.test.ts"),
-  ];
+  // secret shape, and only the minimum substring each needs to reject it --
+  // every other needle stays forbidden in those two files too (e.g.
+  // key-guard.ts may say `sb_secret_` but must not say `service_role`, and
+  // neither file may ever say `SERVICE_ROLE_KEY`/`SECRET_KEY`/`JWT_SECRET`).
+  // harness.test.ts itself is exempt wholesale because this very list of
+  // substrings has to live somewhere. A silently-missing exempt file would
+  // make the scan below pass for the wrong reason (nothing there to flag), so
+  // existence is asserted separately instead of just skipped over.
+  const allowedNeedlesByFile = new Map<string, Set<string>>([
+    [keyGuardFile, new Set(["sb_secret_"])],
+    [keyGuardTestFile, new Set(["sb_secret_", "service_role"])],
+  ]);
 
   it("has every exempt file present", () => {
-    for (const file of exemptFiles) {
+    for (const file of [keyGuardFile, keyGuardTestFile]) {
       expect(fs.existsSync(file), `expected exempt file to exist: ${path.relative(rlsDir, file)}`).toBe(
         true,
       );
     }
   });
 
-  it("contains none of the forbidden substrings outside the exempt files", () => {
-    const exempt = new Set(exemptFiles.map((file) => path.resolve(file)));
-
+  it("contains none of the forbidden substrings outside the allowed per-file exceptions", () => {
     const offenders: string[] = [];
     for (const file of collectFiles(rlsDir)) {
-      if (exempt.has(path.resolve(file))) continue;
+      const resolved = path.resolve(file);
+      if (resolved === selfFile) continue;
 
       const content = fs.readFileSync(file, "utf8");
+      const allowed = allowedNeedlesByFile.get(resolved) ?? new Set<string>();
       for (const needle of forbidden) {
+        if (allowed.has(needle)) continue;
         if (content.includes(needle)) {
           offenders.push(`${path.relative(rlsDir, file)}: contains "${needle}"`);
         }
@@ -175,33 +181,43 @@ describe("static guard: no admin credential material under tests/rls", () => {
   });
 });
 
-describe("static guard: key-guard.ts cannot read or exfiltrate a secret itself", () => {
-  // key-guard.ts is the one file allowed to name a secret prefix/claim (to
-  // reject it), so it must be structurally unable to read one from the
-  // environment, the filesystem or a subprocess, or send one anywhere: a
-  // pure function of the string it is handed, nothing else.
+describe("static guard: key-guard.ts has no I/O or dynamic-code primitives", () => {
+  // This is a drift guard, not a sandbox: a determined rewrite of key-guard.ts
+  // can still reach process/fs/network by going around these exact tokens
+  // (string concatenation, a bracket property access that isn't literally
+  // "globalThis", etc). What it does catch is the module quietly growing an
+  // import, an env read or a network call over time, since key-guard.ts is
+  // meant to stay a pure function of the string it is handed -- nothing read,
+  // nothing sent. Patterns are matched word-boundary against the raw file
+  // text, so a mention inside a comment counts too; that's intentional, since
+  // a comment showing how to read `process.env` is itself a sign the module
+  // has drifted from "pure function" even if the code path is unreachable.
   const keyGuardPath = path.resolve(import.meta.dirname, "helpers/key-guard.ts");
 
   it("exists", () => {
     expect(fs.existsSync(keyGuardPath)).toBe(true);
   });
 
-  it("contains none of process.env, node:fs, fs, child_process or fetch(, and imports only types", () => {
+  it("contains no import, export-from, require, process, globalThis, fetch, eval or Function", () => {
     const content = fs.readFileSync(keyGuardPath, "utf8");
 
-    const forbidden = ["process.env", "node:fs", "fs", "child_process", "fetch("];
-    for (const needle of forbidden) {
-      expect(content.includes(needle), `key-guard.ts must not contain "${needle}"`).toBe(false);
-    }
+    const forbiddenPatterns: Array<[RegExp, string]> = [
+      // Catches a static or dynamic `import(...)`/`import "x"`/`import type`.
+      [/\bimport\b/, "import"],
+      // A re-export (`export { x } from "y"` / `export * from "y"`) is still
+      // a module boundary this file should never have; a plain
+      // `export function assertAnonKey` does not match (no "from").
+      [/\bexport\b[^;\n]*\bfrom\b/, "export ... from"],
+      [/\brequire\b/, "require"],
+      [/\bprocess\b/, "process"],
+      [/\bglobalThis\b/, "globalThis"],
+      [/\bfetch\b/, "fetch"],
+      [/\beval\b/, "eval"],
+      [/\bFunction\b/, "Function"],
+    ];
 
-    const importLines = content
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("import "));
-
-    for (const line of importLines) {
-      const isTypeOnly = /^import\s+type\b/.test(line) || /^import\s*\{\s*type\b/.test(line);
-      expect(isTypeOnly, `key-guard.ts may only import types: "${line}"`).toBe(true);
+    for (const [pattern, label] of forbiddenPatterns) {
+      expect(pattern.test(content), `key-guard.ts must not contain "${label}"`).toBe(false);
     }
   });
 });
