@@ -52,3 +52,4 @@ Dependency install scripts are blocked unless `pnpm-workspace.yaml` allows them 
 - [`docs/roadmap.md`](docs/roadmap.md): what is built, what comes next, what is deliberately not built
 - [`docs/ai-workflow.md`](docs/ai-workflow.md): sandbox, agent roles, gates
 - [`docs/adr/`](docs/adr/): architecture decisions
+- [`infra/`](infra/): OpenTofu stacks; `infra/bootstrap` is applied once by hand ([ADR 0002](docs/adr/0002-bootstrap-applied-locally.md), [runbook](docs/runbooks/bootstrap.md))

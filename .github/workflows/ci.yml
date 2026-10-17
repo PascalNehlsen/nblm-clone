@@ -102,3 +102,30 @@ jobs:
       - name: Stop local Supabase
         if: always()
         run: pnpm exec supabase stop --no-backup
+
+  infra:
+    # Not a required status check yet; adding it is a ruleset change for infra/github.
+    # No cloud credentials: providers are downloaded, nothing is planned against AWS.
+    name: infra (fmt, validate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same pinned, checksummed binary as in the sandbox and on the host.
+      - name: Format
+        run: scripts/tofu.sh fmt -check -recursive -diff infra
+
+      # -lockfile=readonly fails if a provider or hash is missing from the committed lock file.
+      - name: Validate every stack
+        run: |
+          for stack in infra/*/; do
+            echo "::group::$stack"
+            scripts/tofu.sh -chdir="$stack" init -backend=false -lockfile=readonly -input=false
+            scripts/tofu.sh -chdir="$stack" validate
+            echo "::endgroup::"
+          done
