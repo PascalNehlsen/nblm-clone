@@ -89,7 +89,7 @@ jobs:
       - name: Start local Supabase
         run: |
           start() { pnpm exec supabase start -x "$SUPABASE_EXCLUDE"; }
-          start || { pnpm exec supabase stop --no-backup; sleep 10; start; }
+          start || { pnpm exec supabase stop --no-backup || true; sleep 10; start; }
         env:
           SUPABASE_EXCLUDE: realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 

@@ -3,10 +3,13 @@
 -- Each check is defined once as a `pg_temp` function returning one identifier
 -- per violation, so it can be (1) asserted empty against the real catalog and
 -- (2) proven to actually bite with a negative self-test: a `catalog_probe_`
--- object that the check must flag by its exact identifier. Checks 4, 5, 11
--- and 12 (the ones that exempt `private.notebook_role(uuid)`) also get a
+-- object that the check must flag by its exact identifier. Checks 4, 5, 11,
+-- 12 and 13 (the ones that exempt `private.notebook_role(uuid)`) also get a
 -- POSITIVE self-test: a realistically-shaped probe that those checks must
--- NOT flag.
+-- NOT flag, even once it is granted the EXECUTE privilege it needs in
+-- production. Check 7 (anon_privileges, which has no such exemption) gets a
+-- matching self-test proving the same probe IS flagged the moment anon is
+-- granted EXECUTE on it, same as any other function.
 --
 -- Self-test probes are created directly (no SAVEPOINT) and are cleaned up
 -- only by the final ROLLBACK, because pgTAP records each assertion's result
@@ -58,7 +61,7 @@
 
 begin;
 
-select plan(42);
+select plan(47);
 
 -- ---------------------------------------------------------------------------
 -- Check definitions
@@ -188,19 +191,32 @@ create function pg_temp.check_missing_search_path() returns setof text as $$
     );
 $$ language sql;
 
--- 7. anon_table_privileges: `anon` has no privilege (table-level or
--- column-level) on any public table, partitioned table, view, matview,
--- foreign table or sequence, no USAGE on schema private, and no EXECUTE on
--- any function in private. Uses has_table_privilege/has_any_column_privilege
--- (which account for PUBLIC grants and role membership, unlike inspecting
--- relacl for an exact grantee match) rather than aclexplode on a named
--- role -- a bare `grant ... to public`, or a brand new object that simply
--- inherits Postgres/Supabase default privileges, must still be caught. If
--- `private` does not exist yet those parts are simply empty (the join
--- against pg_namespace finds nothing).
-create function pg_temp.check_anon_table_privileges() returns setof text as $$
+-- 7. anon_privileges: `anon` has no privilege (table-level, column-level or,
+-- for sequences, sequence-level) on any public table, partitioned table,
+-- view, matview, foreign table or sequence, no USAGE on schema private, and
+-- no EXECUTE on any function in private. Uses has_table_privilege /
+-- has_any_column_privilege / has_sequence_privilege / has_schema_privilege /
+-- has_function_privilege (which account for PUBLIC grants and role
+-- membership, unlike inspecting relacl for an exact grantee match) rather
+-- than aclexplode on a named role -- a bare `grant ... to public`, or a
+-- brand new object that simply inherits Postgres/Supabase default
+-- privileges, must still be caught. Sequences get their own branch:
+-- has_any_column_privilege technically still returns a (correct, but
+-- table-ACL-derived rather than genuinely column-level) answer for them,
+-- since a sequence has no grantable columns -- has_sequence_privilege is the
+-- precise, documented way to ask the question for relkind S. has_sequence_
+-- privilege raises a hard error when called on a non-sequence oid, and
+-- Postgres does not guarantee AND/OR short-circuit evaluation order (it is
+-- documented as unspecified) -- confirmed the hard way: pairing `relkind =
+-- 'S' and has_sequence_privilege(...)` in one WHERE clause still raised
+-- "... is not a sequence" for an ordinary table, because the planner
+-- evaluated the function before the relkind filter. CASE WHEN is the
+-- Postgres-documented way to force evaluation order, so every call below is
+-- guarded that way instead. If `private` does not exist yet those parts are
+-- simply empty (the join against pg_namespace finds nothing).
+create function pg_temp.check_anon_privileges() returns setof text as $$
   with rels as (
-    select c.oid, n.nspname, c.relname
+    select c.oid, n.nspname, c.relname, c.relkind
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public'
@@ -209,9 +225,22 @@ create function pg_temp.check_anon_table_privileges() returns setof text as $$
   flagged_tables as (
     select nspname || '.' || relname as sig
     from rels
-    where has_table_privilege('anon', oid,
-            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-       or has_any_column_privilege('anon', oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+    where
+      case when relkind <> 'S' then
+        has_table_privilege('anon', oid,
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+      end
+      or
+      case when relkind <> 'S' then
+        has_any_column_privilege('anon', oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+      end
+  ),
+  flagged_sequences as (
+    select nspname || '.' || relname as sig
+    from rels
+    where case when relkind = 'S' then
+      has_sequence_privilege('anon', oid, 'USAGE,SELECT,UPDATE')
+    end
   ),
   schema_usage as (
     select n.nspname as sig
@@ -232,18 +261,22 @@ create function pg_temp.check_anon_table_privileges() returns setof text as $$
   )
   select sig from flagged_tables
   union all
+  select sig from flagged_sequences
+  union all
   select sig from schema_usage
   union all
   select sig from fn_exec;
 $$ language sql;
 
--- 8. authenticated_private_privileges: `authenticated` has no table-level or
--- column-level privilege on any relation in schema private. Using
--- has_table_privilege/has_any_column_privilege means a grant made `to
--- public` is caught too, since `authenticated` inherits whatever PUBLIC has.
+-- 8. authenticated_private_privileges: `authenticated` has no table-level,
+-- column-level or sequence-level privilege on any relation in schema
+-- private. Using has_table_privilege/has_any_column_privilege/
+-- has_sequence_privilege means a grant made `to public` is caught too, since
+-- `authenticated` inherits whatever PUBLIC has. See check 7 for why
+-- sequences get their own has_sequence_privilege branch.
 create function pg_temp.check_authenticated_private_privileges() returns setof text as $$
   with rels as (
-    select c.oid, n.nspname, c.relname
+    select c.oid, n.nspname, c.relname, c.relkind
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'private'
@@ -251,9 +284,19 @@ create function pg_temp.check_authenticated_private_privileges() returns setof t
   )
   select nspname || '.' || relname
   from rels
-  where has_table_privilege('authenticated', oid,
-          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-     or has_any_column_privilege('authenticated', oid, 'SELECT,INSERT,UPDATE,REFERENCES');
+  where
+    case when relkind <> 'S' then
+      has_table_privilege('authenticated', oid,
+        'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+    end
+    or
+    case when relkind <> 'S' then
+      has_any_column_privilege('authenticated', oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+    end
+    or
+    case when relkind = 'S' then
+      has_sequence_privilege('authenticated', oid, 'USAGE,SELECT,UPDATE')
+    end;
 $$ language sql;
 
 -- 9. views_not_security_invoker: every view in public is security_invoker.
@@ -399,7 +442,7 @@ select is_empty(
   'every function in public/private sets search_path'
 );
 select is_empty(
-  'select * from pg_temp.check_anon_table_privileges()',
+  'select * from pg_temp.check_anon_privileges()',
   'anon has no privilege in public and no access to private'
 );
 select is_empty(
@@ -622,16 +665,33 @@ select set_eq(
 );
 
 -- POSITIVE self-test: a realistically-shaped notebook_role -- named
--- parameter, lives in private, empty search_path, execute revoked from
--- public -- must NOT be flagged by the checks that exempt it. `create or
--- replace` so this does not conflict with the real migration PR 3 adds.
-create or replace function private.notebook_role(p_notebook_id uuid) returns text
-  language plpgsql security definer set search_path = '' as $body$
-  begin
-    return 'owner';
-  end;
-$body$;
-revoke execute on function private.notebook_role(uuid) from public;
+-- parameter, lives in private, empty search_path -- must NOT be flagged by
+-- the checks that exempt it. Only create it if PR 3's real migration has not
+-- landed yet: `create or replace` here would otherwise silently overwrite
+-- the real function's body (and could error outright if PR 3 gives it a
+-- different return type), so the probe is created solely inside this `if
+-- ... is null` guard. Either way -- probe or the real thing -- every
+-- assertion below runs against whatever `private.notebook_role(uuid)` now
+-- resolves to.
+do $do$
+begin
+  if to_regprocedure('private.notebook_role(uuid)') is null then
+    create schema if not exists private;
+    execute $create$
+      create function private.notebook_role(p_notebook_id uuid) returns text
+        language plpgsql security definer set search_path = ''
+      as $body$
+        begin
+          return 'owner';
+        end;
+      $body$;
+    $create$;
+  end if;
+end;
+$do$;
+
+-- Baseline: nobody can execute it yet.
+revoke execute on function private.notebook_role(uuid) from public, anon, authenticated;
 
 select is_empty(
   $sql$ select * from pg_temp.check_security_definer_allowlist() as v where v like '%notebook_role%' $sql$,
@@ -650,6 +710,29 @@ select is_empty(
   'security_definer_search_path does not flag notebook_role(uuid) because it sets an exact empty search_path'
 );
 
+-- Grant execute to authenticated: the realistic production grant, since RLS
+-- policies call notebook_role while running as the querying role.
+grant execute on function private.notebook_role(uuid) to authenticated;
+
+select is_empty(
+  $sql$ select * from pg_temp.check_security_definer_execute_grants() as v where v like '%notebook_role%' $sql$,
+  'security_definer_execute_grants does not flag notebook_role(uuid) even though authenticated is granted execute (the one function allowed to be callable)'
+);
+select is_empty(
+  $sql$ select * from pg_temp.check_anon_privileges() as v where v like '%notebook_role%' $sql$,
+  'anon_privileges does not flag notebook_role(uuid) while anon has no execute on it'
+);
+
+-- anon_privileges has no special exemption for notebook_role the way the
+-- SECURITY DEFINER checks do: granting anon execute must still be flagged.
+grant execute on function private.notebook_role(uuid) to anon;
+select set_eq(
+  $sql$ select * from pg_temp.check_anon_privileges() as v where v like '%notebook_role%' $sql$,
+  array['private.notebook_role(uuid)'],
+  'anon_privileges flags notebook_role(uuid) once anon is granted execute, same as any other function'
+);
+revoke execute on function private.notebook_role(uuid) from anon;
+
 -- check_missing_search_path
 create function public.catalog_probe_missing_search_path() returns int
   language sql as $body$ select 1; $body$;
@@ -662,65 +745,78 @@ select set_eq(
   'missing_search_path flags a function without an explicit search_path'
 );
 
--- check_anon_table_privileges: an explicit grant to anon (not relying on
+-- check_anon_privileges: an explicit grant to anon (not relying on
 -- Supabase's default privileges, which PR 3 revokes).
 create table public.catalog_probe_grants (id int);
 grant select on public.catalog_probe_grants to anon;
 select set_eq(
   $sql$
-    select * from pg_temp.check_anon_table_privileges() as v
+    select * from pg_temp.check_anon_privileges() as v
     where v like '%catalog_probe_grants%'
   $sql$,
   array['public.catalog_probe_grants'],
-  'anon_table_privileges flags a public table explicitly granted to anon'
+  'anon_privileges flags a public table explicitly granted to anon'
 );
 
--- check_anon_table_privileges: USAGE on schema private granted to anon.
+-- check_anon_privileges: USAGE on schema private granted to anon.
 create schema if not exists private;
 grant usage on schema private to anon;
 select set_eq(
-  $sql$ select * from pg_temp.check_anon_table_privileges() as v where v = 'private' $sql$,
+  $sql$ select * from pg_temp.check_anon_privileges() as v where v = 'private' $sql$,
   array['private'],
-  'anon_table_privileges flags USAGE on schema private granted to anon'
+  'anon_privileges flags USAGE on schema private granted to anon'
 );
 
--- check_anon_table_privileges: a private function with no explicit grants at
+-- check_anon_privileges: a private function with no explicit grants at
 -- all. Postgres defaults new functions to PUBLIC-executable, so anon gets
 -- EXECUTE through PUBLIC unless it is explicitly revoked.
 create function private.catalog_probe_fn_default_acl() returns int
   language sql as $body$ select 1; $body$;
 select set_eq(
   $sql$
-    select * from pg_temp.check_anon_table_privileges() as v
+    select * from pg_temp.check_anon_privileges() as v
     where v like '%catalog_probe_fn_default_acl%'
   $sql$,
   array['private.catalog_probe_fn_default_acl()'],
-  'anon_table_privileges flags a private function with default (PUBLIC-executable) ACL'
+  'anon_privileges flags a private function with default (PUBLIC-executable) ACL'
 );
 
--- check_anon_table_privileges: a column-level grant with no table-level grant.
+-- check_anon_privileges: a column-level grant with no table-level grant.
 create table public.catalog_probe_column_grant (id int, secret text);
 grant select (secret) on public.catalog_probe_column_grant to anon;
 select set_eq(
   $sql$
-    select * from pg_temp.check_anon_table_privileges() as v
+    select * from pg_temp.check_anon_privileges() as v
     where v like '%catalog_probe_column_grant%'
   $sql$,
   array['public.catalog_probe_column_grant'],
-  'anon_table_privileges flags a column-level grant to anon even without a table-level grant'
+  'anon_privileges flags a column-level grant to anon even without a table-level grant'
 );
 
--- check_anon_table_privileges: a partitioned table (relkind p) granted to
+-- check_anon_privileges: a partitioned table (relkind p) granted to
 -- anon, not just an ordinary table.
 create table public.catalog_probe_partition_grant (id int) partition by range (id);
 grant select on public.catalog_probe_partition_grant to anon;
 select set_eq(
   $sql$
-    select * from pg_temp.check_anon_table_privileges() as v
+    select * from pg_temp.check_anon_privileges() as v
     where v like '%catalog_probe_partition_grant%'
   $sql$,
   array['public.catalog_probe_partition_grant'],
-  'anon_table_privileges flags a partitioned table (relkind p) granted to anon'
+  'anon_privileges flags a partitioned table (relkind p) granted to anon'
+);
+
+-- check_anon_privileges: a sequence granted to anon. Sequences are checked
+-- via has_sequence_privilege, a separate branch from ordinary tables/views.
+create sequence public.catalog_probe_seq;
+grant usage on sequence public.catalog_probe_seq to anon;
+select set_eq(
+  $sql$
+    select * from pg_temp.check_anon_privileges() as v
+    where v like '%catalog_probe_seq%'
+  $sql$,
+  array['public.catalog_probe_seq'],
+  'anon_privileges flags a sequence granted to anon'
 );
 
 -- check_authenticated_private_privileges
@@ -748,6 +844,20 @@ select set_eq(
   $sql$,
   array['private.catalog_probe_auth_pub_grant'],
   'authenticated_private_privileges flags a private table granted to PUBLIC'
+);
+
+-- check_authenticated_private_privileges: a sequence in private granted to
+-- authenticated, checked via has_sequence_privilege (see check 7).
+create schema if not exists private;
+create sequence private.catalog_probe_auth_seq;
+grant usage on sequence private.catalog_probe_auth_seq to authenticated;
+select set_eq(
+  $sql$
+    select * from pg_temp.check_authenticated_private_privileges() as v
+    where v like '%catalog_probe_auth_seq%'
+  $sql$,
+  array['private.catalog_probe_auth_seq'],
+  'authenticated_private_privileges flags a private sequence granted to authenticated'
 );
 
 -- check_views_not_security_invoker
