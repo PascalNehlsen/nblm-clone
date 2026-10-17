@@ -1,0 +1,2 @@
+-- Local seed data. Empty on purpose: tests create their own users and rows through
+-- the API with real sign-ins, so nothing here can hide a missing policy.
