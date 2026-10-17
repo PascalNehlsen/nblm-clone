@@ -54,11 +54,26 @@
 --     while running as the querying role and therefore needs EXECUTE from
 --     at least `authenticated`; PR 3 grants that explicitly.
 --   * trigger functions (allowed check 4 only when they return trigger,
---     checked in 11-13 like everything else): PR 3's `private.add_notebook_owner()`
---     and `private.audit_membership()`, matched by OID via
---     `to_regprocedure('private.<name>()')`, null-safe until the migration
---     creates them. `private.guard_last_owner()` is SECURITY INVOKER, so it
---     never reaches checks 4-6 or 11-13 in the first place.
+--     checked in 11-13 like everything else): PR 3's `private.add_notebook_owner()`,
+--     `private.audit_membership()` and `private.guard_last_owner()` (the last
+--     moved from SECURITY INVOKER to SECURITY DEFINER as part of the
+--     bulk-operation last-owner-guard fix -- an invoker-rights lock query ran
+--     under RLS, which could misfire mid-statement for a multi-row
+--     delete/update), matched by OID via `to_regprocedure('private.<name>()')`,
+--     null-safe until the migration creates them.
+--
+-- Since the fix landed, new functions are no longer PUBLIC-executable by
+-- default: the migration now does a GLOBAL `alter default privileges for
+-- role postgres revoke execute on functions from public` (the per-schema
+-- form does not actually remove Postgres's built-in default, see check 16's
+-- own comment). That means the self-tests for checks 7, 13 and 15 that used
+-- to rely on a freshly created function's default ACL still being
+-- PUBLIC-executable now have to grant EXECUTE to PUBLIC explicitly to probe
+-- the "what if a function did end up PUBLIC-executable" case -- renamed from
+-- "default (PUBLIC-executable) ACL" to "EXECUTE granted to PUBLIC"
+-- throughout. Check 16's own self-test block separately documents the new
+-- default directly: a function created in public after the migration is NOT
+-- executable by PUBLIC or anon without an explicit grant.
 --
 -- Checks 15-18 (added alongside PR 3) close gaps the checks above do not
 -- cover:
@@ -78,7 +93,7 @@
 
 begin;
 
-select plan(57);
+select plan(59);
 
 -- ---------------------------------------------------------------------------
 -- Check definitions
@@ -146,9 +161,14 @@ create function pg_temp.check_security_definer_allowlist() returns setof text as
     -- creates these: to_regprocedure returns null for a function that does
     -- not exist yet, and the final `where ... not in (select proc from
     -- allowed where proc is not null)` below already strips nulls out.
+    -- private.guard_last_owner() is allowlisted here too: it moved from
+    -- SECURITY INVOKER to SECURITY DEFINER as part of the bulk-operation
+    -- last-owner-guard fix (an invoker-rights lock query ran under RLS,
+    -- which could misfire mid-statement for a multi-row delete/update).
     select unnest(array[
       to_regprocedure('private.add_notebook_owner()'),
-      to_regprocedure('private.audit_membership()')
+      to_regprocedure('private.audit_membership()'),
+      to_regprocedure('private.guard_last_owner()')
     ]) as proc
   ),
   allowed as (
@@ -451,19 +471,30 @@ $$ language sql;
 
 -- 16. default_acl: for role postgres (the migration owner), pg_default_acl in
 -- schema public and private never grants anything to anon, and never leaves
--- EXECUTE on functions in public grantable to PUBLIC by default. This guards
--- the migration itself -- if it forgot `alter default privileges ... revoke
--- ... from anon`, the real-catalog checks above would still pass today but a
--- later `create table`/`create function` by postgres in the same schema
--- would silently inherit Supabase's permissive defaults again.
+-- EXECUTE on functions grantable to PUBLIC by default -- checked both per
+-- schema (public/private, via an EXISTING default-ACL row that still lists a
+-- PUBLIC EXECUTE grant) and globally (defaclnamespace = 0, i.e. no `in
+-- schema` clause). The global branch treats the *absence* of a proper
+-- global revoke row as a violation too, not just an existing row that still
+-- grants PUBLIC execute: `alter default privileges for role postgres IN
+-- SCHEMA public revoke execute on functions from public` does not remove
+-- Postgres's built-in "new functions are PUBLIC-executable" default --
+-- empirically confirmed after a real bulk-operation bug surfaced it -- only
+-- the global form (no `in schema`) does, so a plain aclexplode scan (which
+-- can only ever see a row that exists) can never catch "no global row was
+-- ever created". This guards the migration itself -- if it forgot `alter
+-- default privileges ... revoke ... from anon`, or used the per-schema form
+-- where only the global one actually works, the real-catalog checks above
+-- would still pass today but a later `create function` by postgres would
+-- silently stay (or become) PUBLIC-executable again.
 create function pg_temp.check_default_acl() returns setof text as $$
   with defaults as (
-    select n.nspname as schema_name, d.defaclobjtype as objtype, d.defaclacl as acl
+    select coalesce(n.nspname, '(global)') as schema_name, d.defaclobjtype as objtype, d.defaclacl as acl
     from pg_default_acl d
-    join pg_namespace n on n.oid = d.defaclnamespace
+    left join pg_namespace n on n.oid = d.defaclnamespace
     join pg_roles r on r.oid = d.defaclrole
     where r.rolname = 'postgres'
-      and n.nspname in ('public', 'private')
+      and (n.nspname in ('public', 'private') or d.defaclnamespace = 0)
   ),
   anon_grants as (
     select defaults.schema_name || ':defaclobjtype=' || defaults.objtype::text as sig
@@ -472,15 +503,36 @@ create function pg_temp.check_default_acl() returns setof text as $$
     where gr.rolname = 'anon'
   ),
   public_function_execute as (
+    -- An EXISTING default-ACL row (schema-scoped or global) that still
+    -- grants EXECUTE on functions to PUBLIC.
     select defaults.schema_name || ':defaclobjtype=' || defaults.objtype::text as sig
-    from defaults, lateral aclexplode(coalesce(defaults.acl, '{}')) a
+    from defaults
     where defaults.objtype = 'f'
-      and a.grantee = 0
-      and a.privilege_type = 'EXECUTE'
+      and exists (
+        select 1 from aclexplode(coalesce(defaults.acl, '{}')) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      )
+  ),
+  public_function_execute_missing_global_revoke as (
+    select '(global):defaclobjtype=f' as sig
+    where not exists (
+      select 1
+      from pg_default_acl d
+      join pg_roles r on r.oid = d.defaclrole
+      where r.rolname = 'postgres'
+        and d.defaclnamespace = 0
+        and d.defaclobjtype = 'f'
+        and not exists (
+          select 1 from aclexplode(coalesce(d.defaclacl, '{}')) a
+          where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+        )
+    )
   )
   select sig from anon_grants
   union all
-  select sig from public_function_execute;
+  select sig from public_function_execute
+  union all
+  select sig from public_function_execute_missing_global_revoke;
 $$ language sql;
 
 -- 17. no_create_on_schemas: neither anon nor authenticated has CREATE on
@@ -887,18 +939,22 @@ select set_eq(
   'anon_privileges flags USAGE on schema private granted to anon'
 );
 
--- check_anon_privileges: a private function with no explicit grants at
--- all. Postgres defaults new functions to PUBLIC-executable, so anon gets
--- EXECUTE through PUBLIC unless it is explicitly revoked.
-create function private.catalog_probe_fn_default_acl() returns int
+-- check_anon_privileges: a private function with EXECUTE explicitly granted
+-- to PUBLIC. Before the migration's global `alter default privileges ...
+-- revoke execute on functions from public`, a freshly created function
+-- defaulted to PUBLIC-executable with no grant needed; now that the global
+-- revoke is in place, this probe grants it explicitly to still exercise the
+-- "anon inherits EXECUTE through PUBLIC" path the check must catch.
+create function private.catalog_probe_fn_exec_public() returns int
   language sql as $body$ select 1; $body$;
+grant execute on function private.catalog_probe_fn_exec_public() to public;
 select set_eq(
   $sql$
     select * from pg_temp.check_anon_privileges() as v
-    where v like '%catalog_probe_fn_default_acl%'
+    where v like '%catalog_probe_fn_exec_public%'
   $sql$,
-  array['private.catalog_probe_fn_default_acl()'],
-  'anon_privileges flags a private function with default (PUBLIC-executable) ACL'
+  array['private.catalog_probe_fn_exec_public()'],
+  'anon_privileges flags a private function with EXECUTE granted to PUBLIC'
 );
 
 -- check_anon_privileges: a column-level grant with no table-level grant.
@@ -1052,8 +1108,12 @@ select set_eq(
 );
 
 -- check_security_definer_execute_grants: EXECUTE granted to anon, to
--- authenticated, and the default (untouched) PUBLIC-executable ACL -- all
--- three distinct ways a SECURITY DEFINER function can end up callable.
+-- authenticated, and to PUBLIC directly -- three distinct ways a SECURITY
+-- DEFINER function can end up callable. The PUBLIC case used to rely on a
+-- freshly created function's default ACL (no grant needed); now that the
+-- migration's global `alter default privileges ... revoke execute on
+-- functions from public` is in place, this probe grants PUBLIC execute
+-- explicitly instead, to still exercise that code path.
 create function private.catalog_probe_secdef_exec_anon() returns trigger
   language plpgsql security definer set search_path = '' as $body$
   begin
@@ -1072,13 +1132,13 @@ $body$;
 revoke execute on function private.catalog_probe_secdef_exec_authenticated() from public;
 grant execute on function private.catalog_probe_secdef_exec_authenticated() to authenticated;
 
-create function private.catalog_probe_secdef_exec_default() returns trigger
+create function private.catalog_probe_secdef_exec_public() returns trigger
   language plpgsql security definer set search_path = '' as $body$
   begin
     return new;
   end;
 $body$;
--- no grant/revoke at all: default ACL leaves EXECUTE to PUBLIC.
+grant execute on function private.catalog_probe_secdef_exec_public() to public;
 
 select set_eq(
   $sql$
@@ -1088,9 +1148,9 @@ select set_eq(
   array[
     'private.catalog_probe_secdef_exec_anon()',
     'private.catalog_probe_secdef_exec_authenticated()',
-    'private.catalog_probe_secdef_exec_default()'
+    'private.catalog_probe_secdef_exec_public()'
   ],
-  'security_definer_execute_grants flags execute granted to anon, to authenticated, and default PUBLIC execute'
+  'security_definer_execute_grants flags execute granted to anon, to authenticated, and EXECUTE granted to PUBLIC'
 );
 
 -- check_no_matviews_or_foreign_tables_in_public: a materialized view.
@@ -1119,18 +1179,20 @@ select set_eq(
   'no_matviews_or_foreign_tables_in_public flags a foreign table in public'
 );
 
--- check_anon_execute_on_public_functions: a public function with the default
--- (untouched) ACL, which leaves it PUBLIC-executable and therefore reachable
--- by anon too.
+-- check_anon_execute_on_public_functions: a public function with EXECUTE
+-- explicitly granted to PUBLIC, which leaves it reachable by anon too. Used
+-- to rely on a freshly created function's default ACL (no grant needed);
+-- now that the migration's global revoke is in place, the grant is explicit.
 create function public.catalog_probe_anon_exec_public_fn() returns int
   language sql as $body$ select 1; $body$;
+grant execute on function public.catalog_probe_anon_exec_public_fn() to public;
 select set_eq(
   $sql$
     select * from pg_temp.check_anon_execute_on_public_functions() as v
     where v like '%catalog_probe_anon_exec_public_fn%'
   $sql$,
   array['public.catalog_probe_anon_exec_public_fn()'],
-  'anon_execute_on_public_functions flags a public function with default (PUBLIC-executable) ACL'
+  'anon_execute_on_public_functions flags a public function with EXECUTE granted to PUBLIC'
 );
 
 -- check_default_acl: a default-privilege grant to anon on tables in schema
@@ -1144,6 +1206,35 @@ select set_eq(
   'default_acl flags a default-privilege grant to anon on tables in schema public, made by role postgres'
 );
 alter default privileges for role postgres in schema public revoke select on tables from anon;
+
+-- check_default_acl: the missing-global-revoke branch flags a GLOBAL-form
+-- default-privilege EXECUTE-to-PUBLIC grant on functions, made by role
+-- postgres (defaclnamespace = 0, not scoped to any schema). Reverted
+-- immediately after the assertion for the same reason as above.
+alter default privileges for role postgres grant execute on functions to public;
+select set_eq(
+  $sql$ select * from pg_temp.check_default_acl() as v where v = '(global):defaclobjtype=f' $sql$,
+  array['(global):defaclobjtype=f'],
+  'default_acl flags a global-form default-privilege EXECUTE-to-PUBLIC grant on functions made by role postgres'
+);
+alter default privileges for role postgres revoke execute on functions from public;
+
+-- Documents the new default directly (not just the default-ACL catalog
+-- entry above): now that the migration's global revoke is in place, a
+-- function created in public with no explicit grant is NOT executable by
+-- PUBLIC or anon -- the opposite of Postgres's historical default, and the
+-- reason every other self-test above now grants EXECUTE to PUBLIC
+-- explicitly instead of relying on it. `authenticated` is deliberately not
+-- checked here: Supabase's own per-schema default for `public` (the schema
+-- PostgREST exposes) separately grants `authenticated` EXECUTE on new
+-- functions there, same as it does for tables -- that is the intended
+-- app-schema convention, not a gap this check is about.
+create function public.catalog_probe_new_fn_no_default_execute() returns int
+  language sql as $body$ select 1; $body$;
+select ok(
+  not has_function_privilege('anon', 'public.catalog_probe_new_fn_no_default_execute()', 'EXECUTE'),
+  'a function created in public after the migration is NOT executable by PUBLIC or anon'
+);
 
 -- check_no_create_on_schemas: CREATE on schema public granted to anon.
 -- Reverted immediately after the assertion for the same reason as above.

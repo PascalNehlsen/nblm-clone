@@ -3,9 +3,6 @@
 // an anonymous-signin user -- never the admin/service-role credential. Users
 // are created once per describe block (beforeAll), not per `it`, per the local Auth rate limits
 // (raised for this harness, see supabase/config.toml).
-//
-// This migration does not exist yet, so every case here is expected to be
-// RED: missing table/trigger/policy, not a harness bug.
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { anonClient, signInAnonymousUser, signUpUser, type SignedInUser } from "./helpers/clients";
@@ -203,7 +200,14 @@ describe("notebooks: update", () => {
     expect(error).toBeNull();
     expect(data).toEqual([]);
 
-    const { data: reread } = await owner.client.from("notebooks").select("title").eq("id", notebookId);
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebooks")
+      .select("title")
+      .eq("id", notebookId);
+    expect(rereadError).toBeNull();
+    // toHaveLength(1) first, so a missing/empty reread fails loudly instead
+    // of letting the optional-chained read below vacuously pass as undefined.
+    expect(reread).toHaveLength(1);
     expect(reread?.[0]?.title).not.toBe(attemptedTitle);
   });
 
@@ -220,7 +224,12 @@ describe("notebooks: update", () => {
     expect(error).toBeNull();
     expect(data).toEqual([]);
 
-    const { data: reread } = await owner.client.from("notebooks").select("title").eq("id", notebookId);
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebooks")
+      .select("title")
+      .eq("id", notebookId);
+    expect(rereadError).toBeNull();
+    expect(reread).toHaveLength(1);
     expect(reread?.[0]?.title).not.toBe(attemptedTitle);
   });
 
@@ -232,6 +241,18 @@ describe("notebooks: update", () => {
       .update({ created_by: randomUUID() })
       .eq("id", notebookId);
 
+    expect(error?.code).toBe("42501");
+  });
+
+  it("rejects an anon update with 42501 (no grants for anon at all)", async () => {
+    const notebookId = await freshNotebookWithMembers();
+
+    const { data, error } = await anonClient()
+      .from("notebooks")
+      .update({ title: `notebooks-update-anon-attempt ${randomUUID()}` })
+      .eq("id", notebookId);
+
+    expect(data).toBeNull();
     expect(error?.code).toBe("42501");
   });
 });
@@ -289,20 +310,35 @@ describe("notebooks: delete", () => {
     expect(reread).toEqual([{ id: notebookId }]);
   });
 
-  it("the owner deletes the notebook; cascade removes every membership row, even with a single (last) owner", async () => {
-    // Single-owner notebook: this is the case that exercises guard_last_owner's
-    // "parent notebook no longer exists" escape hatch and the delete audit path.
+  it("rejects an anon delete with 42501 (no grants for anon at all)", async () => {
+    const notebookId = await freshNotebookWithMembers();
+
+    const { data, error } = await anonClient().from("notebooks").delete().eq("id", notebookId);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("42501");
+  });
+
+  it("the owner deletes the notebook (single owner)", async () => {
+    // The actual cascade (every membership row for the notebook is gone
+    // afterwards) is asserted with a privileged query in
+    // supabase/tests/database/010_notebooks_memberships.test.sql: once the
+    // notebook is deleted, the deleting owner has no membership row left
+    // either, so a follow-up select as that owner would return 0 rows via
+    // RLS regardless of whether the cascade actually ran -- a vacuous check.
     const notebookId = await createNotebook(owner, "notebooks-delete-owner-only");
 
     const { data, error } = await owner.client.from("notebooks").delete().eq("id", notebookId).select("id");
     expect(error).toBeNull();
     expect(data).toEqual([{ id: notebookId }]);
+  });
 
-    const { data: members, error: membersError } = await owner.client
-      .from("notebook_members")
-      .select("user_id")
-      .eq("notebook_id", notebookId);
-    expect(membersError).toBeNull();
-    expect(members).toEqual([]);
+  it("a co-owner (not the bootstrap owner) can also delete the notebook (owners are flat)", async () => {
+    const notebookId = await createNotebook(owner, "notebooks-delete-co-owner");
+    const coOwner = await signUpUser("notebooks-delete-co-owner-user");
+    await addMember(owner, notebookId, coOwner.userId, "owner");
+
+    const { data, error } = await coOwner.client.from("notebooks").delete().eq("id", notebookId).select("id");
+    expect(error).toBeNull();
+    expect(data).toEqual([{ id: notebookId }]);
   });
 });

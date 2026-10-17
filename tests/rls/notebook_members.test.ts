@@ -5,9 +5,6 @@
 // service-role credential. Users are created once per describe block (beforeAll), not per `it`, per
 // the local Auth rate limits (raised for this harness, see
 // supabase/config.toml).
-//
-// This migration does not exist yet, so every case here is expected to be
-// RED: missing table/trigger/policy/function, not a harness bug.
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { anonClient, signInAnonymousUser, signUpUser, type SignedInUser } from "./helpers/clients";
@@ -174,16 +171,85 @@ describe("notebook_members: update", () => {
   let owner: SignedInUser;
   let editor: SignedInUser;
   let viewer: SignedInUser;
+  let stranger: SignedInUser;
   let notebookId: string;
 
   beforeAll(async () => {
     owner = await signUpUser("members-update-owner");
     editor = await signUpUser("members-update-editor");
     viewer = await signUpUser("members-update-viewer");
+    stranger = await signUpUser("members-update-stranger");
 
     notebookId = await createNotebook(owner, "members-update");
     await addMember(owner, notebookId, editor.userId, "editor");
     await addMember(owner, notebookId, viewer.userId, "viewer");
+  });
+
+  it("an editor updating another member's role changes nothing", async () => {
+    const { data, error } = await editor.client
+      .from("notebook_members")
+      .update({ role: "editor" })
+      .eq("notebook_id", notebookId)
+      .eq("user_id", viewer.userId)
+      .select("role");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("role")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", viewer.userId);
+    expect(rereadError).toBeNull();
+    expect(reread).toEqual([{ role: "viewer" }]);
+  });
+
+  it("a viewer updating another member's role changes nothing", async () => {
+    const { data, error } = await viewer.client
+      .from("notebook_members")
+      .update({ role: "viewer" })
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId)
+      .select("role");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("role")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId);
+    expect(rereadError).toBeNull();
+    expect(reread).toEqual([{ role: "editor" }]);
+  });
+
+  it("a stranger updating a member's role changes nothing", async () => {
+    const { data, error } = await stranger.client
+      .from("notebook_members")
+      .update({ role: "owner" })
+      .eq("notebook_id", notebookId)
+      .eq("user_id", viewer.userId)
+      .select("role");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("role")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", viewer.userId);
+    expect(rereadError).toBeNull();
+    expect(reread).toEqual([{ role: "viewer" }]);
+  });
+
+  it("rejects an anon update with 42501 (no grants for anon at all)", async () => {
+    const { data, error } = await anonClient()
+      .from("notebook_members")
+      .update({ role: "owner" })
+      .eq("notebook_id", notebookId)
+      .eq("user_id", viewer.userId);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("42501");
   });
 
   it("an editor setting their own role to owner changes nothing", async () => {
@@ -257,6 +323,7 @@ describe("notebook_members: delete", () => {
   let editor: SignedInUser;
   let viewerA: SignedInUser;
   let viewerB: SignedInUser;
+  let stranger: SignedInUser;
   let notebookId: string;
 
   beforeAll(async () => {
@@ -264,6 +331,7 @@ describe("notebook_members: delete", () => {
     editor = await signUpUser("members-delete-editor");
     viewerA = await signUpUser("members-delete-viewer-a");
     viewerB = await signUpUser("members-delete-viewer-b");
+    stranger = await signUpUser("members-delete-stranger");
 
     notebookId = await createNotebook(owner, "members-delete");
     await addMember(owner, notebookId, editor.userId, "editor");
@@ -305,6 +373,54 @@ describe("notebook_members: delete", () => {
       .eq("notebook_id", notebookId)
       .eq("user_id", viewerB.userId);
     expect(reread).toEqual([{ user_id: viewerB.userId }]);
+  });
+
+  it("a viewer removing another member removes nothing", async () => {
+    const { data, error } = await viewerB.client
+      .from("notebook_members")
+      .delete()
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId)
+      .select("user_id");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("user_id")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId);
+    expect(rereadError).toBeNull();
+    expect(reread).toEqual([{ user_id: editor.userId }]);
+  });
+
+  it("a stranger removing a member removes nothing", async () => {
+    const { data, error } = await stranger.client
+      .from("notebook_members")
+      .delete()
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId)
+      .select("user_id");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("user_id")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId);
+    expect(rereadError).toBeNull();
+    expect(reread).toEqual([{ user_id: editor.userId }]);
+  });
+
+  it("rejects an anon delete with 42501 (no grants for anon at all)", async () => {
+    const { data, error } = await anonClient()
+      .from("notebook_members")
+      .delete()
+      .eq("notebook_id", notebookId)
+      .eq("user_id", editor.userId);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("42501");
   });
 
   it("an editor deleting their own membership (self-leave) removes nothing", async () => {
@@ -373,6 +489,95 @@ describe("notebook_members: last-owner guard", () => {
       .eq("user_id", secondOwner.userId);
     expect(selectError).toBeNull();
     expect(secondOwnerRow).toEqual([{ role: "owner" }]);
+  });
+});
+
+describe("notebook_members: bulk operations and flat ownership", () => {
+  // Reproduces the reported bug through the real PostgREST/JWT path (the
+  // pgTAP suite in supabase/tests/database/010_notebooks_memberships.test.sql
+  // reproduces it directly against Postgres, with the acting owner's row
+  // deterministically ordered before/after the other owner's, since this bug
+  // depends on which owner's own row is processed first -- not on insertion
+  // order, and not controllable through a real sign-up, whose user id is
+  // assigned by Supabase Auth). With two owners, a bulk statement matching
+  // every membership row for a notebook must raise P0001 and change nothing,
+  // exactly like the single-row last-owner guard above.
+  //
+  // Each `it` below gets its own fresh notebook/owners: unlike every other
+  // multi-row-safe describe in this file, a bulk delete/demote that
+  // currently (bug) succeeds instead of raising would otherwise mutate a
+  // fixture shared across tests and corrupt whichever test runs next.
+  let owner: SignedInUser;
+  let coOwner: SignedInUser;
+
+  beforeAll(async () => {
+    owner = await signUpUser("members-bulk-owner");
+    coOwner = await signUpUser("members-bulk-co-owner");
+  });
+
+  it("a bulk delete matching every member of the notebook raises P0001 and changes nothing", async () => {
+    const notebookId = await createNotebook(owner, "members-bulk-delete");
+    await addMember(owner, notebookId, coOwner.userId, "owner");
+
+    const { data, error } = await coOwner.client
+      .from("notebook_members")
+      .delete()
+      .eq("notebook_id", notebookId);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("P0001");
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("user_id")
+      .eq("notebook_id", notebookId);
+    expect(rereadError).toBeNull();
+    expect(reread).toHaveLength(2);
+  });
+
+  it("a bulk demote matching every member of the notebook raises P0001 and changes nothing", async () => {
+    const notebookId = await createNotebook(owner, "members-bulk-demote");
+    await addMember(owner, notebookId, coOwner.userId, "owner");
+
+    const { data, error } = await owner.client
+      .from("notebook_members")
+      .update({ role: "viewer" })
+      .eq("notebook_id", notebookId);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("P0001");
+
+    const { data: reread, error: rereadError } = await owner.client
+      .from("notebook_members")
+      .select("role")
+      .eq("notebook_id", notebookId);
+    expect(rereadError).toBeNull();
+    expect(reread).toHaveLength(2);
+    for (const row of reread ?? []) {
+      expect(row.role).toBe("owner");
+    }
+  });
+
+  it("one owner can demote a different owner (not themselves) while a third owner remains", async () => {
+    const notebookId = await createNotebook(owner, "members-bulk-demote-another");
+    await addMember(owner, notebookId, coOwner.userId, "owner");
+    const thirdOwner = await signUpUser("members-bulk-third-owner");
+    await addMember(owner, notebookId, thirdOwner.userId, "owner");
+
+    const { data, error } = await owner.client
+      .from("notebook_members")
+      .update({ role: "editor" })
+      .eq("notebook_id", notebookId)
+      .eq("user_id", coOwner.userId)
+      .select("role");
+    expect(error).toBeNull();
+    expect(data).toEqual([{ role: "editor" }]);
+
+    const { data: thirdOwnerRow, error: thirdOwnerError } = await owner.client
+      .from("notebook_members")
+      .select("role")
+      .eq("notebook_id", notebookId)
+      .eq("user_id", thirdOwner.userId);
+    expect(thirdOwnerError).toBeNull();
+    expect(thirdOwnerRow).toEqual([{ role: "owner" }]);
   });
 });
 

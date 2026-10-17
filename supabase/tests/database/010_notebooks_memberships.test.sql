@@ -2,12 +2,29 @@
 -- notebook_members, private.notebook_role, the trigger functions and the
 -- audit trail). 000_catalog.test.sql proves the general catalog invariants
 -- every table/function must satisfy; this file proves PR 3's own contract:
--- bootstrap membership, the audit trail's content, and the last-owner guard.
+-- bootstrap membership, the audit trail's content, and the last-owner guard
+-- -- including its behaviour under bulk (multi-row) delete/update, which a
+-- single-row-at-a-time mental model misses.
 --
--- This migration does not exist yet, so most assertions below are expected
--- to fail -- but the failures must be genuine pgTAP FAILs (missing
--- table/function/type), never a crashed script. Three custom pg_temp helpers
--- make that possible:
+-- The migration is applied locally. Most assertions below are expected to
+-- pass; the ones added for the bulk-operation regression below are expected
+-- to currently FAIL against the applied migration: with two owners A and B,
+-- A running a bulk `delete ... where notebook_id = X` (or a bulk `update
+-- ... set role = 'viewer' where notebook_id = X`) deletes/demotes both
+-- instead of raising. Root cause: `private.guard_last_owner()` is currently
+-- SECURITY INVOKER, so its "does the parent notebook still exist" lock
+-- query runs under RLS as the acting role; once that role's own membership
+-- row has been processed earlier in the same multi-row statement, the
+-- notebook looks invisible (not "deleted", just RLS-hidden to that role),
+-- and the guard's cascade-escape-hatch wrongly treats that as "the notebook
+-- was deleted out from under me, allow it". The fix (SECURITY DEFINER,
+-- allowlisted, `for no key update`) is for the builder; this file only
+-- proves the gap and will keep proving the fix once it lands.
+--
+-- Whether a probe currently fails because a schema object errors out, a
+-- business rule isn't met, or (post-fix) succeeds, every probe must produce
+-- a genuine pgTAP PASS/FAIL, never a crashed script. Three custom pg_temp
+-- helpers make that possible:
 --
 --   * pg_temp.safe_ok(probe, description)            -- "is this true?"
 --   * pg_temp.act_lives(actor, probe, description)    -- "does this not throw,
@@ -24,10 +41,9 @@
 -- see 000_catalog.test.sql's header; PL/pgSQL's implicit exception
 -- subtransaction is the mechanism pgTAP's own throws_ok/lives_ok use
 -- internally for exactly this reason) and always emits exactly one pgTAP
--- assertion, whether the probe succeeds, fails validation, or errors because
--- a table/function/type referenced inside it does not exist yet. Custom
--- wrappers are used instead of pgTAP's own throws_ok/lives_ok so the exact
--- overload called (and therefore its exact behaviour) is never in doubt.
+-- assertion, whatever the probe does. Custom wrappers are used instead of
+-- pgTAP's own throws_ok/lives_ok so the exact overload called (and therefore
+-- its exact behaviour) is never in doubt.
 --
 -- act_lives/act_throws do the role switch *inside* the function body (`set
 -- local role authenticated`, `set_config('request.jwt.claims', ...)`, then
@@ -48,7 +64,7 @@
 
 begin;
 
-select plan(48);
+select plan(74);
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -116,31 +132,84 @@ $$ language plpgsql;
 
 -- Scratch values shared across statements below (there is no session
 -- variable mechanism at the top level of a .sql file, only tables).
+--
+-- The bulk-operation regression (see file header) does not actually depend
+-- on *insertion* order: notebook_members' primary key is (notebook_id,
+-- user_id), so `where notebook_id = X` is satisfied via that index, and rows
+-- come back in user_id order, not insertion order. Confirmed empirically by
+-- running this file repeatedly with random ids: which of two structurally
+-- identical scenarios reproduced the bug flipped between runs. What actually
+-- matters is simply whether the acting user's own row sorts before or after
+-- the other owner's row -- "acting row processed first" is the condition
+-- that reproduces the bug (see file header for why). So the owner pairs for
+-- scenarios I-L below use fixed, hand-picked uuids (not gen_random_uuid())
+-- whose hex ordering is known, deliberately placing the acting owner first
+-- in one pair and last in the other -- this is what "_first"/"_last" refer
+-- to below, not insertion order -- so the suite reproduces the bug
+-- deterministically instead of depending on random id generation.
 create table pg_temp.scratch (
   notebook_a uuid not null,
   notebook_b uuid not null,
   owner_a uuid not null,
   editor_a uuid not null,
   owner_b uuid not null,
-  owner_b2 uuid not null
+  owner_b2 uuid not null,
+  notebook_three uuid not null,
+  owner_p uuid not null,
+  owner_q uuid not null,
+  owner_r uuid not null,
+  notebook_bd_first uuid not null,
+  owner_bd_first_1 uuid not null,
+  owner_bd_first_2 uuid not null,
+  notebook_bd_last uuid not null,
+  owner_bd_last_1 uuid not null,
+  owner_bd_last_2 uuid not null,
+  notebook_bu_first uuid not null,
+  owner_bu_first_1 uuid not null,
+  owner_bu_first_2 uuid not null,
+  notebook_bu_last uuid not null,
+  owner_bu_last_1 uuid not null,
+  owner_bu_last_2 uuid not null
 );
-insert into pg_temp.scratch
-  values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid());
+insert into pg_temp.scratch (
+  notebook_a, notebook_b, owner_a, editor_a, owner_b, owner_b2,
+  notebook_three, owner_p, owner_q, owner_r,
+  notebook_bd_first, owner_bd_first_1, owner_bd_first_2,
+  notebook_bd_last, owner_bd_last_1, owner_bd_last_2,
+  notebook_bu_first, owner_bu_first_1, owner_bu_first_2,
+  notebook_bu_last, owner_bu_last_1, owner_bu_last_2
+)
+values (
+  gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+  gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+  -- bd_first: acting owner (owner_bd_first_1) sorts FIRST (low uuid).
+  gen_random_uuid(), '00000000-0000-4000-8000-000000000001', 'ffffffff-ffff-4fff-bfff-fffffffffff1',
+  -- bd_last: acting owner (owner_bd_last_2) sorts LAST (high uuid).
+  gen_random_uuid(), '00000000-0000-4000-8000-000000000002', 'ffffffff-ffff-4fff-bfff-fffffffffff2',
+  -- bu_first: acting owner (owner_bu_first_1) sorts FIRST (low uuid).
+  gen_random_uuid(), '00000000-0000-4000-8000-000000000003', 'ffffffff-ffff-4fff-bfff-fffffffffff3',
+  -- bu_last: acting owner (owner_bu_last_2) sorts LAST (high uuid).
+  gen_random_uuid(), '00000000-0000-4000-8000-000000000004', 'ffffffff-ffff-4fff-bfff-fffffffffff4'
+);
 
 -- Test users, created directly in auth.users inside this transaction (it
--- already exists regardless of PR 3, so these inserts are not wrapped).
+-- already exists regardless of PR 3, so this insert is not wrapped). Built
+-- from an array of every scratch user column (plain SQL, no PL/pgSQL), so
+-- adding a new scenario above does not also require a new, hand-written
+-- insert statement here.
 insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
-select owner_a, owner_a::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
-from pg_temp.scratch;
-insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
-select editor_a, editor_a::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
-from pg_temp.scratch;
-insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
-select owner_b, owner_b::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
-from pg_temp.scratch;
-insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
-select owner_b2, owner_b2::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
-from pg_temp.scratch;
+select u, u::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
+from (
+  select unnest(array[
+    owner_a, editor_a, owner_b, owner_b2,
+    owner_p, owner_q, owner_r,
+    owner_bd_first_1, owner_bd_first_2,
+    owner_bd_last_1, owner_bd_last_2,
+    owner_bu_first_1, owner_bu_first_2,
+    owner_bu_last_1, owner_bu_last_2
+  ]) as u
+  from pg_temp.scratch
+) as users;
 
 -- ---------------------------------------------------------------------------
 -- 1) Function and table properties
@@ -251,14 +320,45 @@ select ok(
   'authenticated cannot execute private.audit_membership()'
 );
 
--- private.guard_last_owner()
+-- private.guard_last_owner() -- SECURITY DEFINER as of the bulk-operation
+-- fix (was SECURITY INVOKER; see the file header for why an invoker-rights
+-- lock query was unsafe under RLS for a multi-row statement).
 select ok(to_regprocedure('private.guard_last_owner()') is not null, 'private.guard_last_owner() exists');
 select ok(
+  coalesce((select p.prosecdef from pg_proc p where p.oid = to_regprocedure('private.guard_last_owner()')), false),
+  'private.guard_last_owner() is security definer'
+);
+select ok(
   coalesce(
-    (select not p.prosecdef from pg_proc p where p.oid = to_regprocedure('private.guard_last_owner()')),
+    (select p.prorettype = 'trigger'::regtype from pg_proc p where p.oid = to_regprocedure('private.guard_last_owner()')),
     false
   ),
-  'private.guard_last_owner() is security invoker'
+  'private.guard_last_owner() returns trigger'
+);
+select ok(
+  coalesce(
+    (select 'search_path=""' = any(coalesce(p.proconfig, '{}')) from pg_proc p
+     where p.oid = to_regprocedure('private.guard_last_owner()')),
+    false
+  ),
+  'private.guard_last_owner() sets search_path to the empty string'
+);
+select ok(
+  not coalesce(
+    (select p.proacl is null or exists (
+       select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+     ) from pg_proc p where p.oid = to_regprocedure('private.guard_last_owner()')),
+    false
+  ),
+  'private.guard_last_owner() is not executable by PUBLIC'
+);
+select ok(
+  not coalesce(has_function_privilege('anon', to_regprocedure('private.guard_last_owner()'), 'EXECUTE'), false),
+  'anon cannot execute private.guard_last_owner()'
+);
+select ok(
+  not coalesce(has_function_privilege('authenticated', to_regprocedure('private.guard_last_owner()'), 'EXECUTE'), false),
+  'authenticated cannot execute private.guard_last_owner()'
 );
 
 -- RLS enabled
@@ -509,6 +609,163 @@ select pg_temp.safe_ok(
     (select notebook_b from pg_temp.scratch)
   ),
   'no membership rows remain for notebook B after it is deleted'
+);
+
+-- Scenario H: one owner demotes a DIFFERENT owner (not themselves) while a
+-- third owner remains -- distinct from scenario G's self-demote.
+select pg_temp.act_lives(
+  (select owner_p from pg_temp.scratch),
+  format('insert into public.notebooks (id, title) values (%L, %L)',
+    (select notebook_three from pg_temp.scratch), 'three owners, demote another'),
+  'owner_p can create a notebook with three eventual owners'
+);
+select pg_temp.act_lives(
+  (select owner_p from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_three from pg_temp.scratch), (select owner_q from pg_temp.scratch), 'owner'),
+  'owner_p can add owner_q as a second owner'
+);
+select pg_temp.act_lives(
+  (select owner_p from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_three from pg_temp.scratch), (select owner_r from pg_temp.scratch), 'owner'),
+  'owner_p can add owner_r as a third owner'
+);
+select pg_temp.act_lives(
+  (select owner_p from pg_temp.scratch),
+  format('update public.notebook_members set role = %L where notebook_id = %L and user_id = %L',
+    'editor', (select notebook_three from pg_temp.scratch), (select owner_q from pg_temp.scratch)),
+  'owner_p can demote owner_q to editor while owner_r remains an owner'
+);
+select pg_temp.safe_ok(
+  format(
+    $f$ select
+          (select role from public.notebook_members where notebook_id = %L and user_id = %L) = 'editor'
+          and (select role from public.notebook_members where notebook_id = %L and user_id = %L) = 'owner'
+          and (select role from public.notebook_members where notebook_id = %L and user_id = %L) = 'owner'
+    $f$,
+    (select notebook_three from pg_temp.scratch), (select owner_q from pg_temp.scratch),
+    (select notebook_three from pg_temp.scratch), (select owner_r from pg_temp.scratch),
+    (select notebook_three from pg_temp.scratch), (select owner_p from pg_temp.scratch)
+  ),
+  'after the demotion, owner_q is editor while owner_p and owner_r remain owners'
+);
+
+-- Scenario I: the bulk-delete regression (see file header and the scratch
+-- table comment above). Two owners; owner_bd_first_1's uuid is fixed to sort
+-- BEFORE owner_bd_first_2's, so owner_bd_first_1's own membership row is the
+-- one processed first within the bulk statement -- the ordering the
+-- reported bug needs.
+select pg_temp.act_lives(
+  (select owner_bd_first_1 from pg_temp.scratch),
+  format('insert into public.notebooks (id, title) values (%L, %L)',
+    (select notebook_bd_first from pg_temp.scratch), 'bulk delete regression, acting owner sorts first'),
+  'owner_bd_first_1 can create notebook bd_first'
+);
+select pg_temp.act_lives(
+  (select owner_bd_first_1 from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_bd_first from pg_temp.scratch), (select owner_bd_first_2 from pg_temp.scratch), 'owner'),
+  'owner_bd_first_1 can add owner_bd_first_2 as a second owner'
+);
+select pg_temp.act_throws(
+  (select owner_bd_first_1 from pg_temp.scratch),
+  format('delete from public.notebook_members where notebook_id = %L', (select notebook_bd_first from pg_temp.scratch)),
+  'P0001',
+  'a bulk delete of both owners by owner_bd_first_1 (sorts first) raises P0001'
+);
+select pg_temp.safe_ok(
+  format(
+    $f$ select (select count(*) from public.notebook_members where notebook_id = %L) = 2 $f$,
+    (select notebook_bd_first from pg_temp.scratch)
+  ),
+  'both owner rows remain for notebook bd_first after the rejected bulk delete'
+);
+
+-- Scenario J: the same bulk delete, but with the acting owner's uuid fixed
+-- to sort LAST, so the fix must not depend on which row happens to be
+-- processed first within the statement.
+select pg_temp.act_lives(
+  (select owner_bd_last_1 from pg_temp.scratch),
+  format('insert into public.notebooks (id, title) values (%L, %L)',
+    (select notebook_bd_last from pg_temp.scratch), 'bulk delete regression, acting owner sorts last'),
+  'owner_bd_last_1 can create notebook bd_last'
+);
+select pg_temp.act_lives(
+  (select owner_bd_last_1 from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_bd_last from pg_temp.scratch), (select owner_bd_last_2 from pg_temp.scratch), 'owner'),
+  'owner_bd_last_1 can add owner_bd_last_2 as a second owner'
+);
+select pg_temp.act_throws(
+  (select owner_bd_last_2 from pg_temp.scratch),
+  format('delete from public.notebook_members where notebook_id = %L', (select notebook_bd_last from pg_temp.scratch)),
+  'P0001',
+  'a bulk delete of both owners by owner_bd_last_2 (sorts last) raises P0001'
+);
+select pg_temp.safe_ok(
+  format(
+    $f$ select (select count(*) from public.notebook_members where notebook_id = %L) = 2 $f$,
+    (select notebook_bd_last from pg_temp.scratch)
+  ),
+  'both owner rows remain for notebook bd_last after the rejected bulk delete'
+);
+
+-- Scenario K: the same regression via a bulk UPDATE (demote-everyone),
+-- acting owner's uuid fixed to sort first.
+select pg_temp.act_lives(
+  (select owner_bu_first_1 from pg_temp.scratch),
+  format('insert into public.notebooks (id, title) values (%L, %L)',
+    (select notebook_bu_first from pg_temp.scratch), 'bulk update regression, acting owner sorts first'),
+  'owner_bu_first_1 can create notebook bu_first'
+);
+select pg_temp.act_lives(
+  (select owner_bu_first_1 from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_bu_first from pg_temp.scratch), (select owner_bu_first_2 from pg_temp.scratch), 'owner'),
+  'owner_bu_first_1 can add owner_bu_first_2 as a second owner'
+);
+select pg_temp.act_throws(
+  (select owner_bu_first_1 from pg_temp.scratch),
+  format('update public.notebook_members set role = %L where notebook_id = %L',
+    'viewer', (select notebook_bu_first from pg_temp.scratch)),
+  'P0001',
+  'a bulk demote of both owners to viewer by owner_bu_first_1 (sorts first) raises P0001'
+);
+select pg_temp.safe_ok(
+  format(
+    $f$ select (select count(*) from public.notebook_members where notebook_id = %L and role = 'owner') = 2 $f$,
+    (select notebook_bu_first from pg_temp.scratch)
+  ),
+  'both members of notebook bu_first remain owner after the rejected bulk demote'
+);
+
+-- Scenario L: the same bulk UPDATE, acting owner's uuid fixed to sort last.
+select pg_temp.act_lives(
+  (select owner_bu_last_1 from pg_temp.scratch),
+  format('insert into public.notebooks (id, title) values (%L, %L)',
+    (select notebook_bu_last from pg_temp.scratch), 'bulk update regression, acting owner sorts last'),
+  'owner_bu_last_1 can create notebook bu_last'
+);
+select pg_temp.act_lives(
+  (select owner_bu_last_1 from pg_temp.scratch),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_bu_last from pg_temp.scratch), (select owner_bu_last_2 from pg_temp.scratch), 'owner'),
+  'owner_bu_last_1 can add owner_bu_last_2 as a second owner'
+);
+select pg_temp.act_throws(
+  (select owner_bu_last_2 from pg_temp.scratch),
+  format('update public.notebook_members set role = %L where notebook_id = %L',
+    'viewer', (select notebook_bu_last from pg_temp.scratch)),
+  'P0001',
+  'a bulk demote of both owners to viewer by owner_bu_last_2 (sorts last) raises P0001'
+);
+select pg_temp.safe_ok(
+  format(
+    $f$ select (select count(*) from public.notebook_members where notebook_id = %L and role = 'owner') = 2 $f$,
+    (select notebook_bu_last from pg_temp.scratch)
+  ),
+  'both members of notebook bu_last remain owner after the rejected bulk demote'
 );
 
 select * from finish();

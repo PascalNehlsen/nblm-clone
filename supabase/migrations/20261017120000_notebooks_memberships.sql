@@ -3,11 +3,12 @@
 -- Decisions: docs/adr/0001-security-definer-membership-helper.md.
 
 -- Default privileges first, so nothing below inherits Supabase's grants to anon.
--- Functions also lose the built-in EXECUTE for PUBLIC; each grant below is explicit.
+-- The built-in EXECUTE for PUBLIC on new functions is global, so only the form without
+-- `in schema` removes it; every function grant below is explicit.
 alter default privileges for role postgres in schema public revoke all on tables from anon;
 alter default privileges for role postgres in schema public revoke all on sequences from anon;
 alter default privileges for role postgres in schema public revoke all on functions from anon;
-alter default privileges for role postgres in schema public revoke execute on functions from public;
+alter default privileges for role postgres revoke execute on functions from public;
 
 create schema private;
 revoke all on schema private from public, anon;
@@ -201,11 +202,14 @@ create trigger notebook_members_audit
   after insert or update or delete on public.notebook_members
   for each row execute function private.audit_membership();
 
--- SECURITY INVOKER: an owner already sees every member of their notebook.
+-- SECURITY DEFINER (ADR 0001): as invoker, the lock below went through RLS. Mid-statement
+-- (a bulk delete or demote by notebook_id), the acting owner is no longer an owner, the
+-- notebook looked deleted and the last owner could go. As definer, "not found" only
+-- means the notebook row is really gone (the cascade from deleting it).
 create function private.guard_last_owner()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 begin
@@ -215,7 +219,8 @@ begin
 
   -- The notebook is gone: this is the cascade from deleting it, so let it through.
   -- Otherwise lock it, so two owners cannot demote each other at the same time.
-  perform 1 from public.notebooks n where n.id = old.notebook_id for update;
+  -- NO KEY UPDATE does not conflict with the KEY SHARE locks of foreign key checks.
+  perform 1 from public.notebooks n where n.id = old.notebook_id for no key update;
   if not found then
     return case when tg_op = 'DELETE' then old else new end;
   end if;
@@ -234,7 +239,7 @@ begin
 end;
 $$;
 
-revoke execute on function private.guard_last_owner() from public, anon;
+revoke execute on function private.guard_last_owner() from public, anon, authenticated;
 
 create trigger notebook_members_guard_last_owner
   before update or delete on public.notebook_members
