@@ -6,9 +6,10 @@ What every other stack needs before CI can plan and apply it: the region SCP, th
 |---|---|
 | `versions.tf` | OpenTofu and provider pins; no backend until the state bucket exists |
 | `providers.tf` | Workload account (default) and management account (`aws.management`), each locked with `allowed_account_ids` |
-| `scp.tf` | `nblm-region-guard`, the imported wizard policy p-ivy9gxl6, and the wizard region SCP attachment that is detached next |
-| `imports.tf` | One-time `import {}` blocks; removed in the next step, after the import is applied |
+| `scp.tf` | `nblm-region-guard` (p-82q6pnrv) and the wizard policy p-ivy9gxl6 (imported unchanged), both attached to Root |
 | `policies/` | Policy documents as plain JSON, checked by `tests/unit/infra/` |
+
+Native tests with mock providers: `tests/infra/bootstrap/`.
 
 ## Region guard
 
@@ -27,12 +28,14 @@ Known gaps:
 - The us-east-1 list is the wizard's and allows more than identity and billing, for example `q:*`, `cloudshell:*`, `logs:*` and `kms:*`. Trimming it is a later change.
 - When the Bedrock model is chosen, check that its `eu.*` inference profile routes only to the five EU regions above plus eu-central-1 (`aws bedrock get-inference-profile`).
 - Account 996270854231 is delegated administrator for `account-access.amazonaws.com`, which likely gives it a path to AccountFullAccessRole in the workload account. The aws stack imports `aws_organizations_delegated_administrator` and then removes it (deregisters the delegation); after that, decide whether AccountFullAccessRole is still needed. No manual change.
+- Nothing notices yet if the account wizard reattaches p-grnvof89 to Root. The nightly drift check (later PR) covers the Root SCP list.
 
 Checks without AWS access:
 
 ```bash
-scripts/tofu.sh fmt -check -recursive infra
-scripts/tofu.sh -chdir=infra/bootstrap init -backend=false -lockfile=readonly
+scripts/tofu.sh fmt -check -recursive infra tests/infra
+scripts/tofu.sh -chdir=infra/bootstrap init -backend=false -lockfile=readonly -test-directory=../../tests/infra/bootstrap
 scripts/tofu.sh -chdir=infra/bootstrap validate
+scripts/tofu.sh -chdir=infra/bootstrap test -test-directory=../../tests/infra/bootstrap   # mock providers, no AWS calls
 pnpm test
 ```

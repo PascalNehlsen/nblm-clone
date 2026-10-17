@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { concatTf, extractBlock, extractBlocks, infraDir, readBootstrapFile, walkFiles } from "./hcl";
+import { bootstrapDir, concatTf, extractBlock, extractBlocks, infraDir, readBootstrapFile, walkFiles } from "./hcl";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const tofuScript = fs.readFileSync(path.join(repoRoot, "scripts/tofu.sh"), "utf8");
@@ -91,39 +91,29 @@ describe("infra/bootstrap providers: exactly two `provider \"aws\"` blocks", () 
   });
 });
 
-describe("infra/bootstrap/imports.tf", () => {
-  function importBlocks() {
+describe("infra/bootstrap: the PR 1 imports are applied, so there are no import blocks left", () => {
+  it("infra/bootstrap/imports.tf does not exist", () => {
+    expect(fs.existsSync(path.join(bootstrapDir, "imports.tf"))).toBe(false);
+  });
+
+  it("no `import { ... }` block exists in any infra/bootstrap/*.tf file", () => {
     const source = concatTf();
-    return extractBlocks(source, /import\s*(?=\{)/);
-  }
+    const importBlocks = extractBlocks(source, /import\s*(?=\{)/);
+    expect(importBlocks).toEqual([]);
+  });
+});
 
-  function findImport(blocks: ReturnType<typeof importBlocks>, toSuffix: string) {
-    return blocks.find((block) => new RegExp(`to\\s*=\\s*${toSuffix.replace(/\./g, "\\.")}(?:\\s|$)`).test(block.body));
-  }
-
-  it("imports aws_organizations_policy.account_security as p-ivy9gxl6", () => {
-    const block = findImport(importBlocks(), "aws_organizations_policy.account_security");
-    expect(block, "expected an import block for aws_organizations_policy.account_security").toBeDefined();
-    expect(block?.body).toMatch(/id\s*=\s*"p-ivy9gxl6"/);
+describe("infra/bootstrap: the legacy region SCP is detached", () => {
+  it("no resource named legacy_region_restriction_root exists", () => {
+    const source = concatTf();
+    const attachments = extractBlocks(source, /resource\s+"aws_organizations_policy_attachment"\s+"[a-z_]+"\s*(?=\{)/);
+    const names = attachments.map((block) => block.header.match(/"aws_organizations_policy_attachment"\s+"([a-z_]+)"/)?.[1]);
+    expect(names).not.toContain("legacy_region_restriction_root");
   });
 
-  it("imports aws_organizations_policy_attachment.account_security_root as r-tmxq:p-ivy9gxl6", () => {
-    const block = findImport(importBlocks(), "aws_organizations_policy_attachment.account_security_root");
-    expect(block, "expected an import block for aws_organizations_policy_attachment.account_security_root").toBeDefined();
-    expect(block?.body).toMatch(/id\s*=\s*"r-tmxq:p-ivy9gxl6"/);
-  });
-
-  it("imports aws_organizations_policy_attachment.legacy_region_restriction_root as r-tmxq:p-grnvof89", () => {
-    const block = findImport(importBlocks(), "aws_organizations_policy_attachment.legacy_region_restriction_root");
-    expect(block, "expected an import block for aws_organizations_policy_attachment.legacy_region_restriction_root").toBeDefined();
-    expect(block?.body).toMatch(/id\s*=\s*"r-tmxq:p-grnvof89"/);
-  });
-
-  it("does not import an aws_organizations_policy (not _attachment) with id p-grnvof89: that policy is not imported in this PR", () => {
-    const offendingPolicyImport = importBlocks().find(
-      (block) => /to\s*=\s*aws_organizations_policy\.(?!.*_attachment)/.test(block.body) && /id\s*=\s*"p-grnvof89"/.test(block.body),
-    );
-    expect(offendingPolicyImport).toBeUndefined();
+  it("no infra/bootstrap/*.tf file references p-grnvof89", () => {
+    const source = concatTf();
+    expect(source).not.toContain("p-grnvof89");
   });
 });
 
@@ -149,10 +139,16 @@ describe("infra/bootstrap/scp.tf: protected vs. detachable resources", () => {
     expect(lifecycle?.body).toMatch(/prevent_destroy\s*=\s*true/);
   });
 
-  it("legacy_region_restriction_root has no prevent_destroy, because the next PR detaches it", () => {
-    const resource = resourceBlock("aws_organizations_policy_attachment", "legacy_region_restriction_root");
-    expect(resource, "expected resource \"aws_organizations_policy_attachment\" \"legacy_region_restriction_root\" { ... }").toBeDefined();
-    expect(resource?.body ?? "").not.toMatch(/prevent_destroy/);
+  it("every aws_organizations_* resource now has lifecycle { prevent_destroy = true }: none are detachable left after PR 1's imports are applied", () => {
+    const source = concatTf();
+    const organizationsResources = extractBlocks(source, /resource\s+"(aws_organizations_[a-z_]+)"\s+"[a-z_]+"\s*(?=\{)/);
+    expect(organizationsResources.length).toBeGreaterThan(0);
+
+    for (const resource of organizationsResources) {
+      const lifecycle = extractBlock(resource.body, /lifecycle\s*(?=\{)/);
+      expect(lifecycle, `expected a lifecycle block in ${resource.header}`).toBeDefined();
+      expect(lifecycle?.body, `expected prevent_destroy = true in ${resource.header}`).toMatch(/prevent_destroy\s*=\s*true/);
+    }
   });
 
   it("every aws_organizations_* resource uses provider = aws.management", () => {
@@ -165,10 +161,13 @@ describe("infra/bootstrap/scp.tf: protected vs. detachable resources", () => {
     }
   });
 
-  it("all aws_organizations_policy_attachment resources target r-tmxq", () => {
+  it("exactly two aws_organizations_policy_attachment resources exist (region_guard_root, account_security_root), both targeting r-tmxq", () => {
     const source = concatTf();
     const attachments = extractBlocks(source, /resource\s+"aws_organizations_policy_attachment"\s+"[a-z_]+"\s*(?=\{)/);
-    expect(attachments.length).toBeGreaterThanOrEqual(3);
+    const names = attachments.map((block) => block.header.match(/"aws_organizations_policy_attachment"\s+"([a-z_]+)"/)?.[1]);
+
+    expect(new Set(names)).toEqual(new Set(["region_guard_root", "account_security_root"]));
+    expect(attachments).toHaveLength(2);
 
     for (const attachment of attachments) {
       expect(attachment.body, `${attachment.header} should target r-tmxq`).toMatch(/target_id\s*=\s*"r-tmxq"/);

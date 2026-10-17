@@ -106,7 +106,7 @@ jobs:
   infra:
     # Not a required status check yet; adding it is a ruleset change for infra/github.
     # No cloud credentials: providers are downloaded, nothing is planned against AWS.
-    name: infra (fmt, validate)
+    name: infra (fmt, validate, test)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -118,14 +118,23 @@ jobs:
 
       # Same pinned, checksummed binary as in the sandbox and on the host.
       - name: Format
-        run: scripts/tofu.sh fmt -check -recursive -diff infra
+        run: scripts/tofu.sh fmt -check -recursive -diff infra tests/infra
 
       # -lockfile=readonly fails if a provider or hash is missing from the committed lock file.
-      - name: Validate every stack
+      # Native tests live in tests/infra/<stack>/ and use mock providers only.
+      - name: Validate and test every stack
         run: |
           for stack in infra/*/; do
-            echo "::group::$stack"
-            scripts/tofu.sh -chdir="$stack" init -backend=false -lockfile=readonly -input=false
+            name="$(basename "$stack")"
+            test_args=()
+            if [ -d "tests/infra/$name" ]; then
+              test_args=(-test-directory="../../tests/infra/$name")
+            fi
+            echo "::group::$name"
+            scripts/tofu.sh -chdir="$stack" init -backend=false -lockfile=readonly -input=false "${test_args[@]}"
             scripts/tofu.sh -chdir="$stack" validate
+            if [ "${#test_args[@]}" -gt 0 ]; then
+              scripts/tofu.sh -chdir="$stack" test "${test_args[@]}"
+            fi
             echo "::endgroup::"
           done
