@@ -90,177 +90,111 @@ describe("sources: insert", () => {
     await addMember(owner, notebookId, anonymousMember.userId, "editor");
   });
 
-  it("lets the owner insert a source", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "owner source",
-      storage_path: storagePath(notebookId, id),
-    });
+  // Second Codex finding (PR #19, on top of the first): id and storage_path
+  // are both server-assigned now -- id only ever comes from its
+  // gen_random_uuid() default, storage_path is a stored generated column
+  // computed from notebook_id/id. Neither is in the insert column grant
+  // (notebook_id, kind, title only). A client-chosen id previously let an
+  // editor delete a source and recreate one with the same id, rebinding
+  // whatever Storage object was left at that path.
+  it("lets the owner insert a source and returns id and storage_path === <notebook_id>/<id>", async () => {
+    const { data, error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "owner source" })
+      .select("id, storage_path")
+      .single();
     expect(error).toBeNull();
+    expect(data?.id).toBeTruthy();
+    expect(data?.storage_path).toBe(`${notebookId}/${data?.id}`);
   });
 
-  it("lets an editor insert a source", async () => {
-    const id = randomUUID();
-    const { error } = await editor.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "editor source",
-      storage_path: storagePath(notebookId, id),
-    });
+  it("lets an editor insert a source and returns id and storage_path === <notebook_id>/<id>", async () => {
+    const { data, error } = await editor.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "editor source" })
+      .select("id, storage_path")
+      .single();
     expect(error).toBeNull();
+    expect(data?.id).toBeTruthy();
+    expect(data?.storage_path).toBe(`${notebookId}/${data?.id}`);
   });
 
   it("rejects a viewer inserting a source with 42501", async () => {
-    const id = randomUUID();
-    const { error } = await viewer.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "viewer source",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await viewer.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "viewer source" });
     expect(error?.code).toBe("42501");
   });
 
   it("rejects a stranger inserting a source with 42501", async () => {
-    const id = randomUUID();
-    const { error } = await stranger.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "stranger source",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await stranger.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "stranger source" });
     expect(error?.code).toBe("42501");
   });
 
   it("rejects an anon insert with 42501 (no grants for anon at all)", async () => {
-    const id = randomUUID();
-    const { error } = await anonClient().from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "anon source",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await anonClient()
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "anon source" });
     expect(error?.code).toBe("42501");
   });
 
   it("rejects setting created_by with 42501 (column grant does not include created_by)", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "created-by source",
-      storage_path: storagePath(notebookId, id),
-      created_by: stranger.userId,
-    });
+    const { error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "created-by source", created_by: stranger.userId });
     expect(error?.code).toBe("42501");
   });
 
   it("rejects setting status at insert with 42501 (column grant does not include status)", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "status source",
-      storage_path: storagePath(notebookId, id),
-      status: "ready",
-    });
+    const { error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "status source", status: "ready" });
     expect(error?.code).toBe("42501");
   });
 
   it("rejects an invalid kind with 23514", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "video",
-      title: "bad kind source",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "video", title: "bad kind source" });
     expect(error?.code).toBe("23514");
   });
 
   it("rejects an empty title with 23514", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "" });
     expect(error?.code).toBe("23514");
   });
 
-  // Reviewer/Codex finding (PR #19): storage_path is now server-assigned and
-  // must be exactly `<notebook_id>/<id>` -- a client-chosen filename (or any
-  // other shape) previously let two sources share one Storage object, so
-  // deleting one silently deleted the other's file too.
-  it("rejects a storage_path that is not exactly <notebook_id>/<id> with 23514 (wrong notebook)", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "wrong prefix source",
-      storage_path: `${randomUUID()}/${id}`,
-    });
-    expect(error?.code).toBe("23514");
+  it("rejects an editor inserting a source with an explicit id with 42501 (column grant does not include id)", async () => {
+    const { error } = await editor.client
+      .from("sources")
+      .insert({ id: randomUUID(), notebook_id: notebookId, kind: "text", title: "explicit id" });
+    expect(error?.code).toBe("42501");
   });
 
-  it("rejects a storage_path that is not exactly <notebook_id>/<id> with 23514 (a filename instead of the id)", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "filename-shaped source",
-      storage_path: `${notebookId}/file.pdf`,
-    });
-    expect(error?.code).toBe("23514");
-  });
-
-  it("rejects a storage_path using another source's id with 23514", async () => {
-    const id = randomUUID();
-    const { error } = await owner.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "someone else's id",
-      storage_path: storagePath(notebookId, randomUUID()),
-    });
-    expect(error?.code).toBe("23514");
-  });
-
-  it("an editor inserting a source whose storage_path does not match its own id gets 23514 through PostgREST", async () => {
-    const id = randomUUID();
+  // storage_path is a stored generated column: Postgres rejects an explicit
+  // value for it at parse-analysis time (SQLSTATE 428C9, "generated_always"),
+  // before PostgREST's own column-privilege check (the column is not
+  // grantable either, which alone would be 42501) ever comes into play --
+  // observed directly against the applied migration, same as the equivalent
+  // UPDATE case below.
+  it("rejects an editor inserting a source with an explicit storage_path with 428C9", async () => {
     const { error } = await editor.client.from("sources").insert({
-      id,
       notebook_id: notebookId,
       kind: "text",
-      title: "editor mismatched path",
+      title: "explicit storage_path",
       storage_path: storagePath(notebookId, randomUUID()),
     });
-    expect(error?.code).toBe("23514");
+    expect(error?.code).toBe("428C9");
   });
 
   it("rejects an anonymous-signin editor inserting a source with 42501 (restrictive policy)", async () => {
-    const id = randomUUID();
-    const { error } = await anonymousMember.client.from("sources").insert({
-      id,
-      notebook_id: notebookId,
-      kind: "text",
-      title: "anonymous editor source",
-      storage_path: storagePath(notebookId, id),
-    });
+    const { error } = await anonymousMember.client
+      .from("sources")
+      .insert({ notebook_id: notebookId, kind: "text", title: "anonymous editor source" });
     expect(error?.code).toBe("42501");
   });
 });
@@ -347,14 +281,18 @@ describe("sources: update", () => {
     expect(error?.code).toBe("42501");
   });
 
-  it("rejects changing storage_path with 42501 (column grant is title, status only)", async () => {
+  // storage_path is a stored generated column, so Postgres rejects writing
+  // to it at parse-analysis time (428C9, generated_always) before PostgREST's
+  // own column-privilege check (the column is not grantable either) is ever
+  // reached -- observed directly against the applied migration.
+  it("rejects changing storage_path with 428C9 (generated column, also not grantable)", async () => {
     const sourceId = await createSource(owner, notebookId);
 
     const { error } = await owner.client
       .from("sources")
       .update({ storage_path: storagePath(notebookId, randomUUID()) })
       .eq("id", sourceId);
-    expect(error?.code).toBe("42501");
+    expect(error?.code).toBe("428C9");
   });
 
   it("rejects an anon update with 42501 (no grants for anon at all)", async () => {

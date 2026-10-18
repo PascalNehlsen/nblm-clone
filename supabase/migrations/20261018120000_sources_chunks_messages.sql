@@ -6,18 +6,19 @@ create extension if not exists vector with schema extensions;
 
 -- Tables -----------------------------------------------------------------------------
 
--- storage_path is the object key in the `sources` bucket (PR A2), assigned by the server
--- as {notebook_id}/{id}: unique, so deleting one source never removes another's file, and
--- free of user file names. The original name stays in title. Pasted text is stored as a
--- text/plain object too, so every source has one.
+-- storage_path is the object key in the `sources` bucket (PR A2): generated from the
+-- notebook and the server-assigned id, never chosen by the client. It is unique, so one
+-- object never belongs to two sources, and a deleted source's id cannot be reused to
+-- rebind a leftover object. The original file name stays in title. Clients insert the
+-- row first and upload to the returned path. Pasted text is a text/plain object too.
 create table public.sources (
   id uuid primary key default gen_random_uuid(),
   notebook_id uuid not null references public.notebooks (id) on delete cascade,
   created_by uuid default auth.uid() references auth.users (id) on delete set null,
   kind text not null check (kind in ('pdf', 'text', 'url')),
   title text not null check (char_length(btrim(title)) between 1 and 200),
-  storage_path text not null unique
-    check (storage_path = notebook_id::text || '/' || id::text),
+  storage_path text generated always as (notebook_id::text || '/' || id::text) stored
+    unique,
   status text not null default 'pending'
     check (status in ('pending', 'processing', 'ready', 'failed')),
   created_at timestamptz not null default now(),
@@ -105,7 +106,7 @@ revoke all on public.sources, public.chunks, public.messages, public.message_cit
   from anon, authenticated;
 
 grant select, delete on public.sources to authenticated;
-grant insert (id, notebook_id, kind, title, storage_path) on public.sources to authenticated;
+grant insert (notebook_id, kind, title) on public.sources to authenticated;
 grant update (title, status) on public.sources to authenticated;
 
 grant select, delete on public.chunks to authenticated;

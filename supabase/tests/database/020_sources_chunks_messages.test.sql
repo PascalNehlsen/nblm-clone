@@ -63,7 +63,7 @@
 
 begin;
 
-select plan(206);
+select plan(208);
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -103,6 +103,41 @@ begin
     get stacked diagnostics err_text = message_text;
   end;
   reset role;
+  if ok_flag then
+    return ok(true, description);
+  else
+    return ok(false, description || ' [errored: ' || err_text || ']');
+  end if;
+end;
+$$ language plpgsql;
+
+-- Same shape as act_lives, but *without* `set local role authenticated`:
+-- stays as postgres (table owner), who can still set an explicit `id` on
+-- insert -- unlike `authenticated`, which lost that column grant as part of
+-- the fix this migration is for ("permission denied for table sources"
+-- otherwise). `request.jwt.claims` is still set so auth.uid()-driven
+-- defaults (sources.created_by, messages.user_id) resolve to the intended
+-- actor regardless of role; auth.uid() reads that GUC, not the current
+-- database role. This also bypasses RLS entirely (postgres is superuser),
+-- which is fine here: this helper is for building *fixtures*, never for the
+-- tests that specifically prove an actor's own insert/update/delete right
+-- (those stay on act_lives/act_throws, with the real role switch).
+create function pg_temp.setup_insert(actor_id uuid, probe text, description text) returns text as $$
+declare
+  ok_flag boolean := true;
+  err_text text := '';
+begin
+  perform set_config(
+    'request.jwt.claims',
+    json_build_object('sub', actor_id, 'role', 'authenticated', 'is_anonymous', false)::text,
+    true
+  );
+  begin
+    execute probe;
+  exception when others then
+    ok_flag := false;
+    get stacked diagnostics err_text = message_text;
+  end;
   if ok_flag then
     return ok(true, description);
   else
@@ -259,6 +294,26 @@ begin
   else
     return ok(false, description || ' [errored: ' || err_text || ']');
   end if;
+end;
+$$ language plpgsql;
+
+-- Same shape as act_scalar but with no role switch (runs as postgres): used
+-- where a probe needs the real id-settable-by-postgres path (id still has an
+-- ordinary column grant to postgres as table owner; only `authenticated`
+-- loses it), independent of the authenticated-role privilege question that
+-- act_scalar/act_throws test separately.
+create function pg_temp.sql_scalar(probe text) returns text as $$
+declare
+  result text;
+  err_state text;
+begin
+  begin
+    execute probe into result;
+  exception when others then
+    get stacked diagnostics err_state = returned_sqlstate;
+    result := 'ERROR:' || err_state;
+  end;
+  return result;
 end;
 $$ language plpgsql;
 
@@ -544,12 +599,12 @@ select ok(
   'public.sources has an index whose first column is created_by'
 );
 
--- Codex finding (PR #19): storage_path is pinned to exactly <notebook_id>/<id>
--- by a CHECK constraint, which already makes it unique in practice (id is a
--- globally unique PK) -- but the CHECK alone is not a backstop against a
--- future change that loosens it, so a plain UNIQUE constraint on
--- storage_path itself is required too, and pinned here independently of
--- whether the behavioural collision test above can actually trigger it.
+-- Second Codex finding (PR #19): storage_path is now a *stored generated
+-- column* (notebook_id::text || '/' || id::text), not a CHECK constraint --
+-- id itself is globally unique (PK), which already makes storage_path
+-- unique in practice, but a plain UNIQUE constraint on storage_path is still
+-- required as a backstop independent of that reasoning (e.g. against a
+-- future change to the generation expression).
 select ok(
   exists (
     select 1 from pg_constraint con
@@ -563,6 +618,38 @@ select ok(
       ) = array['storage_path']
   ),
   'sources has a unique constraint on storage_path'
+);
+
+-- attgenerated = 's' means STORED GENERATED ALWAYS AS (...); the generation
+-- expression itself lives in the column's pg_attrdef entry, same storage
+-- slot Postgres uses for ordinary DEFAULT expressions. Checked loosely (every
+-- part mentioned, not an exact deparsed-text match) since Postgres's
+-- deparser is free to add its own parenthesisation/casts when rendering the
+-- expression back as text.
+select ok(
+  coalesce(
+    (select a.attgenerated = 's'
+     from pg_attribute a
+     join pg_class c on c.oid = a.attrelid
+     join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relname = 'sources' and a.attname = 'storage_path' and not a.attisdropped),
+    false
+  ),
+  'sources.storage_path is a stored generated column (attgenerated = ''s'')'
+);
+select ok(
+  coalesce(
+    (select pg_get_expr(d.adbin, d.adrelid) ilike '%notebook_id%'
+       and pg_get_expr(d.adbin, d.adrelid) ilike '%id%'
+       and pg_get_expr(d.adbin, d.adrelid) like '%/%'
+     from pg_attrdef d
+     join pg_class c on c.oid = d.adrelid
+     join pg_namespace n on n.oid = c.relnamespace
+     join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+     where n.nspname = 'public' and c.relname = 'sources' and a.attname = 'storage_path'),
+    false
+  ),
+  'sources.storage_path''s generation expression references notebook_id, id and a ''/'' separator'
 );
 
 -- ---------------------------------------------------------------------------
@@ -634,6 +721,25 @@ select ok(
 select ok(
   not coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'id', 'UPDATE'), false),
   'authenticated cannot update sources.id'
+);
+
+-- Second Codex finding (PR #19): id and storage_path are both server-assigned
+-- now -- the insert column grant is notebook_id, kind, title only. A
+-- client-chosen id previously let an editor delete a source and recreate one
+-- with the same id, rebinding whatever Storage object was left at that path.
+select ok(
+  not coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'id', 'INSERT'), false),
+  'authenticated cannot insert sources.id'
+);
+select ok(
+  not coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'storage_path', 'INSERT'), false),
+  'authenticated cannot insert sources.storage_path'
+);
+select ok(
+  coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'notebook_id', 'INSERT'), false)
+  and coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'kind', 'INSERT'), false)
+  and coalesce(has_column_privilege('authenticated', to_regclass('public.sources'), 'title', 'INSERT'), false),
+  'authenticated can insert notebook_id, kind and title'
 );
 
 -- ---------------------------------------------------------------------------
@@ -980,13 +1086,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_b from pg_temp.fixture), 'fixture B'),
   'fixture setup: owner creates notebook B'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'fixture source', %L) $f$,
-    (select source_a from pg_temp.fixture), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/' || (select source_a from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'fixture source') $f$,
+    (select source_a from pg_temp.fixture), (select notebook_a from pg_temp.fixture)
   ),
   'fixture setup: owner creates source A in notebook A'
 );
@@ -1007,70 +1111,41 @@ select pg_temp.act_throws(
   'a chunk whose notebook_id does not match its source''s notebook_id raises 23503'
 );
 
--- Codex finding (PR #19): storage_path must be server-assigned, exactly
--- `<notebook_id>/<id>` (the row's own id, never a client-chosen filename) --
--- otherwise two sources could be made to share one Storage object, and
--- deleting one would silently delete the other's file too. The original
--- upload's file name now lives in `title` instead.
-select pg_temp.act_throws(
-  (select owner_id from pg_temp.fixture),
+-- Second Codex finding (PR #19, on top of the first): storage_path becomes a
+-- *stored generated column* (`notebook_id::text || '/' || id::text`) and id
+-- comes only from its gen_random_uuid() default -- neither is in the insert
+-- column grant any more (notebook_id, kind, title only). A client-chosen id
+-- previously let an editor delete a source and recreate one with the same
+-- id, rebinding whatever Storage object was left at that path. Naming
+-- storage_path at all in an INSERT is now a *semantic* error (Postgres
+-- rejects writing to a generated column at parse-analysis time, SQLSTATE
+-- 428C9 "generated_always"), independent of role/privilege -- confirmed by
+-- running this as plain postgres, who still owns the table and could
+-- otherwise set any ordinary column.
+select pg_temp.sql_throws(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%1$L, %2$L, 'text', 'filename instead of id', %2$L || '/file.pdf') $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture)
+        values (%L, %L, 'text', 'explicit storage_path', %L) $f$,
+    gen_random_uuid(), (select notebook_a from pg_temp.fixture),
+    (select notebook_a from pg_temp.fixture) || '/explicit'
   ),
-  '23514',
-  'a storage_path of <notebook_id>/file.pdf (a filename instead of the id) raises 23514'
+  '428C9',
+  'naming storage_path explicitly in an INSERT raises 428C9 (generated_always), even for a well-formed-looking value'
 );
-select pg_temp.act_throws(
-  (select owner_id from pg_temp.fixture),
-  format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%1$L, %2$L, 'text', 'another uuid, not its own id', %2$L || '/' || %3$L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture), gen_random_uuid()
-  ),
-  '23514',
-  'a storage_path of <notebook_id>/<some other uuid> (not its own id) raises 23514'
-);
-select pg_temp.act_throws(
-  (select owner_id from pg_temp.fixture),
-  format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%1$L, %2$L, 'text', 'wrong notebook prefix', %3$L || '/' || %1$L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture), (select notebook_b from pg_temp.fixture)
-  ),
-  '23514',
-  'a storage_path of <some other notebook_id>/<its own id> raises 23514'
-);
-select pg_temp.act_lives(
-  (select owner_id from pg_temp.fixture),
-  format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%1$L, %2$L, 'text', 'valid path source', %2$L || '/' || %1$L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture)
-  ),
-  'a storage_path of exactly <notebook_id>/<id> is accepted'
-);
--- A second source cannot reuse the first source's storage_path: giving it a
--- different id (required, since id is the PK) means that value can no longer
--- equal *its own* notebook_id/id, so the CHECK constraint rejects it before
--- the unique constraint on storage_path is ever reached in practice -- either
--- 23514 (check_violation) or 23505 (unique_violation) is an acceptable,
--- correct outcome here, which is exactly why the unique constraint itself is
--- also pinned structurally below (it is the backstop, not normally reachable
--- through the CHECK).
+-- A plain insert (no storage_path; id is still settable by postgres, the
+-- table owner -- only `authenticated` loses that column grant, checked
+-- separately below) computes the generated value correctly.
 select ok(
-  (select r in ('ERROR:23514', 'ERROR:23505')
-   from (select pg_temp.act_scalar(
-     (select owner_id from pg_temp.fixture),
+  (select r = 'true'
+   from (select pg_temp.sql_scalar(
      format(
-       $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-           values (%L, %L, 'text', 'colliding storage_path', %L) returning id::text $f$,
-       gen_random_uuid(), (select notebook_a from pg_temp.fixture),
-       (select notebook_a from pg_temp.fixture) || '/' || (select source_a from pg_temp.fixture)
+       $f$ insert into public.sources (id, notebook_id, kind, title)
+           values (%1$L, %2$L, 'text', 'generated path source')
+           returning (storage_path = %2$L || '/' || %1$L)::text $f$,
+       gen_random_uuid(), (select notebook_a from pg_temp.fixture)
      )
    ) as r) s),
-  'a second source cannot reuse an existing source''s storage_path (23514 or 23505)'
+  'inserting without storage_path computes it as exactly <notebook_id>/<id>'
 );
 
 -- Reviewer finding: chunks.content needs an upper bound (8000 characters).
@@ -1225,12 +1300,11 @@ select pg_temp.act_lives(
   'citation fixture: owner adds the viewer'
 );
 
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.citation_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'failsafe source', %L) $f$,
-    (select source_failsafe from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_failsafe from pg_temp.citation_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'failsafe source') $f$,
+    (select source_failsafe from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates the fail-safe source'
 );
@@ -1278,12 +1352,11 @@ select pg_temp.act_lives(
   'message_citations.ordinal of exactly 20 is accepted'
 );
 
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.citation_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'source X', %L) $f$,
-    (select source_x from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_x from pg_temp.citation_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'source X') $f$,
+    (select source_x from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates source X'
 );
@@ -1299,12 +1372,11 @@ select pg_temp.act_insert_id(
 );
 update pg_temp.citation_fixture
 set chunk_x = nullif(current_setting('pgtap_fixture.last_inserted_id', true), '')::uuid;
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.citation_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'source Y', %L) $f$,
-    (select source_y from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_y from pg_temp.citation_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'source Y') $f$,
+    (select source_y from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates source Y'
 );
@@ -1555,12 +1627,11 @@ select pg_temp.act_lives(
   'account-deletion fixture: owner adds the editor'
 );
 
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select editor_id from pg_temp.account_deletion_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'editor source', %L) $f$,
-    (select source_editor from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture),
-    (select notebook_id from pg_temp.account_deletion_fixture) || '/' || (select source_editor from pg_temp.account_deletion_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'editor source') $f$,
+    (select source_editor from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture)
   ),
   'account-deletion fixture: the editor creates their own source'
 );
@@ -1594,12 +1665,11 @@ select pg_temp.act_lives(
   'account-deletion fixture: the editor''s answer cites their own chunk'
 );
 
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.account_deletion_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'owner source', %L) $f$,
-    (select source_owner from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture),
-    (select notebook_id from pg_temp.account_deletion_fixture) || '/' || (select source_owner from pg_temp.account_deletion_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'owner source') $f$,
+    (select source_owner from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture)
   ),
   'account-deletion fixture: the owner creates their own source (control)'
 );
@@ -1720,12 +1790,11 @@ select pg_temp.act_lives(
     (select notebook_id from pg_temp.combined_deletion_fixture), (select member_id from pg_temp.combined_deletion_fixture), 'editor'),
   'combined-deletion fixture: owner adds the member'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.combined_deletion_fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'owner source', %L) $f$,
-    (select source_id from pg_temp.combined_deletion_fixture), (select notebook_id from pg_temp.combined_deletion_fixture),
-    (select notebook_id from pg_temp.combined_deletion_fixture) || '/' || (select source_id from pg_temp.combined_deletion_fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'owner source') $f$,
+    (select source_id from pg_temp.combined_deletion_fixture), (select notebook_id from pg_temp.combined_deletion_fixture)
   ),
   'combined-deletion fixture: owner creates a source'
 );
@@ -1800,12 +1869,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_cascade_keep from pg_temp.fixture), 'cascade keep notebook'),
   'cascade fixture: owner creates a sibling notebook that is left untouched'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'to be cascaded', %L) $f$,
-    (select source_cascade from pg_temp.fixture), (select notebook_cascade from pg_temp.fixture),
-    (select notebook_cascade from pg_temp.fixture) || '/' || (select source_cascade from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'to be cascaded') $f$,
+    (select source_cascade from pg_temp.fixture), (select notebook_cascade from pg_temp.fixture)
   ),
   'cascade fixture: a source in the notebook that will be deleted'
 );
@@ -1874,10 +1942,10 @@ select pg_temp.act_lives(
   'cascade fixture: the second member''s answer cites the same chunk'
 );
 
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%1$L, %2$L, 'text', 'kept source', %2$L || '/' || %1$L) $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'kept source') $f$,
     gen_random_uuid(), (select notebook_cascade_keep from pg_temp.fixture)
   ),
   'cascade fixture: a source in the untouched sibling notebook'
@@ -1931,12 +1999,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_source_cascade from pg_temp.fixture), 'source cascade notebook'),
   'source-cascade fixture: owner creates a notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'doomed source', %L) $f$,
-    (select source_doomed from pg_temp.fixture), (select notebook_source_cascade from pg_temp.fixture),
-    (select notebook_source_cascade from pg_temp.fixture) || '/' || (select source_doomed from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'doomed source') $f$,
+    (select source_doomed from pg_temp.fixture), (select notebook_source_cascade from pg_temp.fixture)
   ),
   'source-cascade fixture: a source'
 );
@@ -1970,12 +2037,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_match_access from pg_temp.fixture), 'match access notebook'),
   'match_chunks fixture: owner creates the access-test notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match access source', %L) $f$,
-    (select source_match_access from pg_temp.fixture), (select notebook_match_access from pg_temp.fixture),
-    (select notebook_match_access from pg_temp.fixture) || '/' || (select source_match_access from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match access source') $f$,
+    (select source_match_access from pg_temp.fixture), (select notebook_match_access from pg_temp.fixture)
   ),
   'match_chunks fixture: owner creates a source in the access-test notebook'
 );
@@ -2029,12 +2095,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_match_clamp from pg_temp.fixture), 'match clamp notebook'),
   'match_chunks clamp fixture: owner creates the clamp-test notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match clamp source', %L) $f$,
-    (select source_match_clamp from pg_temp.fixture), (select notebook_match_clamp from pg_temp.fixture),
-    (select notebook_match_clamp from pg_temp.fixture) || '/' || (select source_match_clamp from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match clamp source') $f$,
+    (select source_match_clamp from pg_temp.fixture), (select notebook_match_clamp from pg_temp.fixture)
   ),
   'match_chunks clamp fixture: owner creates a source'
 );
@@ -2087,12 +2152,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_match_recall_foreign from pg_temp.fixture), 'match recall foreign notebook'),
   'recall fixture: a different owner creates the foreign notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select foreign_owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'foreign source', %L) $f$,
-    (select source_recall_foreign from pg_temp.fixture), (select notebook_match_recall_foreign from pg_temp.fixture),
-    (select notebook_match_recall_foreign from pg_temp.fixture) || '/' || (select source_recall_foreign from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'foreign source') $f$,
+    (select source_recall_foreign from pg_temp.fixture), (select notebook_match_recall_foreign from pg_temp.fixture)
   ),
   'recall fixture: the foreign owner creates a source'
 );
@@ -2113,12 +2177,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_match_recall_own from pg_temp.fixture), 'match recall own notebook'),
   'recall fixture: the caller creates their own notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'own source', %L) $f$,
-    (select source_recall_own from pg_temp.fixture), (select notebook_match_recall_own from pg_temp.fixture),
-    (select notebook_match_recall_own from pg_temp.fixture) || '/' || (select source_recall_own from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'own source') $f$,
+    (select source_recall_own from pg_temp.fixture), (select notebook_match_recall_own from pg_temp.fixture)
   ),
   'recall fixture: the caller creates a source in their own notebook'
 );
@@ -2163,12 +2226,11 @@ select pg_temp.act_lives(
   format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_match_exact from pg_temp.fixture), 'match exact notebook'),
   'exact-top-8 fixture: owner creates the notebook'
 );
-select pg_temp.act_lives(
+select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match exact source', %L) $f$,
-    (select source_match_exact from pg_temp.fixture), (select notebook_match_exact from pg_temp.fixture),
-    (select notebook_match_exact from pg_temp.fixture) || '/' || (select source_match_exact from pg_temp.fixture)
+    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match exact source') $f$,
+    (select source_match_exact from pg_temp.fixture), (select notebook_match_exact from pg_temp.fixture)
   ),
   'exact-top-8 fixture: owner creates a source'
 );

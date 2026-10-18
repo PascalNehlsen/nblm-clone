@@ -10,14 +10,18 @@ export type MessageRole = "user" | "assistant";
 export const EMBEDDING_DIMENSIONS = 1024;
 
 /**
- * `sources.storage_path` is server-assigned and must be exactly
- * `<notebook_id>/<id>` (the row's own id, not a client-chosen filename) --
- * `check (storage_path = notebook_id::text || '/' || id::text)`, plus a plain
- * `unique (storage_path)` as a defense-in-depth backstop (see
- * supabase/tests/database/020_sources_chunks_messages.test.sql). Fixed
- * Codex finding: a client-chosen filename let two sources share one Storage
- * object, so deleting one silently deleted the other's file too. The
- * original upload's file name now lives in `title` instead.
+ * `sources.storage_path` is a stored generated column -- exactly
+ * `notebook_id::text || '/' || id::text` -- and `id` itself comes only from
+ * its `gen_random_uuid()` default; neither is in the INSERT column grant
+ * (only notebook_id, kind, title are), so no client ever sends either one.
+ * `unique (storage_path)` still applies, now enforced on a value Postgres
+ * computes itself. Fixed a second Codex finding on top of the first (a
+ * client-chosen filename let two sources share one Storage object, so
+ * deleting one silently deleted the other's file): even a client-chosen
+ * *id* let an editor delete a source and then recreate one with the same id,
+ * rebinding whatever Storage object happened to be left at that path. This
+ * helper is still exported for tests that independently need to compute the
+ * expected value from an id the server already returned.
  */
 export function storagePath(notebookId: string, id: string): string {
   return `${notebookId}/${id}`;
@@ -57,37 +61,37 @@ export function nearbyVector(seed: number, noise: number): number[] {
 export interface CreateSourceOptions {
   kind?: SourceKind;
   title?: string;
-  id?: string;
-  storagePath?: string;
 }
 
 /**
- * Creates a source as `actor` with a client-generated id (the insert column
- * grant is id, notebook_id, kind, title, storage_path -- no `.select()`
- * needed or wanted). `storage_path` defaults to the only value the CHECK
- * constraint accepts (`<notebook_id>/<id>`, using this call's own id); pass
- * `options.storagePath` explicitly only to test a path that is deliberately
- * wrong. `title` keeps the original upload's file name instead. Throws on
- * error so a failing create surfaces at the call site with the real
- * Postgres/PostgREST error.
+ * Creates a source as `actor`. The insert column grant is notebook_id, kind,
+ * title only -- `id` (default `gen_random_uuid()`) and `storage_path`
+ * (generated always as `notebook_id::text || '/' || id::text`, stored) are
+ * never sent, only read back via `.select()`. The `RETURNING` read-back is
+ * safe under RLS here because the inserting actor is already a member by the
+ * time the select policy runs (unlike notebooks' bootstrap-trigger case,
+ * sources' membership comes from an existing notebook_members row, not a
+ * trigger that fires after this same statement). `title` keeps the original
+ * upload's file name. Throws on error so a failing create surfaces at the
+ * call site with the real Postgres/PostgREST error.
  */
 export async function createSource(
   actor: SignedInUser,
   notebookId: string,
   options: CreateSourceOptions = {},
 ): Promise<string> {
-  const id = options.id ?? randomUUID();
   const kind = options.kind ?? "text";
   const title = options.title ?? `source-${randomUUID()}.txt`;
-  const path = options.storagePath ?? storagePath(notebookId, id);
 
-  const { error } = await actor.client
+  const { data, error } = await actor.client
     .from("sources")
-    .insert({ id, notebook_id: notebookId, kind, title, storage_path: path });
-  if (error) {
-    throw new Error(`createSource(${notebookId}): ${error.code ?? "?"} ${error.message}`);
+    .insert({ notebook_id: notebookId, kind, title })
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(`createSource(${notebookId}): ${error?.code ?? "?"} ${error?.message}`);
   }
-  return id;
+  return data.id as string;
 }
 
 export interface ChunkInput {
