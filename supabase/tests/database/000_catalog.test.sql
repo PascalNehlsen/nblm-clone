@@ -59,8 +59,15 @@
 --     moved from SECURITY INVOKER to SECURITY DEFINER as part of the
 --     bulk-operation last-owner-guard fix -- an invoker-rights lock query ran
 --     under RLS, which could misfire mid-statement for a multi-row
---     delete/update), matched by OID via `to_regprocedure('private.<name>()')`,
---     null-safe until the migration creates them.
+--     delete/update); PR A1's `private.redact_cited_answers()` (fires inside
+--     the `message_citations.chunk_id` FK's ON DELETE SET NULL action, as the
+--     deleting user, and must redact the cited assistant message regardless
+--     of who that user is -- an invoker update of someone else's message
+--     would silently touch 0 rows under RLS). All matched by OID via
+--     `to_regprocedure('private.<name>()')`, null-safe until the migration
+--     creates them. `private.clear_citation_quote()` (PR A1's sibling BEFORE
+--     UPDATE OF chunk_id trigger) stays SECURITY INVOKER and is deliberately
+--     not in this list.
 --
 -- Since the fix landed, new functions are no longer PUBLIC-executable by
 -- default: the migration now does a GLOBAL `alter default privileges for
@@ -165,10 +172,23 @@ create function pg_temp.check_security_definer_allowlist() returns setof text as
     -- SECURITY INVOKER to SECURITY DEFINER as part of the bulk-operation
     -- last-owner-guard fix (an invoker-rights lock query ran under RLS,
     -- which could misfire mid-statement for a multi-row delete/update).
+    --
+    -- private.redact_cited_answers() (PR A1's message_citations feature) is
+    -- allowlisted for the same class of reason: it fires AFTER UPDATE OF
+    -- chunk_id ON message_citations (the FK ON DELETE SET NULL action, when
+    -- a cited chunk is deleted) and must redact the citing assistant
+    -- message's content regardless of who is deleting the chunk -- inside
+    -- that FK action the trigger runs as the deleting user, and an invoker
+    -- update of someone else's message would silently update 0 rows under
+    -- RLS instead of erroring. private.clear_citation_quote() (the sibling
+    -- BEFORE UPDATE OF chunk_id trigger that nulls out `quote` alongside
+    -- `chunk_id`) stays SECURITY INVOKER -- it only ever touches the row
+    -- already being updated in place, so it is deliberately NOT added here.
     select unnest(array[
       to_regprocedure('private.add_notebook_owner()'),
       to_regprocedure('private.audit_membership()'),
-      to_regprocedure('private.guard_last_owner()')
+      to_regprocedure('private.guard_last_owner()'),
+      to_regprocedure('private.redact_cited_answers()')
     ]) as proc
   ),
   allowed as (
