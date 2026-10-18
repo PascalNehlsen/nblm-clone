@@ -1,6 +1,6 @@
 # Runbook: apply infra/bootstrap
 
-- Last rehearsed: never; steps 1 to 3 applied for real on 2026-10-17
+- Last rehearsed: never; steps 1 to 3 applied for real on 2026-10-17, step 4 on 2026-10-18
 - Who: the human, from the host, never from the sandbox or CI ([ADR 0002](../adr/0002-bootstrap-applied-locally.md))
 - Profiles (sso-session `nblm`): `nblm-workload` (workload admin), `nblm-mgmt-admin` (management admin), `nblm-mgmt-ro` (management read-only, for checks)
 
@@ -20,7 +20,9 @@ scripts/tofu.sh -chdir=infra/bootstrap apply bootstrap.tfplan
 rm infra/bootstrap/bootstrap.tfplan
 ```
 
-Until step 4, state is local (`infra/bootstrap/terraform.tfstate`, git-ignored). Do not delete it. From step 4 on, state is in the bucket under `bootstrap/terraform.tfstate`, encrypted by OpenTofu ([ADR 0003](../adr/0003-bootstrap-state-encryption.md)), and plan files are encrypted too.
+If the step expects `No changes` (step 5), run `plan` without `-out` and do not apply.
+
+Until step 4, state is local (`infra/bootstrap/terraform.tfstate`, git-ignored). Do not delete it. From step 4 on, state is in the bucket under `bootstrap/terraform.tfstate`, encrypted by OpenTofu ([ADR 0003](../adr/0003-bootstrap-state-encryption.md)), and plan files are encrypted too. From step 5 on, encryption is enforced: OpenTofu refuses plaintext state and plan files.
 
 ## Step 1: attach the new region SCP next to the old one (PR `infra/bootstrap-scp`)
 
@@ -138,7 +140,7 @@ K=arn:aws:kms:eu-central-1:278311879197:key/88593446-cbdc-4378-a1b3-6b7a92c427f1
 BK="$HOME/nblm-bootstrap-state-backup"     # outside every repository
 ```
 
-1. Back up, still on the step 3 commit (before `git pull`):
+1. Back up, still on the step 3 commit (before the fetch and switch in step 2):
 
 ```bash
 scripts/tofu.sh -chdir=infra/bootstrap plan                         # No changes.
@@ -151,7 +153,7 @@ aws s3api list-object-versions --bucket "$B" --prefix bootstrap/ \
   --query '[Versions,DeleteMarkers]'                                # [null, null]
 ```
 
-2. Migrate. Answer `yes` to copying the existing state. The warning "Unencrypted method configured" is expected until PR 5.
+2. Migrate. Answer `yes` to copying the existing state. The warning "Unencrypted method configured" is expected until step 5.
 
 ```bash
 git fetch -q origin && git switch --detach origin/main
@@ -163,12 +165,12 @@ scripts/tofu.sh -chdir=infra/bootstrap init -migrate-state -lockfile=readonly
 ```bash
 aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate \
   --query '[ServerSideEncryption,SSEKMSKeyId]'                      # ["aws:kms", "$K"]
-aws s3 cp "s3://$B/bootstrap/terraform.tfstate" - | jq -c keys      # ["encrypted_data","encryption_version","meta"]
+aws s3 cp "s3://$B/bootstrap/terraform.tfstate" - | jq -c keys      # ["encrypted_data","encryption_version","lineage","meta","serial"]
 aws s3 cp "s3://$B/bootstrap/terraform.tfstate" - | jq -c '.meta | keys'   # ["key_provider.aws_kms.state"]
 diff <(scripts/tofu.sh -chdir=infra/bootstrap state list) "$BK/state-list.txt"   # no output
 ```
 
-If `keys` shows `resources`, `version` and so on, the migration wrote plaintext: the encryption config does not work as expected, and an apply would write plaintext too. Stop and use the rollback before the apply. Anything else wrong: same.
+`lineage` and `serial` stay plaintext in OpenTofu's encrypted format too, so they prove nothing. If `keys` shows `resources`, `version` or `terraform_version`, the migration wrote plaintext: the encryption config does not work as expected, and an apply would write plaintext too. Stop and use the rollback before the apply. Anything else wrong: same.
 
 4. Plan and apply:
 
@@ -187,7 +189,7 @@ aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock   #
 for v in $(aws s3api list-object-versions --bucket "$B" --prefix bootstrap/terraform.tfstate \
     --query "Versions[?Key=='bootstrap/terraform.tfstate'].VersionId" --output text); do
   aws s3api get-object --bucket "$B" --key bootstrap/terraform.tfstate --version-id "$v" "$BK/v.json" > /dev/null
-  echo "$v $(jq -c keys "$BK/v.json")"                              # every version: ["encrypted_data","encryption_version","meta"]
+  echo "$v $(jq -c keys "$BK/v.json")"                              # every version: ["encrypted_data","encryption_version","lineage","meta","serial"]
 done; rm -f "$BK/v.json"
 aws iam simulate-principal-policy \
   --policy-source-arn arn:aws:iam::278311879197:role/nblm-tofu-plan \
@@ -206,7 +208,44 @@ rm -f infra/bootstrap/terraform.tfstate infra/bootstrap/terraform.tfstate.backup
 scripts/tofu.sh -chdir=infra/bootstrap plan                         # No changes.
 ```
 
-Keep `$BK` (plaintext state) until PR 5 is applied and its plan shows no changes; then `rm -rf "$BK"`.
+Keep `$BK` (plaintext state) until step 5 has passed; step 5 deletes it.
+
+## Step 5: enforce encryption, delete the plaintext backup (PR `infra/bootstrap-enforce-encryption`)
+
+Step 4 applied 2026-10-18. The PR removes the `unencrypted` method and both fallbacks and sets `enforced = true` for state and plan. Nothing to apply: the encryption config is not in state, and the state is already encrypted. Run in the same worktree as step 4. This step replaces "Every step" above: the version id is recorded before the switch.
+
+```bash
+aws sso login --sso-session nblm
+export AWS_PROFILE=nblm-workload AWS_REGION=eu-central-1
+B=nblm-tofu-state-278311879197
+BK="$HOME/nblm-bootstrap-state-backup"
+ls "$BK"                                                            # SHA256SUMS, state-list.txt, terraform.tfstate*
+V0=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate --query VersionId --output text)
+echo "$V0"                                                          # a version id, not empty
+git fetch -q origin && git switch --detach origin/main
+scripts/tofu.sh -chdir=infra/bootstrap init -input=false -lockfile=readonly   # no "Unencrypted method configured" warning
+scripts/tofu.sh -chdir=infra/bootstrap plan -input=false -detailed-exitcode; rc=$?   # No changes., no warning
+V1=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate --query VersionId --output text)
+LOCK=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock 2>&1 >/dev/null)
+echo "plan exit $rc; V0 $V0; V1 $V1; lock: $LOCK"                   # exit 0; V1 = V0; lock: An error occurred (404) ... Not Found
+V=infra/bootstrap/versions.tf
+if [ "$rc" = 0 ] && [ -n "$V0" ] && [ "$V1" = "$V0" ] && printf '%s' "$LOCK" | grep -q '(404)' \
+  && ! grep -q 'method "unencrypted"' "$V" \
+  && [ "$(grep -c '^[[:space:]]*enforced[[:space:]]*=[[:space:]]*true' "$V")" = 2 ]; then echo "all checks passed"; else echo STOP; fi
+```
+
+This is the single gate before the deletion. It needs all five: the plan exited 0 (no changes, no error), `V0` was read, the state version is unchanged, the lock lookup returned 404 (not 403 or an expired session), and the checked-out `versions.tf` is the enforced config (no `method "unencrypted"`, exactly two `enforced = true`). Without the last check, a worktree still on the step 4 commit passes the other four, because that config also reads the encrypted state. The "Unencrypted method configured" warning must be absent from the `init` and `plan` output; if it appears, the wrong commit is checked out. Anything else prints `STOP`: keep `$BK` and see the rollback.
+
+The plan reads the state with `aes_gcm` alone, so it proves the stored state is encrypted. Compare the version id, not a count under the prefix: the plan's lock writes and deletes `bootstrap/terraform.tfstate.tflock`, which leaves a version and a delete marker on that key only. Plaintext state would now fail with `encountered unencrypted payload without unencrypted method configured`.
+
+Only after the gate printed "all checks passed":
+
+```bash
+rm -rf "${BK:?}"
+ls "$BK"                                                            # No such file or directory
+```
+
+`rm` does not reach copies in host backups or a synced `$HOME`; check those if `$BK` was inside one.
 
 ## Rollback
 
@@ -243,6 +282,10 @@ scripts/tofu.sh -chdir=infra/bootstrap plan                          # No change
 
 Then revert the PR, or fix it and start step 4 again.
 
-Undo step 4, after the apply: the bucket is the source of truth and the backup lacks the policy change. Fix forward in a PR. Only if the key is unusable: restore the backup as above; the next plan shows the plan role policy change again.
+Undo step 4, after the apply: the bucket is the source of truth and the backup lacks the policy change. Fix forward in a PR. Only if the key is unusable and `$BK` still exists: restore the backup as above; the next plan shows the plan role policy change again.
+
+Undo step 5, before `rm -rf "$BK"` (init or plan fails, or the plan shows changes): stop, keep `$BK`, apply nothing. Step 5 wrote nothing, so reverting the PR (fallback back in) is safe and needs no state action. Find the cause before retrying.
+
+Undo step 5, after `rm -rf "$BK"`: there is no plaintext copy left. Recovery uses the noncurrent object versions (kept 90 days) and the KMS key; that covers a broken config, not a lost key, since every version is ciphertext under that key. Fix forward in a PR.
 
 A manual attach or detach is drift that tofu does not know about. Reconcile it in a PR: a reattached p-grnvof89 needs an `import {}` block for its attachment again, and a detached p-82q6pnrv shows up in the next plan as `region_guard_root` to create, which is the way to reattach it once fixed.

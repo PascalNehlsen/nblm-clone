@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { bootstrapDir, concatTf, extractBlock, extractBlocks, infraDir, readBootstrapFile, walkFiles } from "./hcl";
+import { bootstrapDir, concatTf, extractBlock, extractBlocks, infraDir, readBootstrapFile, stripHclComments, walkFiles } from "./hcl";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const tofuScript = fs.readFileSync(path.join(repoRoot, "scripts/tofu.sh"), "utf8");
@@ -59,6 +59,29 @@ describe("infra/bootstrap/versions.tf", () => {
   });
 });
 
+describe("infra/bootstrap: no stray files outside concatTf()'s *.tf scan", () => {
+  it(
+    "has no *.tofu, *.tf.json, *.tofu.json or *override* file directly under infra/bootstrap " +
+      "(policies/ JSON templates in a subdirectory and .terraform.lock.hcl are fine)",
+    () => {
+      const entries = fs.readdirSync(bootstrapDir, { withFileTypes: true });
+      const offenders = entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name)
+        .filter(
+          (name) => name.endsWith(".tofu") || name.endsWith(".tf.json") || name.endsWith(".tofu.json") || name.includes("override"),
+        );
+
+      expect(
+        offenders,
+        "concatTf() only reads *.tf; OpenTofu also loads *.tofu (which replaces a same-named .tf), " +
+          "*.tf.json, *.tofu.json and *_override.tf(.json)/*.tofu(.json), so any of these would be " +
+          "silently applied without being covered by these assertions",
+      ).toEqual([]);
+    },
+  );
+});
+
 describe("infra/bootstrap/versions.tf: local.state_key_arn (PR 4)", () => {
   const STATE_KEY_ARN = "arn:aws:kms:eu-central-1:278311879197:key/88593446-cbdc-4378-a1b3-6b7a92c427f1";
 
@@ -93,9 +116,23 @@ describe("infra/bootstrap/versions.tf: local.state_key_arn (PR 4)", () => {
   });
 });
 
-describe("infra/bootstrap/versions.tf: state encryption (PR 4)", () => {
+// Requirement change in PR 5 (infra/bootstrap-enforce-encryption): the
+// `method "unencrypted" "migrate"` block and both `fallback` blocks from PR 4
+// are removed, and `state`/`plan` now set `enforced = true`. This replaced the
+// PR 4 assertions (unencrypted method exists, fallback to
+// method.unencrypted.migrate on state and plan, "no enforced yet"): the local
+// plaintext state was already migrated into the bucket in runbook step 4
+// (ADR 0003, docs/runbooks/bootstrap.md); step 5 removes the now-unneeded
+// fallback, enforces encryption, and (as a separate, non-tofu action) deletes
+// the plaintext backup kept since step 4.
+describe("infra/bootstrap/versions.tf: state encryption (PR 5)", () => {
+  // Comments are stripped here (not just for the `source` used directly
+  // below): hcl.ts's block extraction does not strip them, so a commented-out
+  // `# enforced = true` or `# method = method.aes_gcm.state` left behind after
+  // deleting the real line would otherwise still satisfy these positive
+  // assertions.
   function encryptionBlock() {
-    const source = concatTf();
+    const source = stripHclComments(concatTf());
     const terraformBlock = extractBlock(source, /terraform\s*(?=\{)/);
     return extractBlock(terraformBlock?.body ?? "", /encryption\s*(?=\{)/);
   }
@@ -111,19 +148,24 @@ describe("infra/bootstrap/versions.tf: state encryption (PR 4)", () => {
     expect(keyProvider?.body).toMatch(/profile\s*=\s*var\.workload_profile/);
   });
 
-  it('method "aes_gcm" "state" uses key_provider.aws_kms.state, and method "unencrypted" "migrate" exists', () => {
+  it('has exactly one method block in the encryption block: method "aes_gcm" "state" with keys = key_provider.aws_kms.state', () => {
     const encryption = encryptionBlock();
+    expect(encryption, "expected an encryption { ... } block inside terraform {}").toBeDefined();
 
-    const aesGcm = extractBlock(encryption?.body ?? "", /method\s+"aes_gcm"\s+"state"\s*(?=\{)/);
-    expect(aesGcm, 'expected method "aes_gcm" "state" { ... }').toBeDefined();
-    expect(aesGcm?.body).toMatch(/keys\s*=\s*key_provider\.aws_kms\.state/);
+    const methodBlocks = extractBlocks(encryption?.body ?? "", /method\s+"[^"]+"\s+"[^"]+"\s*(?=\{)/);
+    expect(methodBlocks).toHaveLength(1);
+    expect(methodBlocks[0]?.header).toMatch(/method\s+"aes_gcm"\s+"state"/);
+    expect(methodBlocks[0]?.body).toMatch(/keys\s*=\s*key_provider\.aws_kms\.state/);
+  });
 
-    const unencrypted = extractBlock(encryption?.body ?? "", /method\s+"unencrypted"\s+"migrate"\s*(?=\{)/);
-    expect(unencrypted, 'expected method "unencrypted" "migrate" { ... }').toBeDefined();
+  it('has no method "unencrypted" block and no method.unencrypted. reference anywhere in infra/bootstrap (a bare "unencrypted" word in a comment is fine)', () => {
+    const source = concatTf();
+    expect(source).not.toMatch(/method\s+"unencrypted"/);
+    expect(source).not.toMatch(/method\.unencrypted\./);
   });
 
   it.each(["state", "plan"])(
-    "%s { ... } uses method.aes_gcm.state with a fallback to method.unencrypted.migrate",
+    "%s { ... } uses method.aes_gcm.state, has no fallback block, and sets enforced = true",
     (blockName) => {
       const encryption = encryptionBlock();
       const block = extractBlock(encryption?.body ?? "", new RegExp(`${blockName}\\s*(?=\\{)`));
@@ -131,19 +173,28 @@ describe("infra/bootstrap/versions.tf: state encryption (PR 4)", () => {
       expect(block?.body).toMatch(/method\s*=\s*method\.aes_gcm\.state/);
 
       const fallback = extractBlock(block?.body ?? "", /fallback\s*(?=\{)/);
-      expect(fallback, `expected a fallback { ... } block inside ${blockName}`).toBeDefined();
-      expect(fallback?.body).toMatch(/method\s*=\s*method\.unencrypted\.migrate/);
+      expect(fallback, `expected no fallback { ... } block inside ${blockName}`).toBeUndefined();
+
+      expect(block?.body).toMatch(/enforced\s*=\s*true/);
     },
   );
 
-  // `enforced` is not set yet because the `unencrypted.migrate` fallback is
-  // still needed to read the local plaintext state being migrated by this
-  // PR's first apply; setting `enforced` here would make tofu refuse to read
-  // it. PR 5 removes the fallback and sets `enforced` once the migration has
-  // run. remote_state_data_sources is never used by this stack at all.
-  it("sets no `enforced` option and does not use remote_state_data_sources anywhere in infra/bootstrap yet", () => {
-    const source = concatTf();
-    expect(source).not.toMatch(/\benforced\s*=/);
+  it("has no fallback block anywhere inside the encryption block", () => {
+    const encryption = encryptionBlock();
+    const fallbackBlocks = extractBlocks(encryption?.body ?? "", /fallback\s*(?=\{)/);
+    expect(fallbackBlocks).toEqual([]);
+  });
+
+  it("every `enforced =` in infra/bootstrap/*.tf is `= true`, there are exactly 2 (state and plan), and remote_state_data_sources is still absent", () => {
+    // Stripped so a leftover `# enforced = true` comment (the real line
+    // deleted) cannot inflate the count or fake the "every value is true"
+    // check.
+    const source = stripHclComments(concatTf());
+    const enforcedValues = [...source.matchAll(/\benforced\s*=\s*(\S+)/g)].map((m) => m[1]);
+    expect(enforcedValues).toHaveLength(2);
+    for (const value of enforcedValues) {
+      expect(value).toBe("true");
+    }
     expect(source).not.toMatch(/remote_state_data_sources/);
   });
 });
