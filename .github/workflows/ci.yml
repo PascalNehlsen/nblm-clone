@@ -138,13 +138,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Login needs Postgres, Auth, PostgREST and the gateway only.
+      # Postgres, Auth, PostgREST, Storage and the gateway: notebook deletion removes
+      # Storage objects first and checks the prefix is empty (ADR 0004).
       - name: Start local Supabase
         run: |
           start() { pnpm exec supabase start -x "$SUPABASE_EXCLUDE"; }
           start || { pnpm exec supabase stop --no-backup || true; sleep 10; start; }
         env:
-          SUPABASE_EXCLUDE: realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          SUPABASE_EXCLUDE: realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       # The browser cache is keyed on the installed Playwright version, so a version
       # bump downloads a matching Chromium. System libraries are not cached.
