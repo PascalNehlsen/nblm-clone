@@ -27,7 +27,10 @@
 // read `x-action-redirect` instead, and each rejection case is paired with a
 // positive control (the identical captured request, replayed with valid
 // credentials) that proves the replay technique itself actually reaches the
-// server action.
+// server action. The confirmation test is the exception: it submits the real
+// form without the checkbox and reads the redirected page URL, because the
+// production build renames server-action fields; its positive control is the
+// owner replay in "a viewer cannot write", which submits a checked form.
 import { expect, test, type APIResponse, type Browser, type Page } from "@playwright/test";
 import { seedLocalSession, seedLocalSessionWithClient } from "./helpers/session";
 
@@ -125,54 +128,6 @@ function redirectTarget(response: APIResponse): URL {
   return new URL(withoutRedirectType, "http://127.0.0.1:3000");
 }
 
-interface MultipartField {
-  name: string;
-  value: string;
-}
-
-function multipartBoundary(contentType: string | undefined): string {
-  const match = (contentType ?? "").match(/boundary=(?:"([^"]+)"|([^;]+))/);
-  const boundary = match?.[1] ?? match?.[2];
-  if (!boundary) throw new Error(`multipartBoundary: no boundary found in content-type: "${contentType}"`);
-  return boundary;
-}
-
-/** Minimal multipart/form-data parser, only as capable as this file's own
- * replayed bodies need (text fields, no file parts): used to rebuild a
- * request with one field removed without knowing every field's name ahead
- * of time. */
-function parseMultipart(contentType: string | undefined, body: Buffer | null): MultipartField[] {
-  const boundary = multipartBoundary(contentType);
-  const text = (body ?? Buffer.alloc(0)).toString("utf8");
-  const parts = text.split(`--${boundary}`).slice(1, -1);
-  const fields: MultipartField[] = [];
-
-  for (const part of parts) {
-    const withoutLeadingCrlf = part.replace(/^\r\n/, "");
-    const headerEnd = withoutLeadingCrlf.indexOf("\r\n\r\n");
-    if (headerEnd === -1) continue;
-    const header = withoutLeadingCrlf.slice(0, headerEnd);
-    const value = withoutLeadingCrlf.slice(headerEnd + 4).replace(/\r\n$/, "");
-    const nameMatch = header.match(/name="([^"]+)"/);
-    if (nameMatch?.[1]) fields.push({ name: nameMatch[1], value });
-  }
-
-  return fields;
-}
-
-function buildMultipartBody(boundary: string, fields: MultipartField[]): Buffer {
-  const lines: string[] = [];
-  for (const field of fields) {
-    lines.push(`--${boundary}`);
-    lines.push(`Content-Disposition: form-data; name="${field.name}"`);
-    lines.push("");
-    lines.push(field.value);
-  }
-  lines.push(`--${boundary}--`);
-  lines.push("");
-  return Buffer.from(lines.join("\r\n"), "utf8");
-}
-
 test.describe("a signed-in owner creates and manages a notebook", () => {
   test("creating a notebook from the list page lands on its own page, and it appears back in the list", async ({
     context,
@@ -202,8 +157,11 @@ test.describe("sharing a notebook", () => {
     const ownerPage = await ownerContext.newPage();
     const viewerPage = await viewerContext.newPage();
 
+    await ownerPage.goto("/profil");
+    const ownerId = extractUuid(await ownerPage.getByTestId("nutzer-id").innerText());
+
     await viewerPage.goto("/profil");
-    const viewerId = extractUuid(await viewerPage.locator("body").innerText());
+    const viewerId = extractUuid(await viewerPage.getByTestId("nutzer-id").innerText());
 
     const notebookUrl = await createNotebookViaUi(ownerPage, `Teilen-Test ${Date.now()}`);
     await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
@@ -213,9 +171,16 @@ test.describe("sharing a notebook", () => {
     // A shortened form of the viewer's id, per the member-list contract.
     await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
 
-    // The viewer themselves now also sees the notebook and its member list.
+    // The viewer themselves now also sees the notebook and its member list --
+    // but *their own* row reads "Du" (unit-tested in
+    // tests/unit/notebooks/member-list.test.tsx), not their id prefix; only
+    // the owner's row shows an id prefix, since the owner is "someone else"
+    // from the viewer's perspective.
     await viewerPage.goto(notebookUrl);
-    await expect(viewerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    const members = viewerPage.getByRole("listitem");
+    const ownRow = members.filter({ has: viewerPage.getByText("Du", { exact: true }) });
+    await expect(ownRow).toContainText("Betrachter");
+    await expect(members.filter({ hasText: ownerId.slice(0, 8) })).toContainText("Eigentümer");
 
     await ownerContext.close();
     await viewerContext.close();
@@ -314,44 +279,39 @@ test.describe("a viewer cannot write", () => {
 });
 
 test.describe("deleting a notebook requires explicit confirmation", () => {
-  test("replaying the delete request with the confirmation field stripped out does not delete, and redirects with fehler=bestaetigung", async ({
+  test("submitting the delete form with the confirmation checkbox left unchecked does not delete, and redirects with fehler=bestaetigung", async ({
     context,
   }) => {
+    // Deliberately does not depend on the server action's raw field names
+    // (Next's production build prefixes them, e.g. "_1_confirm", unlike the
+    // dev build): this submits through the real page with the real button,
+    // and only bypasses the checkbox's `required` HTML attribute -- the one
+    // thing that would otherwise stop an unchecked submission from ever
+    // reaching the network at all -- so what is actually under test is the
+    // server action's own confirmation check, not the browser's.
     await context.addCookies(await seedLocalSession("notebooks-e2e-confirm"));
     const page = await context.newPage();
-    const notebookUrl = await createNotebookViaUi(page, `Bestaetigung-Test ${Date.now()}`);
+    const title = `Bestaetigung-Test ${Date.now()}`;
+    const notebookUrl = await createNotebookViaUi(page, title);
 
-    const captured = await captureServerActionRequest(
-      page,
-      async () => {
-        await page.getByLabel("Ich möchte dieses Notizbuch endgültig löschen").check();
-        await page.getByRole("button", { name: "Notizbuch löschen" }).click();
-      },
-      { abort: true },
+    const checkbox = page.getByLabel("Ich möchte dieses Notizbuch endgültig löschen");
+    await checkbox.evaluate((input: HTMLInputElement) => input.removeAttribute("required"));
+    await expect(checkbox).not.toBeChecked();
+
+    await page.getByRole("button", { name: "Notizbuch löschen" }).click();
+    // The page is already on the notebook path before the click, so wait for the
+    // server action's redirect to add an error, not just for the path.
+    await page.waitForURL(
+      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
     );
 
-    const contentType = captured.headers["content-type"];
-    const boundary = multipartBoundary(contentType);
-    const fields = parseMultipart(contentType, captured.postData);
-    // The confirmation checkbox's form field is named "confirm" (communicated
-    // by the builder); dropping it by name replays "unconfirmed" regardless
-    // of whatever value a checked checkbox happens to submit.
-    const withoutConfirmation = fields.filter((field) => field.name !== "confirm");
-    expect(
-      withoutConfirmation.length,
-      'expected to find and drop a field named "confirm" (the checked confirmation checkbox)',
-    ).toBeLessThan(fields.length);
-    const unconfirmedBody = buildMultipartBody(boundary, withoutConfirmation);
+    const redirectedUrl = new URL(page.url());
+    expect(redirectedUrl.searchParams.get("fehler")).toBe("bestaetigung");
 
-    const response = await context.request.post(captured.url, {
-      headers: headersForReplay(captured.headers),
-      data: unconfirmedBody,
-    });
-    const redirect = redirectTarget(response);
-    expect(redirect.searchParams.get("fehler")).toBe("bestaetigung");
-
-    const stillThere = await page.goto(notebookUrl);
-    expect(stillThere?.status()).not.toBe(404);
+    // Still there: a fresh navigation shows the title, not a not-found page.
+    const response = await page.goto(notebookUrl);
+    expect(response?.status()).not.toBe(404);
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
   });
 });
 
