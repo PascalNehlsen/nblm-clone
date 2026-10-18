@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import RootLayout, { metadata } from "../../apps/web/app/layout";
-import Page from "../../apps/web/app/page";
+import Page from "../../apps/web/app/(app)/page";
 
 // Resolve relative to this test file so it is independent of the cwd vitest is
 // invoked from.
