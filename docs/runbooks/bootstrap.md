@@ -1,6 +1,6 @@
 # Runbook: apply infra/bootstrap
 
-- Last rehearsed: never; steps 1 and 2 applied for real on 2026-10-17
+- Last rehearsed: never; steps 1 to 3 applied for real on 2026-10-17
 - Who: the human, from the host, never from the sandbox or CI ([ADR 0002](../adr/0002-bootstrap-applied-locally.md))
 - Profiles (sso-session `nblm`): `nblm-workload` (workload admin), `nblm-mgmt-admin` (management admin), `nblm-mgmt-ro` (management read-only, for checks)
 
@@ -8,7 +8,7 @@
 
 ```bash
 aws sso login --sso-session nblm
-git switch main && git pull --ff-only     # apply only what was merged
+git fetch -q origin && git switch --detach origin/main     # apply only what was merged
 scripts/tofu.sh -chdir=infra/bootstrap init -lockfile=readonly
 scripts/tofu.sh -chdir=infra/bootstrap plan -out=bootstrap.tfplan
 ```
@@ -20,7 +20,7 @@ scripts/tofu.sh -chdir=infra/bootstrap apply bootstrap.tfplan
 rm infra/bootstrap/bootstrap.tfplan
 ```
 
-Until the state migration step, state is local (`infra/bootstrap/terraform.tfstate`, git-ignored). Do not delete it.
+Until step 4, state is local (`infra/bootstrap/terraform.tfstate`, git-ignored). Do not delete it. From step 4 on, state is in the bucket under `bootstrap/terraform.tfstate`, encrypted by OpenTofu ([ADR 0003](../adr/0003-bootstrap-state-encryption.md)), and plan files are encrypted too.
 
 ## Step 1: attach the new region SCP next to the old one (PR `infra/bootstrap-scp`)
 
@@ -126,6 +126,88 @@ aws iam simulate-principal-policy \
 
 The roles are not used by any workflow yet; the plan-in-PR workflow comes later. Do not delete the local state.
 
+## Step 4: move bootstrap state into the bucket, encrypted (PR `infra/bootstrap-migrate-state`)
+
+Step 3 applied 2026-10-17. Run everything in the checkout that holds the local state. This step replaces "Every step" above: the migration comes before the plan.
+
+```bash
+aws sso login --sso-session nblm
+export AWS_PROFILE=nblm-workload AWS_REGION=eu-central-1
+B=nblm-tofu-state-278311879197
+K=arn:aws:kms:eu-central-1:278311879197:key/88593446-cbdc-4378-a1b3-6b7a92c427f1
+BK="$HOME/nblm-bootstrap-state-backup"     # outside every repository
+```
+
+1. Back up, still on the step 3 commit (before `git pull`):
+
+```bash
+scripts/tofu.sh -chdir=infra/bootstrap plan                         # No changes.
+[ "$(scripts/tofu.sh -chdir=infra/bootstrap output -raw state_key_arn)" = "$K" ] && echo ok   # ok: local.state_key_arn in the PR is the real key
+mkdir -m 700 "$BK"
+cp -p infra/bootstrap/terraform.tfstate* "$BK"/ && chmod 600 "$BK"/*
+(cd "$BK" && sha256sum terraform.tfstate* > SHA256SUMS && cat SHA256SUMS)
+scripts/tofu.sh -chdir=infra/bootstrap state list > "$BK/state-list.txt"
+aws s3api list-object-versions --bucket "$B" --prefix bootstrap/ \
+  --query '[Versions,DeleteMarkers]'                                # [null, null]
+```
+
+2. Migrate. Answer `yes` to copying the existing state. The warning "Unencrypted method configured" is expected until PR 5.
+
+```bash
+git fetch -q origin && git switch --detach origin/main
+scripts/tofu.sh -chdir=infra/bootstrap init -migrate-state -lockfile=readonly
+```
+
+3. Check the object before anything else:
+
+```bash
+aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate \
+  --query '[ServerSideEncryption,SSEKMSKeyId]'                      # ["aws:kms", "$K"]
+aws s3 cp "s3://$B/bootstrap/terraform.tfstate" - | jq -c keys      # ["encrypted_data","encryption_version","meta"]
+aws s3 cp "s3://$B/bootstrap/terraform.tfstate" - | jq -c '.meta | keys'   # ["key_provider.aws_kms.state"]
+diff <(scripts/tofu.sh -chdir=infra/bootstrap state list) "$BK/state-list.txt"   # no output
+```
+
+If `keys` shows `resources`, `version` and so on, the migration wrote plaintext: the encryption config does not work as expected, and an apply would write plaintext too. Stop and use the rollback before the apply. Anything else wrong: same.
+
+4. Plan and apply:
+
+```bash
+scripts/tofu.sh -chdir=infra/bootstrap plan -out=bootstrap.tfplan
+head -c 60 infra/bootstrap/bootstrap.tfplan; echo                   # {"meta":{"key_provider.aws_kms.state":... (encrypted), not "PK" (a plain zip)
+```
+
+Expected plan: `Plan: 0 to add, 1 to change, 0 to destroy.` The one change is `aws_iam_role_policy.tofu_plan_state_read`, which gains the statement `GenerateDataKeyForStateEncryption`. Paste the summary into the PR, then apply and `rm infra/bootstrap/bootstrap.tfplan`.
+
+5. Verify:
+
+```bash
+scripts/tofu.sh -chdir=infra/bootstrap plan                         # No changes.
+aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock   # 404 Not Found: no lock left behind
+for v in $(aws s3api list-object-versions --bucket "$B" --prefix bootstrap/terraform.tfstate \
+    --query "Versions[?Key=='bootstrap/terraform.tfstate'].VersionId" --output text); do
+  aws s3api get-object --bucket "$B" --key bootstrap/terraform.tfstate --version-id "$v" "$BK/v.json" > /dev/null
+  echo "$v $(jq -c keys "$BK/v.json")"                              # every version: ["encrypted_data","encryption_version","meta"]
+done; rm -f "$BK/v.json"
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::278311879197:role/nblm-tofu-plan \
+  --action-names kms:GenerateDataKey kms:Decrypt --resource-arns "$K" \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]'       # both allowed
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::278311879197:role/nblm-tofu-plan \
+  --action-names s3:PutObject --resource-arns "arn:aws:s3:::$B/bootstrap/terraform.tfstate.tflock" \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]'       # explicitDeny: CI plans run with -lock=false
+```
+
+6. Only after step 5 passed, remove the local state and prove the bucket is the source:
+
+```bash
+rm -f infra/bootstrap/terraform.tfstate infra/bootstrap/terraform.tfstate.backup
+scripts/tofu.sh -chdir=infra/bootstrap plan                         # No changes.
+```
+
+Keep `$BK` (plaintext state) until PR 5 is applied and its plan shows no changes; then `rm -rf "$BK"`.
+
 ## Rollback
 
 The management account is not affected by SCPs, so it can always undo an SCP change. Never leave Root without a region SCP: attach before you detach.
@@ -140,5 +222,27 @@ aws organizations detach-policy --policy-id p-82q6pnrv --target-id r-tmxq --prof
 ```
 
 Undo step 3: leave the new resources in place. No workflow uses the roles yet, the bucket is empty, and the key costs about 1 USD a month. Removing them by hand is drift, and `prevent_destroy` blocks a tofu destroy of the bucket, key and OIDC provider on purpose; a fix goes through a PR and a new apply.
+
+Undo step 4, before the apply (migration failed or the object is wrong). Same variables as step 4; the admin profile can delete versions, the apply role cannot:
+
+```bash
+for kind in Versions DeleteMarkers; do
+  aws s3api list-object-versions --bucket "$B" --prefix bootstrap/ \
+    --query "$kind[].[Key,VersionId]" --output text |
+    while read -r key id; do
+      [ "$key" = None ] || aws s3api delete-object --bucket "$B" --key "$key" --version-id "$id"
+    done
+done
+aws s3api list-object-versions --bucket "$B" --prefix bootstrap/ --query '[Versions,DeleteMarkers]'   # [null, null]
+git switch --detach 6abdfed                                          # step 3 commit, no backend
+cp -p "$BK"/terraform.tfstate* infra/bootstrap/
+(cd infra/bootstrap && sha256sum -c "$BK/SHA256SUMS")                # OK for each file
+scripts/tofu.sh -chdir=infra/bootstrap init -reconfigure -lockfile=readonly
+scripts/tofu.sh -chdir=infra/bootstrap plan                          # No changes.
+```
+
+Then revert the PR, or fix it and start step 4 again.
+
+Undo step 4, after the apply: the bucket is the source of truth and the backup lacks the policy change. Fix forward in a PR. Only if the key is unusable: restore the backup as above; the next plan shows the plan role policy change again.
 
 A manual attach or detach is drift that tofu does not know about. Reconcile it in a PR: a reattached p-grnvof89 needs an `import {}` block for its attachment again, and a detached p-82q6pnrv shows up in the next plan as `region_guard_root` to create, which is the way to reattach it once fixed.

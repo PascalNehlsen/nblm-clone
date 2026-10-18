@@ -34,10 +34,117 @@ describe("infra/bootstrap/versions.tf", () => {
     expect(versionMatch?.[1]).toBe("6.67.0");
   });
 
-  it("has no backend block (local state in this PR)", () => {
+  // Requirement change in PR 4 (infra/bootstrap-migrate-state): state moves
+  // from local to the S3 backend created in PR 3. This replaces the old "no
+  // backend block" assertion below, which held only while state stayed local.
+  it("has exactly one backend block, type s3, pointed at the real state bucket/key with a locking, encrypted write path", () => {
     const source = concatTf();
     const terraformBlock = extractBlock(source, /terraform\s*(?=\{)/);
-    expect(terraformBlock?.body ?? "").not.toMatch(/backend\s+"/);
+    expect(terraformBlock, "expected a `terraform { ... }` block").toBeDefined();
+
+    const backendBlocks = extractBlocks(terraformBlock?.body ?? "", /backend\s+"[a-z0-9_]+"\s*(?=\{)/);
+    expect(backendBlocks).toHaveLength(1);
+
+    const backend = backendBlocks[0];
+    expect(backend?.header).toMatch(/backend\s+"s3"/);
+    expect(backend?.body).toMatch(/bucket\s*=\s*"nblm-tofu-state-278311879197"/);
+    expect(backend?.body).toMatch(/key\s*=\s*"bootstrap\/terraform\.tfstate"/);
+    expect(backend?.body).toMatch(/region\s*=\s*"eu-central-1"/);
+    expect(backend?.body).toMatch(/profile\s*=\s*var\.workload_profile/);
+    expect(backend?.body).toMatch(/allowed_account_ids\s*=\s*\[\s*"278311879197"\s*\]/);
+    expect(backend?.body).toMatch(/use_lockfile\s*=\s*true/);
+    expect(backend?.body).toMatch(/encrypt\s*=\s*true/);
+    expect(backend?.body).toMatch(/kms_key_id\s*=\s*local\.state_key_arn/);
+    expect(backend?.body ?? "").not.toMatch(/dynamodb_table/);
+  });
+});
+
+describe("infra/bootstrap/versions.tf: local.state_key_arn (PR 4)", () => {
+  const STATE_KEY_ARN = "arn:aws:kms:eu-central-1:278311879197:key/88593446-cbdc-4378-a1b3-6b7a92c427f1";
+
+  it("is defined exactly once, as the key id arn (not an alias), and the literal appears nowhere else in infra/bootstrap", () => {
+    const source = concatTf();
+
+    const localsBlocks = extractBlocks(source, /locals\s*(?=\{)/);
+    const assignments = localsBlocks.flatMap((block) => [...block.body.matchAll(/state_key_arn\s*=\s*"([^"]+)"/g)].map((m) => m[1]));
+    expect(assignments).toEqual([STATE_KEY_ARN]);
+    expect(STATE_KEY_ARN).not.toMatch(/:alias\//);
+
+    const occurrences = source.split(STATE_KEY_ARN).length - 1;
+    expect(occurrences, "the ARN literal must appear only in the locals definition; every other reference uses local.state_key_arn").toBe(
+      1,
+    );
+  });
+
+  it("both the backend's kms_key_id and the encryption key_provider's kms_key_id reference local.state_key_arn", () => {
+    const source = concatTf();
+    const terraformBlock = extractBlock(source, /terraform\s*(?=\{)/);
+
+    const backend = extractBlock(terraformBlock?.body ?? "", /backend\s+"s3"\s*(?=\{)/);
+    expect(backend, 'expected backend "s3" { ... }').toBeDefined();
+    expect(backend?.body).toMatch(/kms_key_id\s*=\s*local\.state_key_arn/);
+
+    const encryption = extractBlock(terraformBlock?.body ?? "", /encryption\s*(?=\{)/);
+    expect(encryption, "expected an encryption { ... } block inside terraform {}").toBeDefined();
+
+    const keyProvider = extractBlock(encryption?.body ?? "", /key_provider\s+"aws_kms"\s+"state"\s*(?=\{)/);
+    expect(keyProvider, 'expected key_provider "aws_kms" "state" { ... }').toBeDefined();
+    expect(keyProvider?.body).toMatch(/kms_key_id\s*=\s*local\.state_key_arn/);
+  });
+});
+
+describe("infra/bootstrap/versions.tf: state encryption (PR 4)", () => {
+  function encryptionBlock() {
+    const source = concatTf();
+    const terraformBlock = extractBlock(source, /terraform\s*(?=\{)/);
+    return extractBlock(terraformBlock?.body ?? "", /encryption\s*(?=\{)/);
+  }
+
+  it('key_provider "aws_kms" "state" sets key_spec, region and profile alongside kms_key_id', () => {
+    const encryption = encryptionBlock();
+    expect(encryption, "expected an encryption { ... } block inside terraform {}").toBeDefined();
+
+    const keyProvider = extractBlock(encryption?.body ?? "", /key_provider\s+"aws_kms"\s+"state"\s*(?=\{)/);
+    expect(keyProvider, 'expected key_provider "aws_kms" "state" { ... }').toBeDefined();
+    expect(keyProvider?.body).toMatch(/key_spec\s*=\s*"AES_256"/);
+    expect(keyProvider?.body).toMatch(/region\s*=\s*"eu-central-1"/);
+    expect(keyProvider?.body).toMatch(/profile\s*=\s*var\.workload_profile/);
+  });
+
+  it('method "aes_gcm" "state" uses key_provider.aws_kms.state, and method "unencrypted" "migrate" exists', () => {
+    const encryption = encryptionBlock();
+
+    const aesGcm = extractBlock(encryption?.body ?? "", /method\s+"aes_gcm"\s+"state"\s*(?=\{)/);
+    expect(aesGcm, 'expected method "aes_gcm" "state" { ... }').toBeDefined();
+    expect(aesGcm?.body).toMatch(/keys\s*=\s*key_provider\.aws_kms\.state/);
+
+    const unencrypted = extractBlock(encryption?.body ?? "", /method\s+"unencrypted"\s+"migrate"\s*(?=\{)/);
+    expect(unencrypted, 'expected method "unencrypted" "migrate" { ... }').toBeDefined();
+  });
+
+  it.each(["state", "plan"])(
+    "%s { ... } uses method.aes_gcm.state with a fallback to method.unencrypted.migrate",
+    (blockName) => {
+      const encryption = encryptionBlock();
+      const block = extractBlock(encryption?.body ?? "", new RegExp(`${blockName}\\s*(?=\\{)`));
+      expect(block, `expected a ${blockName} { ... } block inside encryption`).toBeDefined();
+      expect(block?.body).toMatch(/method\s*=\s*method\.aes_gcm\.state/);
+
+      const fallback = extractBlock(block?.body ?? "", /fallback\s*(?=\{)/);
+      expect(fallback, `expected a fallback { ... } block inside ${blockName}`).toBeDefined();
+      expect(fallback?.body).toMatch(/method\s*=\s*method\.unencrypted\.migrate/);
+    },
+  );
+
+  // `enforced` is not set yet because the `unencrypted.migrate` fallback is
+  // still needed to read the local plaintext state being migrated by this
+  // PR's first apply; setting `enforced` here would make tofu refuse to read
+  // it. PR 5 removes the fallback and sets `enforced` once the migration has
+  // run. remote_state_data_sources is never used by this stack at all.
+  it("sets no `enforced` option and does not use remote_state_data_sources anywhere in infra/bootstrap yet", () => {
+    const source = concatTf();
+    expect(source).not.toMatch(/\benforced\s*=/);
+    expect(source).not.toMatch(/remote_state_data_sources/);
   });
 });
 
