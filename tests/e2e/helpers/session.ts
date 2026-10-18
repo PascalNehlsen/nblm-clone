@@ -12,6 +12,7 @@
 // pairs can be handed to `context.addCookies()` directly.
 import { randomUUID } from "node:crypto";
 import { createServerClient, type CookieMethodsServer } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseLocalConfig } from "../../rls/helpers/clients";
 
 export interface SeededCookie {
@@ -26,9 +27,22 @@ function randomPassword(): string {
   return `Aa1!${randomUUID()}`;
 }
 
-/** Signs up a brand-new local user and returns the auth cookies that session
- * produced, ready for `context.addCookies()` against http://127.0.0.1:3000. */
-export async function seedLocalSession(label: string): Promise<SeededCookie[]> {
+export interface SeededSession {
+  cookies: SeededCookie[];
+  /** The same signed-in user's own SupabaseClient, independent of the
+   * cookie jar handed to the browser -- useful for a test to read back
+   * database state as that user after the browser's own session has moved
+   * on (e.g. after the browser signs out), without ever using the
+   * admin/service-role credential. */
+  client: SupabaseClient;
+  userId: string;
+}
+
+/** Signs up a brand-new local user and returns both the auth cookies that
+ * session produced (ready for `context.addCookies()` against
+ * http://127.0.0.1:3000) and the signed-in client/user id, for tests that
+ * need to assert on database state as that same user. */
+export async function seedLocalSessionWithClient(label: string): Promise<SeededSession> {
   const { url, anonKey } = supabaseLocalConfig();
   const jar = new Map<string, string>();
 
@@ -49,17 +63,26 @@ export async function seedLocalSession(label: string): Promise<SeededCookie[]> {
   const password = randomPassword();
 
   const { data, error } = await client.auth.signUp({ email, password });
-  if (error || !data.session) {
+  if (error || !data.session || !data.user) {
     throw new Error(
-      `seedLocalSession(${label}): sign-up did not return a session (email confirmations must be ` +
-        `off locally): ${error?.message ?? "no session in response"}`,
+      `seedLocalSessionWithClient(${label}): sign-up did not return a session (email confirmations must be ` +
+        `off locally): ${error?.message ?? "no session/user in response"}`,
     );
   }
 
-  return Array.from(jar.entries()).map(([name, value]) => ({
+  const cookies = Array.from(jar.entries()).map(([name, value]) => ({
     name,
     value,
     domain: "127.0.0.1",
     path: "/",
   }));
+
+  return { cookies, client, userId: data.user.id };
+}
+
+/** Signs up a brand-new local user and returns the auth cookies that session
+ * produced, ready for `context.addCookies()` against http://127.0.0.1:3000. */
+export async function seedLocalSession(label: string): Promise<SeededCookie[]> {
+  const { cookies } = await seedLocalSessionWithClient(label);
+  return cookies;
 }
