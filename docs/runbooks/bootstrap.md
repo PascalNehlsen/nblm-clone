@@ -224,15 +224,18 @@ V0=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate --que
 echo "$V0"                                                          # a version id, not empty
 git fetch -q origin && git switch --detach origin/main
 scripts/tofu.sh -chdir=infra/bootstrap init -input=false -lockfile=readonly   # no "Unencrypted method configured" warning
-scripts/tofu.sh -chdir=infra/bootstrap plan -input=false -detailed-exitcode; echo "exit $?"   # No changes., exit 0, no warning
+scripts/tofu.sh -chdir=infra/bootstrap plan -input=false -detailed-exitcode; rc=$?   # No changes., no warning
 V1=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate --query VersionId --output text)
-[ -n "$V0" ] && [ "$V1" = "$V0" ] && echo ok                        # ok: no new state version
-aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock   # An error occurred (404) ... Not Found
+LOCK=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock 2>&1 >/dev/null)
+echo "plan exit $rc; V0 $V0; V1 $V1; lock: $LOCK"                   # exit 0; V1 = V0; lock: An error occurred (404) ... Not Found
+if [ "$rc" = 0 ] && [ -n "$V0" ] && [ "$V1" = "$V0" ] && printf '%s' "$LOCK" | grep -q '(404)'; then echo "all checks passed"; else echo STOP; fi
 ```
+
+This line is the single gate before the deletion. It needs all four: the plan exited 0 (no changes, no error), `V0` was read, the state version is unchanged, and the lock lookup returned 404 (not 403 or an expired session). Anything else prints `STOP`: keep `$BK` and see the rollback.
 
 The plan reads the state with `aes_gcm` alone, so it proves the stored state is encrypted. Compare the version id, not a count under the prefix: the plan's lock writes and deletes `bootstrap/terraform.tfstate.tflock`, which leaves a version and a delete marker on that key only. Plaintext state would now fail with `encountered unencrypted payload without unencrypted method configured`.
 
-Only after all checks passed:
+Only after the gate printed "all checks passed":
 
 ```bash
 rm -rf "${BK:?}"
