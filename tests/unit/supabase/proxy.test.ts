@@ -12,6 +12,27 @@
 // faithfully carries whatever cookies *and* headers the SDK hands it through
 // to the actual NextResponse, and that the redirect target is pinned to the
 // configured site origin.
+//
+// Real defect found via the e2e replay test (tests/e2e/authenticated-session.spec.ts):
+// with asymmetric signing keys, getClaims() verifies the access token's
+// signature locally, so a revoked-but-unexpired access token still looks
+// "logged in" on /login. The proxy would then redirect /login -> "/", the
+// (app) layout's real getUser() would reject the session and bounce back to
+// /login, looping (ERR_TOO_MANY_REDIRECTS) for up to an hour. Fix: on /login
+// only, confirm a locally-valid session with getUser() before redirecting
+// away; if getUser() rejects it, serve /login instead of looping.
+//
+// Follow-up (same replay test, next failure): the (app) layout's own
+// getUser()-rejects-the-session redirect to /login was missing a `next`, so
+// after a confirmed-dead session the visitor landed on a bare /login instead
+// of /login?next=<where they were going>. Fix: the proxy always overwrites a
+// `x-request-path` request header with the current pathname+search before
+// forwarding, via NextResponse.next({ request }); the layout reads it with
+// headers(), sanitizes it with safeNextPath, and uses that as `next`. Tests
+// (f)/(g) below observe that forwarded header the same way Next itself
+// surfaces an overridden middleware request header on the response:
+// `x-middleware-request-<header>`, listed in `x-middleware-override-headers`
+// (see next/dist/server/web/spec-extension/response.js's handleMiddlewareField).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // "next" is only a dependency of the apps/web workspace package (pnpm keeps
 // workspace node_modules isolated), so a bare `from "next/server"` does not
@@ -29,6 +50,13 @@ interface CookieToSet {
 const hoisted = vi.hoisted(() => ({
   state: {
     claims: null as Record<string, unknown> | null,
+    // Only consulted by the planned /login re-check (getUser() hits Auth for
+    // real, unlike getClaims()'s local JWT verification). Defaults to "no
+    // session", matching the already-logged-out cases the existing tests use.
+    getUserResult: {
+      data: { user: null as Record<string, unknown> | null },
+      error: null as { message: string } | null,
+    },
   },
   // @supabase/ssr 0.12.7 writes more than one cookie per refresh (e.g. the
   // auth token and a PKCE code verifier), and it calls `setAll` once per
@@ -57,6 +85,9 @@ vi.mock("@supabase/ssr", () => ({
           options.cookies.setAll([{ name: hoisted.cookieA.name, value: hoisted.cookieA.value, options: {} }], hoisted.cacheHeaders);
           options.cookies.setAll([{ name: hoisted.cookieB.name, value: hoisted.cookieB.value, options: {} }], {});
           return { data: hoisted.state.claims ? { claims: hoisted.state.claims } : null };
+        },
+        async getUser() {
+          return hoisted.state.getUserResult;
         },
       },
     }),
@@ -87,6 +118,7 @@ describe("updateSession: refreshed-cookie cache headers and site-pinned redirect
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_abcdefghijklmnopqrstuvwxyz");
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://127.0.0.1:3000");
     hoisted.state.claims = null;
+    hoisted.state.getUserResult = { data: { user: null }, error: null };
   });
 
   afterEach(() => {
@@ -133,5 +165,55 @@ describe("updateSession: refreshed-cookie cache headers and site-pinned redirect
     expect(location.origin).toBe("http://127.0.0.1:3000");
     expect(location.pathname).toBe("/login");
     expect(location.searchParams.get("next")).toBe("/x");
+  });
+
+  it("(d) on /login: a locally-valid-looking session that getUser() rejects is NOT redirected away (no revoke loop)", async () => {
+    hoisted.state.claims = { sub: "user-1" }; // getClaims() verifies the JWT locally and says "logged in"
+    hoisted.state.getUserResult = { data: { user: null }, error: { message: "session revoked" } };
+    const { updateSession } = await freshModule();
+
+    const request = new NextRequest("http://127.0.0.1:3000/login");
+    const response = await updateSession(request);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it('(e) on /login: getUser() confirms the session, so the visitor is redirected to the site URL "/"', async () => {
+    hoisted.state.claims = { sub: "user-1" };
+    hoisted.state.getUserResult = { data: { user: { id: "user-1" } }, error: null };
+    const { updateSession } = await freshModule();
+
+    const request = new NextRequest("http://127.0.0.1:3000/login");
+    const response = await updateSession(request);
+
+    const location = new URL(response.headers.get("location") ?? "", "http://127.0.0.1:3000");
+    expect(location.origin).toBe("http://127.0.0.1:3000");
+    expect(location.pathname).toBe("/");
+  });
+
+  it('(f) forwards the real request path to the app via an "x-request-path" request header', async () => {
+    hoisted.state.claims = { sub: "user-1" };
+    const { updateSession } = await freshModule();
+
+    const request = new NextRequest("http://127.0.0.1:3000/notebooks/abc?x=1");
+    const response = await updateSession(request);
+
+    // Next encodes a header set on the forwarded NextRequest (via
+    // NextResponse.next({ request })) as x-middleware-request-<name> on the
+    // response; this is the standard way to observe it without a running app.
+    expect(response.headers.get("x-middleware-request-x-request-path")).toBe("/notebooks/abc?x=1");
+  });
+
+  it('(g) a client-supplied "x-request-path" header is overwritten with the real path, never trusted from the client', async () => {
+    hoisted.state.claims = { sub: "user-1" };
+    const { updateSession } = await freshModule();
+
+    const request = new NextRequest("http://127.0.0.1:3000/notebooks/abc?x=1", {
+      headers: { "x-request-path": "//evil.example" },
+    });
+    const response = await updateSession(request);
+
+    expect(response.headers.get("x-middleware-request-x-request-path")).toBe("/notebooks/abc?x=1");
   });
 });

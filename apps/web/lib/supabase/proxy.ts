@@ -2,13 +2,16 @@ import "server-only";
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isPublicPath } from "../auth/paths";
+import { REQUEST_PATH_HEADER, isPublicPath } from "../auth/paths";
 import { publicSupabaseEnv } from "./env";
 
 // Refreshes the session cookie on every matched request and keeps logged-out users on
 // public routes. A fast first check only: pages and actions call getUser() again.
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
   const { url, publishableKey, siteUrl } = publicSupabaseEnv();
+  // The requested path for server components (the layout's /login?next=...). Always set
+  // here, so a client-supplied value never gets through; readers still sanitize it.
+  request.headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
   let response = NextResponse.next({ request });
   // Cache headers that @supabase/ssr sends with refreshed auth cookies, so no shared
   // cache stores one user's session for another.
@@ -50,8 +53,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
       next: pathname + search,
     });
   }
+  // getClaims() may accept a revoked but unexpired access token (asymmetric keys are
+  // verified locally). Before sending a "logged-in" visitor away from /login, confirm
+  // with the Auth server, or the layout's getUser() would send them straight back.
   if (loggedIn && pathname === "/login") {
-    return redirectKeepingSession(response, cacheHeaders, siteUrl, "/", {});
+    const { data: userData, error } = await supabase.auth.getUser();
+    if (!error && userData.user) {
+      return redirectKeepingSession(response, cacheHeaders, siteUrl, "/", {});
+    }
   }
   return response;
 }
