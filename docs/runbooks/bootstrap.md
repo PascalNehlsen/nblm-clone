@@ -154,7 +154,7 @@ aws s3api list-object-versions --bucket "$B" --prefix bootstrap/ \
 2. Migrate. Answer `yes` to copying the existing state. The warning "Unencrypted method configured" is expected until PR 5.
 
 ```bash
-git switch main && git pull --ff-only
+git fetch -q origin && git switch --detach origin/main
 scripts/tofu.sh -chdir=infra/bootstrap init -migrate-state -lockfile=readonly
 ```
 
