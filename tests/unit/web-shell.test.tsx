@@ -1,9 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import RootLayout, { metadata } from "../../apps/web/app/layout";
 import Page from "../../apps/web/app/(app)/page";
+
+// apps/web/app/(app)/page.tsx is now an async server component that reads
+// the signed-in user (createClient().auth.getUser()) and that user's
+// notebooks (listNotebooks()) -- both mocked here so this file stays a pure
+// render/markup test, independent of a real Supabase session or database.
+// vi.mock calls are hoisted above these imports by vitest, so Page's own
+// internal `import { createClient } from "@/lib/supabase/server"` and
+// `import { listNotebooks } from "@/lib/notebooks/notebooks"` resolve to
+// these mocks (same technique as tests/unit/auth/callback.test.ts).
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: vi.fn(async () => ({
+    auth: {
+      async getUser() {
+        return {
+          data: { user: { id: "11111111-1111-4111-8111-111111111111", is_anonymous: false } },
+          error: null,
+        };
+      },
+    },
+  })),
+}));
+
+vi.mock("@/lib/notebooks/notebooks", () => ({
+  listNotebooks: vi.fn(async () => []),
+}));
 
 // Resolve relative to this test file so it is independent of the cwd vitest is
 // invoked from.
@@ -35,8 +60,8 @@ describe("apps/web/app/layout.tsx", () => {
 });
 
 describe("apps/web/app/page.tsx", () => {
-  it("renders exactly one <h1> with text 'Deine Notizbücher'", () => {
-    const markup = renderToStaticMarkup(Page());
+  it("renders exactly one <h1> with text 'Deine Notizbücher'", async () => {
+    const markup = renderToStaticMarkup(await Page({}));
 
     const h1Matches = markup.match(/<h1[^>]*>.*?<\/h1>/gs) ?? [];
     expect(h1Matches).toHaveLength(1);
@@ -47,9 +72,10 @@ describe("apps/web/app/page.tsx", () => {
 });
 
 describe("rendered shell loads no remote content", () => {
-  it("has no http://, https:// or protocol-relative URLs in src/href attributes", () => {
+  it("has no http://, https:// or protocol-relative URLs in src/href attributes", async () => {
+    const pageElement = await Page({});
     const markup = renderToStaticMarkup(
-      RootLayout({ children: <>{Page()}</> }),
+      RootLayout({ children: <>{pageElement}</> }),
     );
 
     const remoteAttrMatches =
