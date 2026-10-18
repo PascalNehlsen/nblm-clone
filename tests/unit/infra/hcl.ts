@@ -96,6 +96,71 @@ export function concatTf(): string {
     .join("\n");
 }
 
+/**
+ * Strips HCL comments (`#` to end of line, `//` to end of line, `/* ... *\/`)
+ * from `source`, while leaving the content of double-quoted string literals
+ * untouched (so `//` inside a URL or ARN, or a `#` inside a quoted value,
+ * survives). This is a plain character scan, not a full HCL lexer: it tracks
+ * only "are we inside a double-quoted string" and honours a backslash escape
+ * there, which is enough for the hand-written .tf files this stack produces.
+ *
+ * Used so assertions that check for a real `enforced = true` or
+ * `method = method.aes_gcm.state` line are not satisfied by a commented-out
+ * line (`# enforced = true`) left behind after the real one was deleted.
+ */
+export function stripHclComments(source: string): string {
+  let result = "";
+  let inString = false;
+  let i = 0;
+
+  while (i < source.length) {
+    const ch = source[i];
+
+    if (inString) {
+      result += ch;
+      if (ch === "\\" && i + 1 < source.length) {
+        // Copy the escaped character verbatim so an escaped quote (`\"`)
+        // does not end the string early.
+        result += source[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === "#") {
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
+  return result;
+}
+
 /** Recursively lists every file under `dir` (used for the "no secret-shaped literals anywhere in infra/" scan). */
 export function walkFiles(dir: string): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });

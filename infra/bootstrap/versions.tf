@@ -24,9 +24,8 @@ terraform {
     kms_key_id = local.state_key_arn
   }
 
-  # OpenTofu state and plan encryption (ADR 0003). The unencrypted fallback only
-  # reads the local plaintext state during the migration; PR 5 removes it and
-  # enforces encryption.
+  # OpenTofu state and plan encryption (ADR 0003), enforced: plaintext state or
+  # plan files are refused, and TF_ENCRYPTION cannot turn enforcement off.
   encryption {
     key_provider "aws_kms" "state" {
       kms_key_id = local.state_key_arn
@@ -39,22 +38,14 @@ terraform {
       keys = key_provider.aws_kms.state
     }
 
-    method "unencrypted" "migrate" {}
-
     state {
-      method = method.aes_gcm.state
-
-      fallback {
-        method = method.unencrypted.migrate
-      }
+      method   = method.aes_gcm.state
+      enforced = true
     }
 
     plan {
-      method = method.aes_gcm.state
-
-      fallback {
-        method = method.unencrypted.migrate
-      }
+      method   = method.aes_gcm.state
+      enforced = true
     }
   }
 }
