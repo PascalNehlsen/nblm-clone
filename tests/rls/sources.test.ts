@@ -97,7 +97,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "owner source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error).toBeNull();
   });
@@ -109,7 +109,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "editor source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error).toBeNull();
   });
@@ -121,7 +121,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "viewer source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("42501");
   });
@@ -133,7 +133,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "stranger source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("42501");
   });
@@ -145,7 +145,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "anon source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("42501");
   });
@@ -157,7 +157,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "created-by source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
       created_by: stranger.userId,
     });
     expect(error?.code).toBe("42501");
@@ -170,7 +170,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "status source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
       status: "ready",
     });
     expect(error?.code).toBe("42501");
@@ -183,7 +183,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "video",
       title: "bad kind source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("23514");
   });
@@ -195,19 +195,59 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("23514");
   });
 
-  it("rejects a storage_path outside the notebook's own prefix with 23514", async () => {
+  // Reviewer/Codex finding (PR #19): storage_path is now server-assigned and
+  // must be exactly `<notebook_id>/<id>` -- a client-chosen filename (or any
+  // other shape) previously let two sources share one Storage object, so
+  // deleting one silently deleted the other's file too.
+  it("rejects a storage_path that is not exactly <notebook_id>/<id> with 23514 (wrong notebook)", async () => {
     const id = randomUUID();
     const { error } = await owner.client.from("sources").insert({
       id,
       notebook_id: notebookId,
       kind: "text",
       title: "wrong prefix source",
-      storage_path: `${randomUUID()}/file.txt`,
+      storage_path: `${randomUUID()}/${id}`,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("rejects a storage_path that is not exactly <notebook_id>/<id> with 23514 (a filename instead of the id)", async () => {
+    const id = randomUUID();
+    const { error } = await owner.client.from("sources").insert({
+      id,
+      notebook_id: notebookId,
+      kind: "text",
+      title: "filename-shaped source",
+      storage_path: `${notebookId}/file.pdf`,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("rejects a storage_path using another source's id with 23514", async () => {
+    const id = randomUUID();
+    const { error } = await owner.client.from("sources").insert({
+      id,
+      notebook_id: notebookId,
+      kind: "text",
+      title: "someone else's id",
+      storage_path: storagePath(notebookId, randomUUID()),
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("an editor inserting a source whose storage_path does not match its own id gets 23514 through PostgREST", async () => {
+    const id = randomUUID();
+    const { error } = await editor.client.from("sources").insert({
+      id,
+      notebook_id: notebookId,
+      kind: "text",
+      title: "editor mismatched path",
+      storage_path: storagePath(notebookId, randomUUID()),
     });
     expect(error?.code).toBe("23514");
   });
@@ -219,7 +259,7 @@ describe("sources: insert", () => {
       notebook_id: notebookId,
       kind: "text",
       title: "anonymous editor source",
-      storage_path: storagePath(notebookId),
+      storage_path: storagePath(notebookId, id),
     });
     expect(error?.code).toBe("42501");
   });
@@ -312,7 +352,7 @@ describe("sources: update", () => {
 
     const { error } = await owner.client
       .from("sources")
-      .update({ storage_path: storagePath(notebookId, "new-name.txt") })
+      .update({ storage_path: storagePath(notebookId, randomUUID()) })
       .eq("id", sourceId);
     expect(error?.code).toBe("42501");
   });

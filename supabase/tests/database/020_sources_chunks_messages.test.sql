@@ -63,7 +63,7 @@
 
 begin;
 
-select plan(189);
+select plan(206);
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -544,6 +544,27 @@ select ok(
   'public.sources has an index whose first column is created_by'
 );
 
+-- Codex finding (PR #19): storage_path is pinned to exactly <notebook_id>/<id>
+-- by a CHECK constraint, which already makes it unique in practice (id is a
+-- globally unique PK) -- but the CHECK alone is not a backstop against a
+-- future change that loosens it, so a plain UNIQUE constraint on
+-- storage_path itself is required too, and pinned here independently of
+-- whether the behavioural collision test above can actually trigger it.
+select ok(
+  exists (
+    select 1 from pg_constraint con
+    join pg_class c on c.oid = con.conrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'sources' and con.contype = 'u'
+      and (
+        select array_agg(a.attname::text order by k.ord)
+        from unnest(con.conkey) with ordinality as k(attnum, ord)
+        join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum
+      ) = array['storage_path']
+  ),
+  'sources has a unique constraint on storage_path'
+);
+
 -- ---------------------------------------------------------------------------
 -- 4) Grants
 -- ---------------------------------------------------------------------------
@@ -910,6 +931,8 @@ create table pg_temp.fixture (
   source_cascade uuid not null,
   chunk_cascade uuid,
   message_cascade uuid not null,
+  editor_cascade_id uuid not null,
+  message_cascade_2 uuid not null,
   notebook_cascade_keep uuid not null,
   notebook_source_cascade uuid not null,
   source_doomed uuid not null,
@@ -928,14 +951,16 @@ create table pg_temp.fixture (
 );
 insert into pg_temp.fixture (
   owner_id, notebook_a, notebook_b, source_a,
-  notebook_cascade, source_cascade, message_cascade, notebook_cascade_keep, notebook_source_cascade, source_doomed,
+  notebook_cascade, source_cascade, message_cascade, editor_cascade_id, message_cascade_2,
+  notebook_cascade_keep, notebook_source_cascade, source_doomed,
   stranger_id, notebook_match_access, source_match_access, notebook_match_clamp, source_match_clamp,
   notebook_match_recall_own, source_recall_own, notebook_match_recall_foreign, source_recall_foreign,
   foreign_owner_id, notebook_match_exact, source_match_exact
 )
 values (
   gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
-  gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+  gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+  gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
   gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
   gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
   gen_random_uuid(), gen_random_uuid(), gen_random_uuid()
@@ -943,7 +968,7 @@ values (
 
 insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
 select u, u::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
-from (select unnest(array[owner_id, stranger_id, foreign_owner_id]) as u from pg_temp.fixture) as users;
+from (select unnest(array[owner_id, stranger_id, foreign_owner_id, editor_cascade_id]) as u from pg_temp.fixture) as users;
 
 select pg_temp.act_lives(
   (select owner_id from pg_temp.fixture),
@@ -961,7 +986,7 @@ select pg_temp.act_lives(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
         values (%L, %L, 'text', 'fixture source', %L) $f$,
     (select source_a from pg_temp.fixture), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/fixture.txt'
+    (select notebook_a from pg_temp.fixture) || '/' || (select source_a from pg_temp.fixture)
   ),
   'fixture setup: owner creates source A in notebook A'
 );
@@ -982,63 +1007,70 @@ select pg_temp.act_throws(
   'a chunk whose notebook_id does not match its source''s notebook_id raises 23503'
 );
 
+-- Codex finding (PR #19): storage_path must be server-assigned, exactly
+-- `<notebook_id>/<id>` (the row's own id, never a client-chosen filename) --
+-- otherwise two sources could be made to share one Storage object, and
+-- deleting one would silently delete the other's file too. The original
+-- upload's file name now lives in `title` instead.
 select pg_temp.act_throws(
   (select owner_id from pg_temp.fixture),
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'bad prefix source', 'not-the-notebook-prefix/file.txt') $f$,
+        values (%1$L, %2$L, 'text', 'filename instead of id', %2$L || '/file.pdf') $f$,
     gen_random_uuid(), (select notebook_a from pg_temp.fixture)
   ),
   '23514',
-  'a storage_path outside the notebook_id prefix raises 23514'
-);
-
--- Reviewer finding: storage_path must be strictly `<notebook_id>/<filename>`
--- -- one path segment, filename restricted to [A-Za-z0-9._-]+, no "..".
--- These four pin that exact shape (red against the pre-review migration,
--- which only checked the notebook_id prefix via split_part).
-select pg_temp.act_throws(
-  (select owner_id from pg_temp.fixture),
-  format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'dotdot path source', %L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/../' || (select notebook_b from pg_temp.fixture) || '/x'
-  ),
-  '23514',
-  'a storage_path containing ".." raises 23514'
+  'a storage_path of <notebook_id>/file.pdf (a filename instead of the id) raises 23514'
 );
 select pg_temp.act_throws(
   (select owner_id from pg_temp.fixture),
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'empty filename source', %L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/'
+        values (%1$L, %2$L, 'text', 'another uuid, not its own id', %2$L || '/' || %3$L) $f$,
+    gen_random_uuid(), (select notebook_a from pg_temp.fixture), gen_random_uuid()
   ),
   '23514',
-  'a storage_path with an empty filename (notebook prefix only, trailing slash) raises 23514'
+  'a storage_path of <notebook_id>/<some other uuid> (not its own id) raises 23514'
 );
 select pg_temp.act_throws(
   (select owner_id from pg_temp.fixture),
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'nested path source', %L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/a/b.pdf'
+        values (%1$L, %2$L, 'text', 'wrong notebook prefix', %3$L || '/' || %1$L) $f$,
+    gen_random_uuid(), (select notebook_a from pg_temp.fixture), (select notebook_b from pg_temp.fixture)
   ),
   '23514',
-  'a storage_path with a nested filename (an extra slash after the notebook_id) raises 23514'
+  'a storage_path of <some other notebook_id>/<its own id> raises 23514'
 );
 select pg_temp.act_lives(
   (select owner_id from pg_temp.fixture),
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
-        values (%L, %L, 'text', 'valid path source', %L) $f$,
-    gen_random_uuid(), (select notebook_a from pg_temp.fixture),
-    (select notebook_a from pg_temp.fixture) || '/file-1.pdf'
+        values (%1$L, %2$L, 'text', 'valid path source', %2$L || '/' || %1$L) $f$,
+    gen_random_uuid(), (select notebook_a from pg_temp.fixture)
   ),
-  'a storage_path of the form <notebook_id>/file-1.pdf is accepted'
+  'a storage_path of exactly <notebook_id>/<id> is accepted'
+);
+-- A second source cannot reuse the first source's storage_path: giving it a
+-- different id (required, since id is the PK) means that value can no longer
+-- equal *its own* notebook_id/id, so the CHECK constraint rejects it before
+-- the unique constraint on storage_path is ever reached in practice -- either
+-- 23514 (check_violation) or 23505 (unique_violation) is an acceptable,
+-- correct outcome here, which is exactly why the unique constraint itself is
+-- also pinned structurally below (it is the backstop, not normally reachable
+-- through the CHECK).
+select ok(
+  (select r in ('ERROR:23514', 'ERROR:23505')
+   from (select pg_temp.act_scalar(
+     (select owner_id from pg_temp.fixture),
+     format(
+       $f$ insert into public.sources (id, notebook_id, kind, title, storage_path)
+           values (%L, %L, 'text', 'colliding storage_path', %L) returning id::text $f$,
+       gen_random_uuid(), (select notebook_a from pg_temp.fixture),
+       (select notebook_a from pg_temp.fixture) || '/' || (select source_a from pg_temp.fixture)
+     )
+   ) as r) s),
+  'a second source cannot reuse an existing source''s storage_path (23514 or 23505)'
 );
 
 -- Reviewer finding: chunks.content needs an upper bound (8000 characters).
@@ -1198,7 +1230,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'failsafe source', %L) $f$,
     (select source_failsafe from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/failsafe.txt'
+    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_failsafe from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates the fail-safe source'
 );
@@ -1251,7 +1283,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'source X', %L) $f$,
     (select source_x from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/x.txt'
+    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_x from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates source X'
 );
@@ -1272,7 +1304,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'source Y', %L) $f$,
     (select source_y from pg_temp.citation_fixture), (select notebook_id from pg_temp.citation_fixture),
-    (select notebook_id from pg_temp.citation_fixture) || '/y.txt'
+    (select notebook_id from pg_temp.citation_fixture) || '/' || (select source_y from pg_temp.citation_fixture)
   ),
   'citation fixture: owner creates source Y'
 );
@@ -1528,7 +1560,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'editor source', %L) $f$,
     (select source_editor from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture),
-    (select notebook_id from pg_temp.account_deletion_fixture) || '/editor.txt'
+    (select notebook_id from pg_temp.account_deletion_fixture) || '/' || (select source_editor from pg_temp.account_deletion_fixture)
   ),
   'account-deletion fixture: the editor creates their own source'
 );
@@ -1567,7 +1599,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'owner source', %L) $f$,
     (select source_owner from pg_temp.account_deletion_fixture), (select notebook_id from pg_temp.account_deletion_fixture),
-    (select notebook_id from pg_temp.account_deletion_fixture) || '/owner.txt'
+    (select notebook_id from pg_temp.account_deletion_fixture) || '/' || (select source_owner from pg_temp.account_deletion_fixture)
   ),
   'account-deletion fixture: the owner creates their own source (control)'
 );
@@ -1651,6 +1683,110 @@ select pg_temp.safe_ok(
 );
 
 -- ---------------------------------------------------------------------------
+-- 7h) Behavioural: deleting a source and a member's account in the same
+-- transaction (PR #19, item 2b2)
+-- ---------------------------------------------------------------------------
+--
+-- Two separate DELETE statements, same transaction (this whole file already
+-- is one): the owner deletes their own source (whose chunk the member's
+-- answer cites, so this nulls the member's citation first), then the
+-- member's account is deleted outright (cascading their messages/citations
+-- away entirely). Asserts both succeed and leave the expected end state,
+-- without the first delete's cascade leaving anything in a state the second
+-- delete's cascade cannot cleanly finish from.
+create table pg_temp.combined_deletion_fixture (
+  owner_id uuid not null,
+  member_id uuid not null,
+  notebook_id uuid not null,
+  source_id uuid not null,
+  chunk_id uuid,
+  message_id uuid not null
+);
+insert into pg_temp.combined_deletion_fixture (owner_id, member_id, notebook_id, source_id, message_id)
+values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid());
+
+insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_data)
+select u, u::text || '@example.test', 'authenticated', 'authenticated', '{}'::jsonb, '{}'::jsonb
+from (select unnest(array[owner_id, member_id]) as u from pg_temp.combined_deletion_fixture) as users;
+
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.combined_deletion_fixture),
+  format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_id from pg_temp.combined_deletion_fixture), 'combined deletion notebook'),
+  'combined-deletion fixture: owner creates the notebook'
+);
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.combined_deletion_fixture),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_id from pg_temp.combined_deletion_fixture), (select member_id from pg_temp.combined_deletion_fixture), 'editor'),
+  'combined-deletion fixture: owner adds the member'
+);
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.combined_deletion_fixture),
+  format(
+    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'owner source', %L) $f$,
+    (select source_id from pg_temp.combined_deletion_fixture), (select notebook_id from pg_temp.combined_deletion_fixture),
+    (select notebook_id from pg_temp.combined_deletion_fixture) || '/' || (select source_id from pg_temp.combined_deletion_fixture)
+  ),
+  'combined-deletion fixture: owner creates a source'
+);
+select pg_temp.act_insert_id(
+  (select owner_id from pg_temp.combined_deletion_fixture),
+  format(
+    $f$ insert into public.chunks (notebook_id, source_id, ordinal, content, embedding)
+        values (%L, %L, 0, 'owner chunk', %L::extensions.vector) returning id $f$,
+    (select notebook_id from pg_temp.combined_deletion_fixture), (select source_id from pg_temp.combined_deletion_fixture),
+    pg_temp.vector_literal(40, 0.01)
+  ),
+  'combined-deletion fixture: owner creates a chunk'
+);
+update pg_temp.combined_deletion_fixture
+set chunk_id = nullif(current_setting('pgtap_fixture.last_inserted_id', true), '')::uuid;
+select pg_temp.act_lives(
+  (select member_id from pg_temp.combined_deletion_fixture),
+  format(
+    $f$ insert into public.messages (id, notebook_id, role, content) values (%L, %L, 'assistant', 'member''s answer, cites the owner''s chunk') $f$,
+    (select message_id from pg_temp.combined_deletion_fixture), (select notebook_id from pg_temp.combined_deletion_fixture)
+  ),
+  'combined-deletion fixture: the member has an assistant answer'
+);
+select pg_temp.act_lives(
+  (select member_id from pg_temp.combined_deletion_fixture),
+  format(
+    $f$ insert into public.message_citations (message_id, notebook_id, ordinal, chunk_id, quote) values (%L, %L, 1, %L, 'member quote') $f$,
+    (select message_id from pg_temp.combined_deletion_fixture), (select notebook_id from pg_temp.combined_deletion_fixture),
+    (select chunk_id from pg_temp.combined_deletion_fixture)
+  ),
+  'combined-deletion fixture: the member''s answer cites the owner''s chunk'
+);
+
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.combined_deletion_fixture),
+  format('delete from public.sources where id = %L', (select source_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the owner deletes their source'
+);
+select pg_temp.sql_lives(
+  format('delete from auth.users where id = %L', (select member_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the member''s account is then deleted in the same transaction'
+);
+
+select pg_temp.safe_ok(
+  format('select (select count(*) from public.messages where user_id = %L) = 0', (select member_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the member''s messages are gone'
+);
+select pg_temp.safe_ok(
+  format('select (select count(*) from public.message_citations where message_id = %L) = 0', (select message_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the member''s citation is gone'
+);
+select pg_temp.safe_ok(
+  format('select (select count(*) from public.chunks where notebook_id = %L) = 0', (select notebook_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the owner''s chunk is gone with its source'
+);
+select pg_temp.safe_ok(
+  format('select (select count(*) from public.notebooks where id = %L) = 1', (select notebook_id from pg_temp.combined_deletion_fixture)),
+  'combined deletion: the notebook itself is untouched'
+);
+
+-- ---------------------------------------------------------------------------
 -- 8) Behavioural: cascades
 -- ---------------------------------------------------------------------------
 
@@ -1669,7 +1805,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'to be cascaded', %L) $f$,
     (select source_cascade from pg_temp.fixture), (select notebook_cascade from pg_temp.fixture),
-    (select notebook_cascade from pg_temp.fixture) || '/a.txt'
+    (select notebook_cascade from pg_temp.fixture) || '/' || (select source_cascade from pg_temp.fixture)
   ),
   'cascade fixture: a source in the notebook that will be deleted'
 );
@@ -1702,25 +1838,65 @@ select pg_temp.act_lives(
   ),
   'cascade fixture: a citation in the notebook that will be deleted'
 );
+
+-- PR #19, item 2: a second member with their own cited assistant answer,
+-- citing the *same* chunk as the first message. A single `delete from
+-- notebooks` below then has to process, within one statement: the
+-- chunk_id FK's ON DELETE SET NULL action against *both* citation rows
+-- (one chunk, two citing messages) at the same time the messages' own
+-- notebook_id FK (ON DELETE CASCADE) is deleting the messages -- and, through
+-- message_citations' own (message_id, notebook_id) FK, deleting the citation
+-- rows outright. A citation row hit by both paths in the same command is
+-- exactly the shape that can raise "tuple to be updated was already modified
+-- by an operation triggered by the current command" if the two FK actions
+-- are not independent operations Postgres can interleave safely.
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format('insert into public.notebook_members (notebook_id, user_id, role) values (%L, %L, %L)',
+    (select notebook_cascade from pg_temp.fixture), (select editor_cascade_id from pg_temp.fixture), 'editor'),
+  'cascade fixture: owner adds a second member to the notebook that will be deleted'
+);
+select pg_temp.act_lives(
+  (select editor_cascade_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.messages (id, notebook_id, role, content) values (%L, %L, 'assistant', 'second member''s answer, to be cascaded') $f$,
+    (select message_cascade_2 from pg_temp.fixture), (select notebook_cascade from pg_temp.fixture)
+  ),
+  'cascade fixture: a second member''s message in the notebook that will be deleted'
+);
+select pg_temp.act_lives(
+  (select editor_cascade_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.message_citations (message_id, notebook_id, ordinal, chunk_id, quote) values (%L, %L, 1, %L, 'second member''s quote') $f$,
+    (select message_cascade_2 from pg_temp.fixture), (select notebook_cascade from pg_temp.fixture),
+    (select chunk_cascade from pg_temp.fixture)
+  ),
+  'cascade fixture: the second member''s answer cites the same chunk'
+);
+
 select pg_temp.act_lives(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'kept source', %L) $f$,
-    gen_random_uuid(), (select notebook_cascade_keep from pg_temp.fixture), (select notebook_cascade_keep from pg_temp.fixture) || '/a.txt'
+    $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%1$L, %2$L, 'text', 'kept source', %2$L || '/' || %1$L) $f$,
+    gen_random_uuid(), (select notebook_cascade_keep from pg_temp.fixture)
   ),
   'cascade fixture: a source in the untouched sibling notebook'
 );
 
--- Non-vacuous: the chunk, message and citation really exist before the
--- delete, so "0 after" below actually proves a cascade happened instead of
--- nothing having been there in the first place.
+-- Non-vacuous: the chunk, both messages and both citations really exist
+-- before the delete, so "0 after" below actually proves a cascade happened
+-- instead of nothing having been there in the first place.
 select pg_temp.safe_ok(
   format('select (select count(*) from public.chunks where notebook_id = %L) = 1', (select notebook_cascade from pg_temp.fixture)),
   'the chunk exists in notebook_cascade before it is deleted'
 );
 select pg_temp.safe_ok(
-  format('select (select count(*) from public.message_citations where notebook_id = %L) = 1', (select notebook_cascade from pg_temp.fixture)),
-  'the citation exists in notebook_cascade before the notebook is deleted'
+  format('select (select count(*) from public.messages where notebook_id = %L) = 2', (select notebook_cascade from pg_temp.fixture)),
+  'both members'' messages exist in notebook_cascade before it is deleted'
+);
+select pg_temp.safe_ok(
+  format('select (select count(*) from public.message_citations where notebook_id = %L) = 2', (select notebook_cascade from pg_temp.fixture)),
+  'both citations (from two different users, to the same chunk) exist before the notebook is deleted'
 );
 
 select pg_temp.act_lives(
@@ -1760,7 +1936,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'doomed source', %L) $f$,
     (select source_doomed from pg_temp.fixture), (select notebook_source_cascade from pg_temp.fixture),
-    (select notebook_source_cascade from pg_temp.fixture) || '/a.txt'
+    (select notebook_source_cascade from pg_temp.fixture) || '/' || (select source_doomed from pg_temp.fixture)
   ),
   'source-cascade fixture: a source'
 );
@@ -1799,7 +1975,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match access source', %L) $f$,
     (select source_match_access from pg_temp.fixture), (select notebook_match_access from pg_temp.fixture),
-    (select notebook_match_access from pg_temp.fixture) || '/a.txt'
+    (select notebook_match_access from pg_temp.fixture) || '/' || (select source_match_access from pg_temp.fixture)
   ),
   'match_chunks fixture: owner creates a source in the access-test notebook'
 );
@@ -1858,7 +2034,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match clamp source', %L) $f$,
     (select source_match_clamp from pg_temp.fixture), (select notebook_match_clamp from pg_temp.fixture),
-    (select notebook_match_clamp from pg_temp.fixture) || '/a.txt'
+    (select notebook_match_clamp from pg_temp.fixture) || '/' || (select source_match_clamp from pg_temp.fixture)
   ),
   'match_chunks clamp fixture: owner creates a source'
 );
@@ -1916,7 +2092,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'foreign source', %L) $f$,
     (select source_recall_foreign from pg_temp.fixture), (select notebook_match_recall_foreign from pg_temp.fixture),
-    (select notebook_match_recall_foreign from pg_temp.fixture) || '/a.txt'
+    (select notebook_match_recall_foreign from pg_temp.fixture) || '/' || (select source_recall_foreign from pg_temp.fixture)
   ),
   'recall fixture: the foreign owner creates a source'
 );
@@ -1942,7 +2118,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'own source', %L) $f$,
     (select source_recall_own from pg_temp.fixture), (select notebook_match_recall_own from pg_temp.fixture),
-    (select notebook_match_recall_own from pg_temp.fixture) || '/a.txt'
+    (select notebook_match_recall_own from pg_temp.fixture) || '/' || (select source_recall_own from pg_temp.fixture)
   ),
   'recall fixture: the caller creates a source in their own notebook'
 );
@@ -1992,7 +2168,7 @@ select pg_temp.act_lives(
   format(
     $f$ insert into public.sources (id, notebook_id, kind, title, storage_path) values (%L, %L, 'text', 'match exact source', %L) $f$,
     (select source_match_exact from pg_temp.fixture), (select notebook_match_exact from pg_temp.fixture),
-    (select notebook_match_exact from pg_temp.fixture) || '/a.txt'
+    (select notebook_match_exact from pg_temp.fixture) || '/' || (select source_match_exact from pg_temp.fixture)
   ),
   'exact-top-8 fixture: owner creates a source'
 );

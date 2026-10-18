@@ -9,12 +9,18 @@ export type MessageRole = "user" | "assistant";
 
 export const EMBEDDING_DIMENSIONS = 1024;
 
-/** `sources.storage_path` must be exactly `<notebook_id>/<filename>` -- one
- * path segment, filename restricted to `[A-Za-z0-9._-]+`, no `..` (see the
- * strict-shape tests in supabase/tests/database/020_sources_chunks_messages
- * .test.sql). The default filename here stays inside that charset. */
-export function storagePath(notebookId: string, filename = `${randomUUID()}.txt`): string {
-  return `${notebookId}/${filename}`;
+/**
+ * `sources.storage_path` is server-assigned and must be exactly
+ * `<notebook_id>/<id>` (the row's own id, not a client-chosen filename) --
+ * `check (storage_path = notebook_id::text || '/' || id::text)`, plus a plain
+ * `unique (storage_path)` as a defense-in-depth backstop (see
+ * supabase/tests/database/020_sources_chunks_messages.test.sql). Fixed
+ * Codex finding: a client-chosen filename let two sources share one Storage
+ * object, so deleting one silently deleted the other's file too. The
+ * original upload's file name now lives in `title` instead.
+ */
+export function storagePath(notebookId: string, id: string): string {
+  return `${notebookId}/${id}`;
 }
 
 /** The "query" vector every recall/clamp test searches for: a unit vector
@@ -51,15 +57,19 @@ export function nearbyVector(seed: number, noise: number): number[] {
 export interface CreateSourceOptions {
   kind?: SourceKind;
   title?: string;
-  filename?: string;
   id?: string;
+  storagePath?: string;
 }
 
 /**
  * Creates a source as `actor` with a client-generated id (the insert column
  * grant is id, notebook_id, kind, title, storage_path -- no `.select()`
- * needed or wanted). Throws on error so a failing create surfaces at the call
- * site with the real Postgres/PostgREST error.
+ * needed or wanted). `storage_path` defaults to the only value the CHECK
+ * constraint accepts (`<notebook_id>/<id>`, using this call's own id); pass
+ * `options.storagePath` explicitly only to test a path that is deliberately
+ * wrong. `title` keeps the original upload's file name instead. Throws on
+ * error so a failing create surfaces at the call site with the real
+ * Postgres/PostgREST error.
  */
 export async function createSource(
   actor: SignedInUser,
@@ -68,8 +78,8 @@ export async function createSource(
 ): Promise<string> {
   const id = options.id ?? randomUUID();
   const kind = options.kind ?? "text";
-  const title = options.title ?? `source ${randomUUID()}`;
-  const path = storagePath(notebookId, options.filename);
+  const title = options.title ?? `source-${randomUUID()}.txt`;
+  const path = options.storagePath ?? storagePath(notebookId, id);
 
   const { error } = await actor.client
     .from("sources")

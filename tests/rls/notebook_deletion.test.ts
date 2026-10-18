@@ -23,7 +23,18 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { signUpUser, type SignedInUser } from "./helpers/clients";
 import { addMember, createNotebook } from "./helpers/notebooks";
-import { createSource, insertMessage, nearbyVector } from "./helpers/sources";
+import { createSource, createSourceWithChunks, insertCitation, insertMessage, nearbyVector } from "./helpers/sources";
+
+/** createSourceWithChunks returns chunkIds as a plain array; under strict
+ * `noUncheckedIndexedAccess`, chunkIds[0] types as `string | undefined`. A
+ * real check (throw if it actually came back empty), not a `!` assertion. */
+function firstChunkId(chunkIds: string[]): string {
+  const id = chunkIds[0];
+  if (id === undefined) {
+    throw new Error("expected createSourceWithChunks to return at least one chunk id");
+  }
+  return id;
+}
 
 describe("deleting a notebook cascades away its sources, chunks and messages", () => {
   let owner: SignedInUser;
@@ -141,6 +152,89 @@ describe("deleting a notebook cascades away its sources, chunks and messages", (
       .eq("id", editorMessageInUntouchedId);
     expect(messageError).toBeNull();
     expect(messageRows).toEqual([{ id: editorMessageInUntouchedId }]);
+  });
+});
+
+describe("deleting a notebook with cited assistant answers from two users succeeds and leaves nothing behind", () => {
+  // PR #19, item 2: the deletion risk is a single DELETE statement's cascade
+  // hitting the same message_citations row from two FK paths at once (the
+  // cited chunk's own cascade nulling chunk_id, the citing message's own
+  // cascade deleting the row outright) -- "tuple to be updated was already
+  // modified by an operation triggered by the current command". Two
+  // different users' own cited answers, both citing the same chunk, is what
+  // actually exercises that: a single-user fixture cannot tell "the cascade
+  // is safe" apart from "RLS just hid it from me afterwards" as cleanly, and
+  // cannot reproduce the two-FK-paths-same-row shape at all with only one
+  // citing message.
+  let owner: SignedInUser;
+  let viewer: SignedInUser;
+  let notebookId: string;
+  let sourceId: string;
+  let chunkId: string;
+  let viewerAnswerId: string;
+  let ownerAnswerId: string;
+
+  beforeAll(async () => {
+    owner = await signUpUser("notebook-deletion-cited-owner");
+    viewer = await signUpUser("notebook-deletion-cited-viewer");
+
+    notebookId = await createNotebook(owner, "notebook-deletion-cited");
+    await addMember(owner, notebookId, viewer.userId, "viewer");
+
+    const { sourceId: createdSourceId, chunkIds } = await createSourceWithChunks(owner, notebookId, 1, 0.01);
+    sourceId = createdSourceId;
+    chunkId = firstChunkId(chunkIds);
+
+    viewerAnswerId = await insertMessage(viewer, notebookId, "assistant", "viewer's cited answer");
+    await insertCitation(viewer, notebookId, viewerAnswerId, 1, { chunkId, quote: "viewer's quote" });
+
+    ownerAnswerId = await insertMessage(owner, notebookId, "assistant", "owner's cited answer, same chunk");
+    await insertCitation(owner, notebookId, ownerAnswerId, 1, { chunkId, quote: "owner's quote" });
+  });
+
+  it("the owner deletes the notebook in one statement, with no error", async () => {
+    const { error } = await owner.client.from("notebooks").delete().eq("id", notebookId);
+    expect(error).toBeNull();
+  });
+
+  it("the former viewer no longer sees the source, their own answer or its citation", async () => {
+    const { data: sourceRows, error: sourceError } = await viewer.client.from("sources").select("id").eq("id", sourceId);
+    expect(sourceError).toBeNull();
+    expect(sourceRows).toEqual([]);
+
+    const { data: messageRows, error: messageError } = await viewer.client
+      .from("messages")
+      .select("id")
+      .eq("id", viewerAnswerId);
+    expect(messageError).toBeNull();
+    expect(messageRows).toEqual([]);
+
+    const { data: citationRows, error: citationError } = await viewer.client
+      .from("message_citations")
+      .select("message_id")
+      .eq("message_id", viewerAnswerId);
+    expect(citationError).toBeNull();
+    expect(citationRows).toEqual([]);
+  });
+
+  it("the former owner no longer sees the chunk, their own answer or its citation", async () => {
+    const { data: chunkRows, error: chunkError } = await owner.client.from("chunks").select("id").eq("id", chunkId);
+    expect(chunkError).toBeNull();
+    expect(chunkRows).toEqual([]);
+
+    const { data: messageRows, error: messageError } = await owner.client
+      .from("messages")
+      .select("id")
+      .eq("id", ownerAnswerId);
+    expect(messageError).toBeNull();
+    expect(messageRows).toEqual([]);
+
+    const { data: citationRows, error: citationError } = await owner.client
+      .from("message_citations")
+      .select("message_id")
+      .eq("message_id", ownerAnswerId);
+    expect(citationError).toBeNull();
+    expect(citationRows).toEqual([]);
   });
 });
 

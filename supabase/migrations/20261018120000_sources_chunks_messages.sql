@@ -6,19 +6,18 @@ create extension if not exists vector with schema extensions;
 
 -- Tables -----------------------------------------------------------------------------
 
--- storage_path is the object key in the `sources` bucket (PR A2): {notebook_id}/{name},
--- one flat name without `..`, so no later path normalization reaches another notebook.
--- Pasted text is stored as a text/plain object too, so every source has one.
+-- storage_path is the object key in the `sources` bucket (PR A2), assigned by the server
+-- as {notebook_id}/{id}: unique, so deleting one source never removes another's file, and
+-- free of user file names. The original name stays in title. Pasted text is stored as a
+-- text/plain object too, so every source has one.
 create table public.sources (
   id uuid primary key default gen_random_uuid(),
   notebook_id uuid not null references public.notebooks (id) on delete cascade,
   created_by uuid default auth.uid() references auth.users (id) on delete set null,
   kind text not null check (kind in ('pdf', 'text', 'url')),
   title text not null check (char_length(btrim(title)) between 1 and 200),
-  storage_path text not null check (
-    storage_path ~ ('^' || notebook_id::text || '/[A-Za-z0-9._-]+$')
-    and position('..' in storage_path) = 0
-  ),
+  storage_path text not null unique
+    check (storage_path = notebook_id::text || '/' || id::text),
   status text not null default 'pending'
     check (status in ('pending', 'processing', 'ready', 'failed')),
   created_at timestamptz not null default now(),
