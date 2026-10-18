@@ -65,6 +65,9 @@ jobs:
       SUPABASE_TELEMETRY_DISABLED: "1"
       DO_NOT_TRACK: "1"
       SUPABASE_NO_UPDATE_NOTIFIER: "1"
+      # Pull the local stack's images from ghcr.io: public.ecr.aws answered
+      # "toomanyrequests: Data limit exceeded" 21 times in #20. Read by CLI 2.119.0.
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       # Dummy, non-secret values: config.toml enables GitHub login through env(), and
       # nothing here talks to GitHub OAuth. Real values exist only on developer machines.
       SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID: ci-dummy-client-id
@@ -99,6 +102,83 @@ jobs:
 
       - name: RLS matrix with real JWTs
         run: pnpm test:rls
+
+      - name: Stop local Supabase
+        if: always()
+        run: pnpm exec supabase stop --no-backup
+
+  e2e:
+    # Not a required status check yet; adding it is a ruleset change for infra/github.
+    # Full stack in the runner: local Supabase plus a production build of the web app.
+    # The GitHub login is checked up to the redirect; requests to github.com are aborted.
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+      SUPABASE_NO_UPDATE_NOTIFIER: "1"
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
+      SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID: ci-dummy-client-id
+      SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET: ci-dummy-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Login needs Postgres, Auth, PostgREST and the gateway only.
+      - name: Start local Supabase
+        run: |
+          start() { pnpm exec supabase start -x "$SUPABASE_EXCLUDE"; }
+          start || { pnpm exec supabase stop --no-backup || true; sleep 10; start; }
+        env:
+          SUPABASE_EXCLUDE: realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      # The browser cache is keyed on the installed Playwright version, so a version
+      # bump downloads a matching Chromium. System libraries are not cached.
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
 
       - name: Stop local Supabase
         if: always()
