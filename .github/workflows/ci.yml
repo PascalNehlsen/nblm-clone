@@ -83,15 +83,16 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Only Postgres, Auth (gotrue), PostgREST and the gateway (kong): what pgTAP and
-      # the RLS matrix need. The CLI is the pinned devDependency, same as locally.
+      # Only Postgres, Auth (gotrue), PostgREST, Storage and the gateway (kong): what
+      # pgTAP and the RLS matrix need (Storage for the bucket and object policies).
+      # The CLI is the pinned devDependency, same as locally.
       # One retry: a transient image pull failure should not fail a required check.
       - name: Start local Supabase
         run: |
           start() { pnpm exec supabase start -x "$SUPABASE_EXCLUDE"; }
           start || { pnpm exec supabase stop --no-backup || true; sleep 10; start; }
         env:
-          SUPABASE_EXCLUDE: realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          SUPABASE_EXCLUDE: realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: pgTAP catalog and policy tests
         run: pnpm test:db
