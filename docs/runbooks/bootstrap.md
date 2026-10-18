@@ -8,7 +8,7 @@
 
 ```bash
 aws sso login --sso-session nblm
-git switch main && git pull --ff-only     # apply only what was merged
+git fetch -q origin && git switch --detach origin/main     # apply only what was merged
 scripts/tofu.sh -chdir=infra/bootstrap init -lockfile=readonly
 scripts/tofu.sh -chdir=infra/bootstrap plan -out=bootstrap.tfplan
 ```
