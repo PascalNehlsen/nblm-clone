@@ -228,10 +228,13 @@ scripts/tofu.sh -chdir=infra/bootstrap plan -input=false -detailed-exitcode; rc=
 V1=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate --query VersionId --output text)
 LOCK=$(aws s3api head-object --bucket "$B" --key bootstrap/terraform.tfstate.tflock 2>&1 >/dev/null)
 echo "plan exit $rc; V0 $V0; V1 $V1; lock: $LOCK"                   # exit 0; V1 = V0; lock: An error occurred (404) ... Not Found
-if [ "$rc" = 0 ] && [ -n "$V0" ] && [ "$V1" = "$V0" ] && printf '%s' "$LOCK" | grep -q '(404)'; then echo "all checks passed"; else echo STOP; fi
+V=infra/bootstrap/versions.tf
+if [ "$rc" = 0 ] && [ -n "$V0" ] && [ "$V1" = "$V0" ] && printf '%s' "$LOCK" | grep -q '(404)' \
+  && ! grep -q 'method "unencrypted"' "$V" \
+  && [ "$(grep -c '^[[:space:]]*enforced[[:space:]]*=[[:space:]]*true' "$V")" = 2 ]; then echo "all checks passed"; else echo STOP; fi
 ```
 
-This line is the single gate before the deletion. It needs all four: the plan exited 0 (no changes, no error), `V0` was read, the state version is unchanged, and the lock lookup returned 404 (not 403 or an expired session). Anything else prints `STOP`: keep `$BK` and see the rollback.
+This is the single gate before the deletion. It needs all five: the plan exited 0 (no changes, no error), `V0` was read, the state version is unchanged, the lock lookup returned 404 (not 403 or an expired session), and the checked-out `versions.tf` is the enforced config (no `method "unencrypted"`, exactly two `enforced = true`). Without the last check, a worktree still on the step 4 commit passes the other four, because that config also reads the encrypted state. The "Unencrypted method configured" warning must be absent from the `init` and `plan` output; if it appears, the wrong commit is checked out. Anything else prints `STOP`: keep `$BK` and see the rollback.
 
 The plan reads the state with `aes_gcm` alone, so it proves the stored state is encrypted. Compare the version id, not a count under the prefix: the plan's lock writes and deletes `bootstrap/terraform.tfstate.tflock`, which leaves a version and a delete marker on that key only. Plaintext state would now fail with `encountered unencrypted payload without unencrypted method configured`.
 
