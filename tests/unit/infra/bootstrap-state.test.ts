@@ -223,7 +223,14 @@ describe("infra/bootstrap/policies/plan-state-read.json.tftpl", () => {
     }
   });
 
-  it("no Allow action is wildcarded, a write/delete action, or an encrypt/data-key KMS action", () => {
+  // Requirement change in PR 4 (ADR 0003): OpenTofu 1.13.1's aws_kms key
+  // provider calls kms:GenerateDataKey on every Provide() call, including
+  // plan-only, read-only runs, so the plan role needs it. The blanket
+  // `/^kms:GenerateDataKey/` prefix check below is narrowed to the two
+  // data-key variants that are never needed for reading state: the "without
+  // plaintext" and the asymmetric "pair" forms. Plain kms:GenerateDataKey is
+  // covered by its own allow-list test below instead.
+  it("no Allow action is wildcarded, a write/delete action, or an encrypt/pair-data-key/re-encrypt KMS action", () => {
     const allowActions = policy()
       .Statement.filter((s) => s.Effect === "Allow")
       .flatMap((s) => toArray(s.Action));
@@ -234,8 +241,56 @@ describe("infra/bootstrap/policies/plan-state-read.json.tftpl", () => {
       expect(action, `${action} must not be a Put action`).not.toMatch(/^s3:Put/);
       expect(action, `${action} must not be a Delete action`).not.toMatch(/^s3:Delete/);
       expect(action, `${action} must not encrypt`).not.toBe("kms:Encrypt");
-      expect(action, `${action} must not generate data keys`).not.toMatch(/^kms:GenerateDataKey/);
+      expect(action, `${action} must not generate a data key without plaintext`).not.toBe("kms:GenerateDataKeyWithoutPlaintext");
+      expect(action, `${action} must not generate an asymmetric data key pair`).not.toMatch(/^kms:GenerateDataKeyPair/);
       expect(action, `${action} must not re-encrypt`).not.toMatch(/^kms:ReEncrypt/);
+    }
+  });
+
+  it(
+    'allows kms:GenerateDataKey on the key arn only, with Sid "GenerateDataKeyForStateEncryption" and no Condition ' +
+      "(ADR 0003: OpenTofu's aws_kms key provider calls GenerateDataKey on every Provide(), including reads)",
+    () => {
+      const statement = policy().Statement.find((s) => s.Sid === "GenerateDataKeyForStateEncryption");
+      expect(statement, 'expected a statement with Sid "GenerateDataKeyForStateEncryption"').toBeDefined();
+      expect(statement?.Effect).toBe("Allow");
+      expect(toArray(statement?.Action)).toEqual(["kms:GenerateDataKey"]);
+      expect(toArray(statement?.Resource)).toEqual(["${key_arn}"]);
+      expect(statement?.Condition).toBeUndefined();
+    },
+  );
+
+  // Review follow-up: the previous check only looked up Sid
+  // "GenerateDataKeyForStateEncryption" and asserted things about it. A
+  // second Allow statement, under a different Sid, granting
+  // kms:GenerateDataKey (or a wildcard covering it, like kms:GenerateDataKey*,
+  // kms:* or *) on "*" would have passed unnoticed. This scans every Allow
+  // statement in the whole document for any action that is or covers
+  // kms:GenerateDataKey, and requires there to be exactly one such statement:
+  // the one found above.
+  it("exactly one Allow statement grants a kms:GenerateDataKey-covering action, and it is GenerateDataKeyForStateEncryption scoped to the key arn", () => {
+    const coversGenerateDataKey = (action: string) =>
+      action === "kms:GenerateDataKey" || action === "kms:*" || action === "*" || /^kms:GenerateDataKey/.test(action);
+
+    const grantingStatements = policy().Statement.filter(
+      (s) => s.Effect === "Allow" && toArray(s.Action).some(coversGenerateDataKey),
+    );
+
+    expect(grantingStatements, "expected exactly one Allow statement granting a kms:GenerateDataKey-covering action").toHaveLength(1);
+
+    const statement = grantingStatements[0];
+    expect(statement?.Sid).toBe("GenerateDataKeyForStateEncryption");
+    expect(toArray(statement?.Action)).toEqual(["kms:GenerateDataKey"]);
+    expect(toArray(statement?.Resource)).toEqual(["${key_arn}"]);
+  });
+
+  it("no Allow statement's Resource mentions .tflock (use_lockfile creates a <key>.tflock object via conditional PutObject; the plan role must not be allowed to create it, since CI plans run with -lock=false)", () => {
+    const allowResources = policy()
+      .Statement.filter((s) => s.Effect === "Allow")
+      .flatMap((s) => toArray(s.Resource));
+
+    for (const resource of allowResources) {
+      expect(resource, `${resource} must not reference .tflock`).not.toContain(".tflock");
     }
   });
 });

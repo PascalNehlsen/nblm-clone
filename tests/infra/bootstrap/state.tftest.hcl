@@ -189,6 +189,43 @@ run "plan_state_read_policy_covers_the_real_bucket_and_key" {
     condition     = contains(flatten([for s in jsondecode(aws_iam_role_policy.tofu_plan_state_read.policy).Statement : s.Resource]), "arn:aws:kms:eu-central-1:278311879197:key/mock")
     error_message = "tofu_plan_state_read must reference the real key arn, not a placeholder"
   }
+
+  # PR 4 / ADR 0003: OpenTofu 1.13.1's aws_kms key provider calls
+  # kms:GenerateDataKey on every Provide(), including plan-only, read-only
+  # runs, so the plan role needs it allowed on the real key arn.
+  assert {
+    condition = anytrue([
+      for s in jsondecode(aws_iam_role_policy.tofu_plan_state_read.policy).Statement :
+      s.Effect == "Allow" &&
+      contains(flatten([s.Action]), "kms:GenerateDataKey") &&
+      contains(flatten([s.Resource]), "arn:aws:kms:eu-central-1:278311879197:key/mock")
+    ])
+    error_message = "tofu_plan_state_read must allow kms:GenerateDataKey on the real key arn, not a placeholder"
+  }
+
+  # Review follow-up: the anytrue assertion above only requires that *some*
+  # Allow statement grants kms:GenerateDataKey on the real key arn. A second
+  # Allow statement, under another Sid, granting kms:GenerateDataKey (or a
+  # covering wildcard) on "*" would still pass it unnoticed. These two
+  # assertions close that gap: every Allow statement that mentions
+  # kms:GenerateDataKey must be scoped to the real key arn only, and there
+  # must be exactly one such statement.
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.tofu_plan_state_read.policy).Statement :
+      flatten([s.Resource]) == ["arn:aws:kms:eu-central-1:278311879197:key/mock"]
+      if s.Effect == "Allow" && contains(flatten([s.Action]), "kms:GenerateDataKey")
+    ])
+    error_message = "every Allow statement granting kms:GenerateDataKey must scope Resource to the real key arn only, not \"*\" or another resource"
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(aws_iam_role_policy.tofu_plan_state_read.policy).Statement :
+      s if s.Effect == "Allow" && contains(flatten([s.Action]), "kms:GenerateDataKey")
+    ]) == 1
+    error_message = "exactly one Allow statement may grant kms:GenerateDataKey"
+  }
 }
 
 run "apply_guard_policy_covers_the_bucket_key_both_roles_oidc_and_alias" {
