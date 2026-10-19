@@ -62,6 +62,21 @@ jobs:
           echo "::add-mask::$SUPABASE_DB_URL"
           if ! [[ "$SUPABASE_DB_URL" =~ ^postgresql://[^:/@]+:[A-Za-z0-9]+@[a-z0-9.-]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
             echo "SUPABASE_DB_URL is not a session pooler URL of the form postgresql://postgres.<ref>:<letters-and-digits password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require" >&2
+            # Which part is wrong, as ok/wrong only: never the value or any piece of it.
+            rest="${SUPABASE_DB_URL#postgresql://}"
+            user="${credentials#postgresql://}"
+            user="${user%%:*}"
+            hostpart="${rest#*@}"
+            check() { if [ "$2" = 0 ]; then echo "  $1: ok" >&2; else echo "  $1: wrong" >&2; fi; }
+            [[ "$SUPABASE_DB_URL" == postgresql://* ]] && r=0 || r=1; check "scheme postgresql://" "$r"
+            [[ "$user" =~ ^postgres\.[a-z0-9]+$ ]] && r=0 || r=1; check "user postgres.<ref>" "$r"
+            [[ "$password" =~ ^[A-Za-z0-9]+$ ]] && r=0 || r=1; check "password letters and digits" "$r"
+            [[ "$hostpart" =~ ^[a-z0-9.-]+\.pooler\.supabase\.com: ]] && r=0 || r=1; check "host *.pooler.supabase.com" "$r"
+            [[ "$hostpart" == *:5432/* ]] && r=0 || r=1; check "port 5432" "$r"
+            [[ "$hostpart" == */postgres\?* ]] && r=0 || r=1; check "database /postgres" "$r"
+            [[ "$SUPABASE_DB_URL" == *"?sslmode=require" ]] && r=0 || r=1; check "ends with ?sslmode=require" "$r"
+            [[ "$SUPABASE_DB_URL" != *[[:space:]]* ]] && r=0 || r=1; check "no whitespace" "$r"
+            [[ "$SUPABASE_DB_URL" != *[[:cntrl:]]* ]] && r=0 || r=1; check "no control characters" "$r"
             exit 1
           fi
 
