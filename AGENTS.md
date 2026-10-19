@@ -41,9 +41,9 @@ Flow for **high**: planner → plan approved (host Claude session or human, see 
 
 **Plan approval** (high risk): the host Claude session may approve a planner plan when the plan stays inside the existing rules. It must escalate to the human for new secrets or credentials, ADR changes, allowlist or egress changes, cost limits, gate changes (rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml`, `infra/github/`) and anything irreversible. When unsure, escalate. This is an instruction-level rule, not enforced: nothing technical stops the session from approving a plan it should have escalated. A Claude approval is not an independent review; it is the same model family as the builder and the planner. The PR records who approved the plan. The human still merges every PR.
 
-**Reviewer subagent** (high risk): mandatory for changes under `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. For the other high-risk paths (`lib/rag/`, `prompts/`) it is optional; there, Codex and the eval remain the gates.
+**Reviewer subagent** (high risk): mandatory for changes under `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. For the other high-risk paths (`lib/rag/`, `prompts/`) it becomes optional only once the Codex review job and the eval run in CI as required checks; until then it is mandatory there too.
 
-**Codex review**: runs once per PR, on the final head. Rerun it only if code changed after that run; commits that only touch docs or the gate log do not trigger a rerun.
+**Codex review**: runs once per PR, on the final head. Rerun it if code changed after that run, or if a later commit touches the rules themselves (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`). Other docs and gate-log commits do not trigger a rerun.
 
 Flow for **normal**: builder → PR with evidence → CI incl. Codex review → human merges.
 Flow for **Dependabot**: applies only while every commit on the branch is from `dependabot[bot]` and the diff only changes pinned versions (`uses:` SHAs, `rev:` lines, version comments). No planner, test-author or red tests; a version bump is not a bug fix in the sense of rule 3. The human reads the changelog and diff, CI passes, the human merges. The reviewer subagent runs for a major bump and for any bump in a gate workflow (`release.yml`, or any workflow with `id-token: write`, an environment or secrets); for a major the changelog review is the plan. Once anyone else pushes to the branch, the risk class from the paths applies again. CI still labels these PRs high; the exception is an instruction, not enforced.
@@ -116,5 +116,5 @@ Mapped to the OWASP Top 10 for LLM Applications in `SECURITY.md`.
 - [ ] RLS matrix cases for every new table or policy
 - [ ] Eval run if retrieval or a prompt changed (score in the PR)
 - [ ] Docs updated (README, ADR, runbook if operations changed)
-- [ ] Reviewer subagent run (mandatory for `supabase/`, auth, `.github/workflows/`, `infra/`, `.claude/`), Codex review on the final head read
+- [ ] Reviewer subagent run (mandatory for `supabase/`, auth, `.github/workflows/`, `infra/`, `.claude/`, and for `lib/rag/` and `prompts/` until Codex and the eval are required checks), Codex review on the final head read
 - [ ] Gate log filled, known gaps listed in the PR
