@@ -1,6 +1,6 @@
 # Runbook: model kill switch and budget limits
 
-- Last rehearsed: never. The first rehearsal is enabling develop once the migrations reach the hosted develop project through the release workflow, then production
+- Last rehearsed: never. The first rehearsal is enabling develop once the migrations reach the hosted develop project through `develop.yml` (docs/runbooks/develop-deploy.md), then production through the release workflow
 - Who: the human, in the Supabase SQL editor of the project (or psql as `postgres`). Never from the sandbox or CI: neither has credentials for it ([ADR 0006](../adr/0006-model-budget-and-kill-switch.md))
 - Effect: the next model call; streams already running finish. No deploy needed
 
