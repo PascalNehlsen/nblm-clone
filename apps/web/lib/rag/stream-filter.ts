@@ -16,6 +16,8 @@ const MARKER_PREFIX = [
   /^\[\d+:\s{0,8}"[^"\]]{1,2000}"$/,
 ];
 const STARTED_MARKER = /^\[\d+:/;
+const STARTED_QUOTE = /^\[\d+:\s{0,8}"/;
+const QUOTE_TOO_LONG = /^\[\d+:\s{0,8}"[^"\]]{2001}/;
 const MAX_HELD = 2100;
 
 function couldBeMarker(held: string): boolean {
@@ -45,6 +47,10 @@ export function createMarkerFilter(emit: (text: string) => void): { push(delta: 
       i++;
       if (FULL_MARKER.test(held)) {
         held = "";
+      } else if (QUOTE_TOO_LONG.test(held)) {
+        // An open quote longer than any valid one (2,000 characters): drop what was held, so
+        // no unchecked quote reaches the stream; the text after it flows on normally.
+        held = "";
       } else if (!couldBeMarker(held)) {
         // Not a marker: the "[" goes out, the rest is read again (it may hold a new "[").
         out.push("[");
@@ -53,7 +59,10 @@ export function createMarkerFilter(emit: (text: string) => void): { push(delta: 
         const inner = feed(rest);
         if (inner) out.push(inner);
       } else if (held.length > MAX_HELD) {
-        out.push(held);
+        // Too long to be a valid marker: a quote has at most 2,000 characters. Text that still
+        // starts like a marker is dropped (citations.ts removes it from the saved answer too);
+        // anything else goes out unchanged.
+        if (!STARTED_QUOTE.test(held)) out.push(held);
         held = "";
       }
     }

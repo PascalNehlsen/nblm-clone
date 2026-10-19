@@ -53,12 +53,26 @@ describe("createMarkerFilter", () => {
     expect(run(["Ende [1"]).out).toBe("Ende [1");
   });
 
-  it("emits held text longer than 2100 characters as is", () => {
+  // Changed from "emits held text longer than 2100 characters as is": held text that still
+  // starts like a marker ([digits:) is now dropped, never emitted (review follow-up of PR #36).
+  it("drops held marker-like text longer than 2100 characters, then text flows again", () => {
     const longTail = 'x'.repeat(2200);
     const { out } = run([`A [1: "${longTail}`, " weiter"]);
     expect(out.startsWith("A ")).toBe(true);
-    expect(out).toContain(longTail.slice(0, 100));
+    expect(out).not.toContain("[1:");
+    expect(out).not.toContain('"');
     expect(out.endsWith(" weiter")).toBe(true);
+  });
+
+  it("a marker with a 2,500 character quote, split into single chars, never reaches emit", () => {
+    const text = '[1: "' + "a".repeat(2500) + '"] Ende';
+    const { out, emits } = run(text.split(""));
+    for (const e of emits) {
+      expect(e).not.toContain("[1:");
+      expect(e).not.toContain("a".repeat(100));
+    }
+    expect(out).not.toContain("[1:");
+    expect(out.endsWith(" Ende")).toBe(true);
   });
 
   it("a marker with 8 spaces before the quote, split into single chars, is dropped", () => {

@@ -22,8 +22,8 @@ export function messageStore(client: SupabaseClient): MessageStore {
         .from("messages")
         .insert({ id: answerId, notebook_id: notebookId, role: "assistant", content: answer });
       if (answerError) {
-        await client.from("messages").delete().eq("id", questionId);
-        throw new Error("saving the answer failed");
+        const { error: cleanup } = await client.from("messages").delete().eq("id", questionId);
+        throw new Error(cleanup ? "saving the answer failed, cleanup failed" : "saving the answer failed");
       }
 
       if (citations.length === 0) return;
@@ -37,9 +37,11 @@ export function messageStore(client: SupabaseClient): MessageStore {
         })),
       );
       if (citationError) {
-        await client.from("messages").delete().eq("id", answerId);
-        await client.from("messages").delete().eq("id", questionId);
-        throw new Error("saving the citations failed");
+        const { error: answerCleanup } = await client.from("messages").delete().eq("id", answerId);
+        const { error: questionCleanup } = await client.from("messages").delete().eq("id", questionId);
+        throw new Error(
+          answerCleanup || questionCleanup ? "saving the citations failed, cleanup failed" : "saving the citations failed",
+        );
       }
     },
   };
