@@ -37,7 +37,14 @@ export default async function NotebookPage({
   if (!notebook) notFound();
   const members = await listMembers(supabase, id);
   const sources = await listSources(supabase, id);
-  const history = await listHistory(supabase, id);
+  // A failing history query must not take the notebook page down.
+  let history: Awaited<ReturnType<typeof listHistory>> = [];
+  let historyFailed = false;
+  try {
+    history = await listHistory(supabase, id);
+  } catch {
+    historyFailed = true;
+  }
   const canEditSources =
     (notebook.role === "owner" || notebook.role === "editor") && !(data.user.is_anonymous ?? false);
 
@@ -58,7 +65,7 @@ export default async function NotebookPage({
         <SourceList sources={sources} notebookId={notebook.id} canEdit={canEditSources} />
         {canEditSources ? <AddSource notebookId={notebook.id} /> : null}
       </section>
-      <Chat notebookId={notebook.id} initialHistory={history} />
+      <Chat notebookId={notebook.id} initialHistory={history} historyFailed={historyFailed} />
       {notebook.role === "owner" ? (
         <form action={deleteNotebookAction}>
           <input type="hidden" name="notebookId" value={notebook.id} />
