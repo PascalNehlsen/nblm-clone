@@ -16,6 +16,28 @@ describe("constants", () => {
   });
 });
 
+describe("validateCitations: marker-shaped text with 3 to 6 digits", () => {
+  it("removes [123: \"Bonn\"] and counts it as dropped", () => {
+    const r = validateCitations('Text [123: "Bonn"] Ende', [chunk(1, "Die Firma sitzt in Bonn.")]);
+    expect(r.text).toBe("Text  Ende");
+    expect(r.citations).toEqual([]);
+    expect(r.dropped).toBe(1);
+  });
+
+  it("still removes [123: ...] when a valid [1: ...] is present", () => {
+    const r = validateCitations('A [1: "Bonn"] B [123: "Bonn"] C', [chunk(1, "Die Firma sitzt in Bonn.")]);
+    expect(r.text).toBe("A [1] B  C");
+    expect(r.citations).toEqual([{ ordinal: 1, chunkId: "chunk-1", quote: "Bonn" }]);
+    expect(r.dropped).toBe(1);
+  });
+
+  it("removes a 6-digit marker with up to 8 spaces before the quote", () => {
+    const r = validateCitations(`A [123456:${" ".repeat(8)}"Bonn"] B`, [chunk(1, "Bonn")]);
+    expect(r.text).toBe("A  B");
+    expect(r.dropped).toBe(1);
+  });
+});
+
 describe("validateCitations", () => {
   it("keeps a valid marker and replaces it with [ordinal]", () => {
     const r = validateCitations('Gegründet in Bonn [1: "1999 in Bonn"].', CHUNKS);

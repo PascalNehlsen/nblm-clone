@@ -23,9 +23,9 @@ export interface CitationResult {
 }
 
 export const MARKER = /\[(\d{1,2}):\s{0,8}"([^"\]]{1,2000})"\]/g;
-// Marker-shaped text the check above does not accept (for example a quote over the limit).
-// Single quantifier per part, so still linear.
-const LEFTOVER_MARKER = /\[\d{1,2}:\s{0,8}"[^"\]]*"\]/g;
+// Marker-shaped text the check above does not accept (a quote over the limit, or a number
+// with more than two digits). Single quantifier per part, so still linear.
+const LEFTOVER_MARKER = /\[\d{1,6}:\s{0,8}"[^"\]]*"\]/g;
 
 export function validateCitations(answer: string, chunks: RetrievedChunk[]): CitationResult {
   const citations: ValidCitation[] = [];

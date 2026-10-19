@@ -64,6 +64,104 @@ describe("method, origin, content type, size", () => {
     expect(runTurn).not.toHaveBeenCalled();
   });
 
+  // Behind `next start`, request.url can carry another host than the browser's Host header.
+  // undici's Request treats `host` as a forbidden header name only in browsers; Node keeps it.
+  // The handler must compare the origin with the public host, taken from the headers.
+  function reqAt(url: string, headers: Record<string, string>): Request {
+    return new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ question: "Wo?" }),
+    });
+  }
+
+  it("accepts the origin that matches the host header although request.url has another host", async () => {
+    const { d } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://localhost:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        host: "127.0.0.1:3000",
+        origin: "http://127.0.0.1:3000",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+  });
+
+  it("uses x-forwarded-host and x-forwarded-proto over request.url", async () => {
+    const { d } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://internal:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        "x-forwarded-host": "app.example.test",
+        "x-forwarded-proto": "https",
+        origin: "https://app.example.test",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+  });
+
+  it("403 when the forwarded proto is https but the origin is http", async () => {
+    const { d, runTurn } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://internal:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        "x-forwarded-host": "app.example.test",
+        "x-forwarded-proto": "https",
+        origin: "http://app.example.test",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(403);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("403 for a foreign origin when the host header is set", async () => {
+    const { d, runTurn } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://localhost:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        host: "127.0.0.1:3000",
+        origin: "http://evil.example",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(403);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("403 for a foreign origin when x-forwarded-host is set", async () => {
+    const { d, runTurn } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://internal:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        "x-forwarded-host": "app.example.test",
+        "x-forwarded-proto": "https",
+        origin: "https://evil.example",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(403);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("403 for a foreign origin when the origin matches only request.url", async () => {
+    const { d, runTurn } = deps();
+    const res = await handleChatRequest(
+      reqAt(`http://localhost:3000/notebooks/${NOTEBOOK_ID}/chat`, {
+        host: "127.0.0.1:3000",
+        origin: "http://localhost:3000",
+      }),
+      NOTEBOOK_ID,
+      d,
+    );
+    expect(res.status).toBe(403);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
   it("403 for sec-fetch-site cross-site, same-site and none", async () => {
     const { d, runTurn } = deps();
     for (const site of ["cross-site", "same-site", "none"]) {

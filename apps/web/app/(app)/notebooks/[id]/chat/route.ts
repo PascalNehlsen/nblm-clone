@@ -8,7 +8,9 @@ import { createChatCaller } from "@/lib/server/model/chat";
 import { createClient } from "@/lib/supabase/server";
 
 // Chat turn for one notebook (block D, ADR 0011). All logic is in lib/server/chat/http.ts.
-export const maxDuration = 60;
+// Covers the question embedding (120 s timeout) plus the chat call (30 s), so a slow call
+// ends in its own timeout and is settled, not cut off by the platform.
+export const maxDuration = 180;
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await ctx.params;

@@ -2,18 +2,19 @@ import "server-only";
 
 // Hides citation markers from the streamed answer. Unchecked quotes never reach the browser:
 // the final event carries the checked message, which replaces the streamed text. Text from a
-// "[" is held back until it is clearly a marker (dropped) or clearly not (emitted).
+// "[" is held back until it is clearly a marker (dropped) or clearly not (emitted). One pass
+// with a cursor, so the time is linear in the input (the held text is at most MAX_HELD).
 
-// Same grammar as MARKER in citations.ts: at most 8 whitespace characters after "n:", so a
-// marker can never be longer than the held-text limit below.
-const FULL_MARKER = /^\[\d{1,2}:\s{0,8}"[^"\]]{1,2000}"\]$/;
+// Marker-shaped text as citations.ts removes it: 1 to 6 digits (only 1 to 2 can be valid),
+// at most 8 whitespace characters after "n:", so a marker never outgrows the held-text limit.
+const FULL_MARKER = /^\[\d{1,6}:\s{0,8}"[^"\]]{1,2000}"\]$/;
 const MARKER_PREFIX = [
-  /^\[\d{0,2}$/,
-  /^\[\d{1,2}:\s{0,8}$/,
-  /^\[\d{1,2}:\s{0,8}"[^"\]]{0,2000}$/,
-  /^\[\d{1,2}:\s{0,8}"[^"\]]{1,2000}"$/,
+  /^\[\d{0,6}$/,
+  /^\[\d{1,6}:\s{0,8}$/,
+  /^\[\d{1,6}:\s{0,8}"[^"\]]{0,2000}$/,
+  /^\[\d{1,6}:\s{0,8}"[^"\]]{1,2000}"$/,
 ];
-const STARTED_MARKER = /^\[\d{1,2}:/;
+const STARTED_MARKER = /^\[\d{1,6}:/;
 const MAX_HELD = 2100;
 
 function couldBeMarker(held: string): boolean {
@@ -24,29 +25,38 @@ export function createMarkerFilter(emit: (text: string) => void): { push(delta: 
   let held = "";
 
   const feed = (input: string): string => {
-    let out = "";
-    const queue = [...input];
-    while (queue.length > 0) {
-      const c = queue.shift()!;
+    const out: string[] = [];
+    let i = 0;
+    while (i < input.length) {
       if (held === "") {
-        if (c === "[") held = "[";
-        else out += c;
+        // Copy the run of plain text up to the next "[" in one step.
+        const next = input.indexOf("[", i);
+        if (next === -1) {
+          out.push(input.slice(i));
+          break;
+        }
+        if (next > i) out.push(input.slice(i, next));
+        held = "[";
+        i = next + 1;
         continue;
       }
-      held += c;
+      held += input[i];
+      i++;
       if (FULL_MARKER.test(held)) {
         held = "";
       } else if (!couldBeMarker(held)) {
-        // Not a marker: the "[" goes out, the rest is looked at again (it may hold a new "[").
-        out += "[";
-        queue.unshift(...held.slice(1));
+        // Not a marker: the "[" goes out, the rest is read again (it may hold a new "[").
+        out.push("[");
+        const rest = held.slice(1);
         held = "";
+        const inner = feed(rest);
+        if (inner) out.push(inner);
       } else if (held.length > MAX_HELD) {
-        out += held;
+        out.push(held);
         held = "";
       }
     }
-    return out;
+    return out.join("");
   };
 
   return {

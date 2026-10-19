@@ -584,11 +584,12 @@ describe("D2 chat: RAG and chat-turn modules exist and are marked server-only", 
     }
   });
 
-  it("the chat route exists, sets maxDuration = 60 and delegates to handleChatRequest", () => {
+  it("the chat route exists, sets maxDuration = 180 and delegates to handleChatRequest", () => {
     const route = path.join(webDir, "app/(app)/notebooks/[id]/chat/route.ts");
     expect(fs.existsSync(route), "chat route.ts is missing").toBe(true);
     const content = fs.existsSync(route) ? fs.readFileSync(route, "utf8") : "";
-    expect(content).toContain("export const maxDuration = 60");
+    // Spec value change: 60 became 180 (embedding 120 s + chat 30 s).
+    expect(content).toContain("export const maxDuration = 180");
     expect(content).toContain("handleChatRequest");
   });
 });

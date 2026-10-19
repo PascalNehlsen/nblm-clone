@@ -140,5 +140,14 @@ describe("messageStore.saveTurn", () => {
     const { client, ops } = fake("messages-2");
     await expect(save(client)).rejects.toThrow();
     expect(ops.some((o) => o.table === "message_citations")).toBe(false);
+    // The question row must not stay behind: exactly one delete on messages, by question id.
+    const deletes = ops.filter((o) => o.kind === "delete");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]?.table).toBe("messages");
+    const questionRow = ops.find((o) => o.kind === "insert")?.rows[0];
+    const questionIds: unknown[] = [questionRow?.id, QUESTION_RETURNED_ID].filter((x) => x !== undefined);
+    expect(deletes[0]?.args.some((a) => questionIds.includes(a))).toBe(true);
+    const lastInsert = ops.map((o) => o.kind).lastIndexOf("insert");
+    expect(ops.map((o) => o.kind).indexOf("delete")).toBeGreaterThan(lastInsert);
   });
 });

@@ -6,7 +6,8 @@ import type { MessageStore } from "./turn";
 
 // Saves one turn with the user's own client, so RLS checks every row (ADR 0004): the
 // question, then the answer under the id the usage row links to, then the citations. If the
-// citations cannot be saved, the turn is removed again, so no answer stays without them.
+// answer or its citations cannot be saved, the turn is removed again, so neither a question
+// without its answer nor an answer without its citations stays behind.
 
 export function messageStore(client: SupabaseClient): MessageStore {
   return {
@@ -20,7 +21,10 @@ export function messageStore(client: SupabaseClient): MessageStore {
       const { error: answerError } = await client
         .from("messages")
         .insert({ id: answerId, notebook_id: notebookId, role: "assistant", content: answer });
-      if (answerError) throw new Error("saving the answer failed");
+      if (answerError) {
+        await client.from("messages").delete().eq("id", questionId);
+        throw new Error("saving the answer failed");
+      }
 
       if (citations.length === 0) return;
       const { error: citationError } = await client.from("message_citations").insert(

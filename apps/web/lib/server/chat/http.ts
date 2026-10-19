@@ -31,9 +31,20 @@ function status(code: number): Response {
   return new Response(null, { status: code, headers: { "cache-control": "no-store" } });
 }
 
+// The origin this request was sent to, as the browser saw it: behind a proxy (Vercel) from
+// x-forwarded-host and x-forwarded-proto, else from the Host header. request.url can name an
+// internal host (next start binds 127.0.0.1 but reports localhost), so it is the last resort.
+function expectedOrigin(request: Request): string {
+  const url = new URL(request.url);
+  const first = (value: string | null) => value?.split(",")[0]?.trim() || null;
+  const host = first(request.headers.get("x-forwarded-host")) ?? first(request.headers.get("host")) ?? url.host;
+  const proto = first(request.headers.get("x-forwarded-proto")) ?? url.protocol.replace(/:$/, "");
+  return `${proto}://${host}`;
+}
+
 function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin) return false;
+  if (!origin || origin !== expectedOrigin(request)) return false;
   const site = request.headers.get("sec-fetch-site");
   return site === null || site === "same-origin";
 }
