@@ -35,6 +35,18 @@ const TESTING_IMPORTS = {
   message: "lib/server/model/testing.ts is for tests/ only; use createModelCaller from call.ts.",
 };
 
+// The Bedrock provider and the AWS Bedrock SDK only inside lib/server/model/, so every
+// model call goes through createModelCaller and its budget check (Pascal, 2026-10-19).
+const BEDROCK_IMPORTS = {
+  regex: "(^|/)bedrock(\\.[cm]?[jt]sx?)?$",
+  message: "Call models through lib/server/model/ (createModelCaller), never the provider directly.",
+};
+
+const BEDROCK_SDK_IMPORTS = {
+  group: ["@aws-sdk/client-bedrock-runtime", "@aws-sdk/client-bedrock-runtime/**"],
+  message: "The Bedrock SDK is used only inside lib/server/model/.",
+};
+
 const SUPABASE_IMPORTS = {
   group: ["@supabase/*", "@supabase/*/**"],
   allowTypeImports: true,
@@ -59,7 +71,7 @@ export default defineConfig([
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
-        { patterns: [ADMIN_IMPORTS, CALL_CORE_IMPORTS, TESTING_IMPORTS] },
+        { patterns: [ADMIN_IMPORTS, CALL_CORE_IMPORTS, TESTING_IMPORTS, BEDROCK_IMPORTS, BEDROCK_SDK_IMPORTS] },
       ],
     },
   },
@@ -73,8 +85,26 @@ export default defineConfig([
       "@typescript-eslint/no-restricted-imports": [
         "error",
         {
-          patterns: [ADMIN_IMPORTS, CALL_CORE_IMPORTS, TESTING_IMPORTS, SUPABASE_IMPORTS],
+          patterns: [
+            ADMIN_IMPORTS,
+            CALL_CORE_IMPORTS,
+            TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
+            SUPABASE_IMPORTS,
+          ],
         },
+      ],
+    },
+  },
+  // The model-call code itself may use the Bedrock provider and SDK; everything else above
+  // still applies (call.ts and testing.ts get their own blocks below).
+  {
+    files: ["apps/web/lib/server/model/**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        { patterns: [ADMIN_IMPORTS, CALL_CORE_IMPORTS, TESTING_IMPORTS, SUPABASE_IMPORTS] },
       ],
     },
   },
@@ -111,6 +141,8 @@ export default defineConfig([
             ADMIN_IMPORTS,
             CALL_CORE_IMPORTS,
             TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
             { ...SUPABASE_IMPORTS, group: [...SUPABASE_IMPORTS.group, "!@supabase/supabase-js"] },
           ],
         },

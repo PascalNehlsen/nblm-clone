@@ -12,6 +12,7 @@ export interface ModelConfig {
 // fails closed with model_not_configured instead of breaking the build.
 const SETTINGS: Record<ModelKind, { env: string; maxOutputTokens: number; timeoutMs: number }> = {
   chat: { env: "BEDROCK_CHAT_MODEL_ID", maxOutputTokens: 1024, timeoutMs: 30_000 },
+  // One call embeds every chunk of a source, so it gets more time than a chat turn.
   embedding: { env: "BEDROCK_EMBEDDING_MODEL_ID", maxOutputTokens: 0, timeoutMs: 120_000 },
 };
 

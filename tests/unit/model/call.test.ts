@@ -317,7 +317,9 @@ describe("createModelCaller: refusals before any provider call", () => {
     expect(result).toEqual({ ok: false, category: "price_unknown", usageId: null });
   });
 
-  it("omitting deps.prices falls back to the real (empty) PRICES, so every call is price_unknown", async () => {
+  // PRICES now has one real entry (the Titan embedding model id, C1 ingestion),
+  // but "test-chat-model" is not it, so the real table still refuses this chat call.
+  it("omitting deps.prices falls back to the real PRICES, where this chat model id is still unpriced", async () => {
     const provider = vi.fn(async () => ({ output: { text: "x" }, usage: { inputTokens: 1, outputTokens: 1 } }));
     const reserve = vi.fn(async () => ({ outcome: "ok" as const, usageId: "usage-1" }));
     const callModel = createModelCallerForTests<"chat">({
@@ -770,6 +772,47 @@ describe("createModelCaller: default logging", () => {
     const [line] = infoSpy.mock.calls[0] as [string];
     expect(typeof line).toBe("string");
     expect(() => JSON.parse(line)).not.toThrow();
+  });
+});
+
+// C1 ingestion (plan approved by Pascal, 2026-10-19). See .git/C1-API-SPEC.md
+// ("Model wrapper changes"): call-core.ts must reserve with
+// `callCount = req.kind === "embedding" ? Math.max(1, input.texts.length) : 1`,
+// so the budget check scales with how many texts a single embedding call covers.
+describe("createModelCaller: reserve callCount", () => {
+  it("embedding with 3 texts reserves callCount: 3", async () => {
+    const harness = buildHarness<"embedding">({
+      provider: async () => ({
+        output: { vectors: [[0.1], [0.2], [0.3]] },
+        usage: { inputTokens: 3, outputTokens: 0 },
+      }),
+      config: () => EMBED_CONFIG,
+    });
+
+    await harness.callModel({ kind: "embedding", notebookId: null, input: { texts: ["a", "b", "c"] } });
+
+    expect(harness.reserve).toHaveBeenCalledWith(expect.objectContaining({ kind: "embedding", callCount: 3 }));
+  });
+
+  it("embedding with 1 text reserves callCount: 1", async () => {
+    const harness = buildHarness<"embedding">({
+      provider: async () => ({ output: { vectors: [[0.1]] }, usage: { inputTokens: 1, outputTokens: 0 } }),
+      config: () => EMBED_CONFIG,
+    });
+
+    await harness.callModel({ kind: "embedding", notebookId: null, input: { texts: ["a"] } });
+
+    expect(harness.reserve).toHaveBeenCalledWith(expect.objectContaining({ kind: "embedding", callCount: 1 }));
+  });
+
+  it("chat still reserves callCount: 1", async () => {
+    const harness = buildHarness<"chat">({
+      provider: async () => ({ output: { text: "hi" }, usage: { inputTokens: 1, outputTokens: 1 } }),
+    });
+
+    await harness.callModel(CHAT_REQUEST);
+
+    expect(harness.reserve).toHaveBeenCalledWith(expect.objectContaining({ kind: "chat", callCount: 1 }));
   });
 });
 

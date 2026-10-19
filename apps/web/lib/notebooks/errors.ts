@@ -7,6 +7,13 @@ const MESSAGES: Record<string, string> = {
   titel: "Bitte gib einen Titel mit 1 bis 200 Zeichen ein.",
   eingabe: "Bitte gib eine gültige Nutzer-ID und eine Rolle an.",
   bestaetigung: "Bitte bestätige, dass du das Notizbuch endgültig löschen möchtest.",
+  nicht_erlaubt: "Dafür hast du keine Berechtigung.",
+  text: "Bitte füge einen Text mit 1 bis 100.000 Zeichen ein.",
+  limit: "Dieses Notizbuch hat schon 50 Quellen.",
+  groesse: "Die Datei ist leer oder größer als 20 MB.",
+  typ: "Bitte wähle eine PDF-Datei.",
+  dateien_uebrig: "Die Datei der Quelle konnte nicht entfernt werden.",
+  loeschen: "Die Quelle konnte nicht gelöscht werden.",
 };
 
 const GENERIC = "Das hat nicht geklappt. Bitte versuche es noch einmal.";

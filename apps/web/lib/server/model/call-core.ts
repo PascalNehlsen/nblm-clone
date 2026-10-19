@@ -155,7 +155,8 @@ export function buildModelCaller<K extends ModelKind>(
         kind,
         modelId: cfg.modelId,
         estimatedCostUsd: estimate,
-        callCount: 1,
+        // One reservation per logical operation; an embedding call counts its texts (ADR 0006).
+        callCount: kind === "embedding" ? Math.max(1, (input as InputFor<"embedding">).texts.length) : 1,
       });
       if (reservation.outcome === "ok") {
         if (typeof reservation.usageId !== "string" || !reservation.usageId) return refuse("budget_unavailable");

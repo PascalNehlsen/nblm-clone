@@ -69,6 +69,12 @@ describe("modelConfig", () => {
     const config = modelConfig("embedding");
     expect(config?.timeoutMs).toBe(120_000);
   });
+
+  it("chat: timeoutMs is unchanged at 30000", () => {
+    vi.stubEnv("BEDROCK_CHAT_MODEL_ID", "test-chat-model-id");
+    const config = modelConfig("chat");
+    expect(config?.timeoutMs).toBe(30_000);
+  });
 });
 
 describe("config.ts never hardcodes a Bedrock model id (AGENTS.md: model ids only from env vars)", () => {

@@ -9,9 +9,14 @@ export interface ModelPrice {
 
 export type PriceTable = Readonly<Record<string, ModelPrice>>;
 
-// USD per million tokens, keyed by the model id from env. Empty on purpose: a model
-// without a verified price fails closed with price_unknown (PR C and D add entries).
-export const PRICES: PriceTable = {};
+// USD per million tokens, keyed by the model id from env. A model without a verified
+// entry fails closed with price_unknown.
+export const PRICES: PriceTable = {
+  // Titan Text Embeddings V2: 0.0002 USD per 1K input tokens. Source: AWS public price list
+  // AmazonBedrock, eu-central-1, publicationDate 2026-10-16, SKU QRGS5WQKSZZ4QQKV, usagetype
+  // EUC1-TitanEmbeddingV2-Text-input-tokens (verified by Pascal on the host).
+  "amazon.titan-embed-text-v2:0": { inputUsdPerMTok: 0.2, outputUsdPerMTok: 0 },
+};
 
 // Upper bound on the per-message framing tokens a provider adds.
 export const MESSAGE_OVERHEAD_TOKENS = 8;

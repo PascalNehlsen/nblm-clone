@@ -1,7 +1,11 @@
 // PR E2 (model call wrapper): pure pricing math and the token upper bound used to
-// estimate cost before a call. PRICES ships empty (approved decision 4a), so every
-// real call is "price_unknown" until a human adds entries -- that is covered in
-// call.test.ts, not here. This file only tests the math.
+// estimate cost before a call. PRICES shipped empty at first (approved decision
+// 4a); C1 ingestion (plan approved by Pascal, 2026-10-19) adds the one verified
+// Titan Text Embeddings V2 entry so embedding calls stop refusing with
+// price_unknown. Every other, still-unpriced model id keeps failing closed --
+// that is covered in call.test.ts, not here. This file only tests the math.
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MESSAGE_OVERHEAD_TOKENS,
@@ -14,19 +18,38 @@ import {
 import type { ModelPrice, PriceTable } from "@/lib/server/model/prices";
 import type { ProviderUsage } from "@/lib/server/model/types";
 
-describe("PRICES ships empty (ADR decision 4a)", () => {
-  it("has no entries", () => {
-    expect(Object.keys(PRICES)).toEqual([]);
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
+const pricesFile = path.join(repoRoot, "apps/web/lib/server/model/prices.ts");
+
+const TITAN_EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0";
+
+describe("PRICES: the one verified entry (Titan Text Embeddings V2)", () => {
+  it("has exactly the Titan embedding model id as its only key", () => {
+    expect(Object.keys(PRICES)).toEqual([TITAN_EMBED_MODEL_ID]);
   });
 
-  it("every entry, if one is ever added, is finite with input > 0 and output >= 0", () => {
-    // Vacuously true today; written so it still holds once PRICES gets real entries.
+  it("prices it at 0.2 USD / MTok input, 0 USD / MTok output", () => {
+    expect(PRICES[TITAN_EMBED_MODEL_ID]).toEqual({ inputUsdPerMTok: 0.2, outputUsdPerMTok: 0 });
+  });
+
+  it("every entry is finite with input > 0 and output >= 0", () => {
     for (const [modelId, price] of Object.entries(PRICES)) {
       expect(Number.isFinite(price.inputUsdPerMTok), `${modelId} input price`).toBe(true);
       expect(price.inputUsdPerMTok, `${modelId} input price`).toBeGreaterThan(0);
       expect(Number.isFinite(price.outputUsdPerMTok), `${modelId} output price`).toBe(true);
       expect(price.outputUsdPerMTok, `${modelId} output price`).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("documents its source: the AWS price list SKU and publication date appear in prices.ts", () => {
+    const content = fs.readFileSync(pricesFile, "utf8");
+    expect(content).toContain("QRGS5WQKSZZ4QQKV");
+    expect(content).toContain("2026-10-16");
+  });
+
+  it("costUsd for 1,000,000 input tokens is exactly 0.2 USD", () => {
+    const entry = PRICES[TITAN_EMBED_MODEL_ID] as ModelPrice;
+    expect(costUsd(entry, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(0.2);
   });
 });
 
