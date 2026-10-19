@@ -26,7 +26,8 @@ export default function DatenschutzPage() {
       <p>
         Wenn du dich mit GitHub anmeldest, erhalten wir von GitHub deine GitHub-Nutzerkennung, deinen Namen, die Adresse
         deines Profilbilds und deine E-Mail-Adresse. Wir nutzen sie, um dein Konto zu führen (Art. 6 Abs. 1 lit. b
-        DSGVO). Für die Sitzung setzen wir ein technisch notwendiges Anmelde-Cookie; weitere Cookies setzen wir selbst nicht.
+        DSGVO). Für die Anmeldung setzen wir technisch notwendige Cookies (die Sitzung und, während der Anmeldung mit GitHub,
+        ein kurzlebiges Sicherheits-Cookie); weitere Cookies setzen wir selbst nicht.
       </p>
       <h3>Demo ohne Anmeldung</h3>
       <p>
@@ -84,7 +85,7 @@ export default function DatenschutzPage() {
 
       <h2>4. Speicherdauer</h2>
       <ul>
-        <li>Demo-Konten mit allen Inhalten: 24 Stunden.</li>
+        <li>Demo-Konten mit allen Inhalten: 24 Stunden, spätestens 24 Stunden und 15 Minuten.</li>
         <li>
           Quellen und ihre Abschnitte: bis du die Quelle oder das Notizbuch löschst. Fragen und Antworten: bis das
           Notizbuch gelöscht wird. Auf Anfrage löschen wir dein Konto mit allen Inhalten.

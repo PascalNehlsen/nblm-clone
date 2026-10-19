@@ -223,7 +223,51 @@ describe("readSourceAction", () => {
     expect(result.sections[0]).toEqual({ page: null, text: original });
   });
 
-  it("a text source returns kind text and url null; a stray source_url is not exposed", async () => {
+  it("chunks cut inside a whitespace-free token (the chunker's hard cut) merge back to the original text exactly", async () => {
+    // Layout: a short lead-in, a 700-character token, then a paragraph break. The first chunk
+    // ends at the break (the only "\n\n" inside its cut window), so its last 200 characters are
+    // all token and the next chunk starts mid-token (chunk.ts nextStart, hard-cut branch).
+    const body = Array.from({ length: 80 }, (_, i) => `s${i}x${(i * 7919) % 9973}`).join("-");
+    const token = `https://example.com/pfad/${body}`.slice(0, 700);
+    expect(token).toHaveLength(700);
+    expect(/\s/.test(token)).toBe(false);
+    const lead = "Die Fiktiva GmbH veröffentlicht ihre Berichte unter dieser Adresse: ";
+    // One long paragraph (no "\n\n" before offset 1500), then more paragraphs.
+    const sentences = (n: number) =>
+      Array.from(
+        { length: n },
+        (_, i) => `Im Bericht ${i + 1} stehen ${200 + i * 11} Kennzahlen zu den Standorten und ihrer Entwicklung.`,
+      ).join(" ");
+    const original = [`${lead}${token}`, "", sentences(14), "", sentences(14)].join("\n");
+    expect(original.length).toBeGreaterThan(2500);
+    expect(original.indexOf("\n\n", original.indexOf(token) + token.length + 2)).toBeGreaterThan(1500);
+
+    const drafts = chunkPages([{ page: null, text: original }]);
+    expect(drafts.length).toBeGreaterThan(2);
+    const tokenStart = original.indexOf(token);
+    // Precondition: some chunk really starts inside the token, not at a word start.
+    expect(
+      drafts.some(
+        (d) => d.start > tokenStart && d.start < tokenStart + token.length && !/\s/.test(original[d.start - 1]!),
+      ),
+    ).toBe(true);
+
+    tables.chunks = {
+      single: { data: null, error: null },
+      many: {
+        data: drafts.map((d) => ({ ordinal: d.ordinal, content: d.content, page: d.page })),
+        error: null,
+      },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.sections).toHaveLength(1);
+    expect(result.sections[0]).toEqual({ page: null, text: original });
+  });
+
+  it("a text source returns kind text and url null;a stray source_url is not exposed", async () => {
     tables.sources = {
       single: { data: { kind: "text", source_url: "https://stray.example/", title: "Notiz" }, error: null },
       many: { data: [], error: null },
