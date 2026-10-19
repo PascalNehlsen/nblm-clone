@@ -18,10 +18,11 @@
 
 ## First release (once)
 
-A fresh project has no schema, so model settings and the demo template cannot exist before the first tag. The first release is therefore run twice:
+A fresh project has no schema, so the model settings cannot be changed before the first tag. The first release is therefore run twice:
 1. Tag and approve. The run applies every migration, then **stops before promote**: the staged smoke test fails while anonymous sign-ins are off (it requires them on), or the canary fails while model features are off (the migration seeds them off). Nothing gets the domain.
-2. In this order, on the production project: register the demo template (runbook `demo-template.md`), turn **model features on** (runbook `kill-switch.md`, "Turn model features on"), turn **anonymous sign-ins on** (the captcha is already enforced).
-3. `gh run rerun <id>` and approve again. The migrations are a no-op now; smoke test, canary, promote and live check run through.
+2. On the production project: turn **model features on** (runbook `kill-switch.md`, "Turn model features on"), then turn **anonymous sign-ins on** (the captcha is already enforced).
+3. `gh run rerun <id>` and approve again. The migrations are a no-op now; smoke test, canary, promote and live check run through. Neither needs the demo template.
+4. Register the demo template on the live app (runbook `demo-template.md`; it needs a notebook created in the app). Until then "Demo starten" answers "Die Demo ist gerade nicht verfügbar.", which is the intended fallback.
 
 ## Release
 
