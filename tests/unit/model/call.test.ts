@@ -32,8 +32,8 @@ const PRICE_TABLE: PriceTable = {
   "test-embed-model": EMBED_PRICE,
 };
 
-const CHAT_CONFIG: ModelConfig = { modelId: "test-chat-model", maxOutputTokens: 512, timeoutMs: 5_000 };
-const EMBED_CONFIG: ModelConfig = { modelId: "test-embed-model", maxOutputTokens: 0, timeoutMs: 5_000 };
+const CHAT_CONFIG: ModelConfig = { modelId: "test-chat-model", maxOutputTokens: 512, timeoutMs: 5_000, temperature: 0.7 };
+const EMBED_CONFIG: ModelConfig = { modelId: "test-embed-model", maxOutputTokens: 0, timeoutMs: 5_000, temperature: 0 };
 
 function configFor(kind: ModelKind): ModelConfig | null {
   return kind === "chat" ? CHAT_CONFIG : EMBED_CONFIG;
@@ -135,7 +135,10 @@ const _typeTestMaxOutputTokens: ModelCallRequest<"chat"> = { ...CHAT_REQUEST, ma
 void _typeTestUserId;
 void _typeTestIsAnonymous;
 void _typeTestModelId;
+// @ts-expect-error ModelCallRequest must not accept a temperature override
+const _typeTestTemperature: ModelCallRequest<"chat"> = { ...CHAT_REQUEST, temperature: 1 };
 void _typeTestMaxOutputTokens;
+void _typeTestTemperature;
 
 describe("createModelCaller: happy paths", () => {
   it("chat: reserves the hand-computed estimate, calls the provider, settles with the real cost", async () => {
@@ -280,7 +283,7 @@ describe("createModelCaller: refusals before any provider call", () => {
   it("no price entry for the configured model -> price_unknown; reserve is not called", async () => {
     const harness = buildHarness({
       provider: async () => ({ output: { text: "x" }, usage: { inputTokens: 1, outputTokens: 1 } }),
-      config: () => ({ modelId: "unpriced-model", maxOutputTokens: 100, timeoutMs: 1000 }),
+      config: () => ({ modelId: "unpriced-model", maxOutputTokens: 100, timeoutMs: 1000, temperature: 0.2 }),
     });
     const result = await harness.callModel(CHAT_REQUEST);
     expect(result).toEqual({ ok: false, category: "price_unknown", usageId: null });
@@ -290,7 +293,7 @@ describe("createModelCaller: refusals before any provider call", () => {
   it.each(["__proto__", "constructor"])("model id %s never resolves a price -> price_unknown", async (modelId) => {
     const harness = buildHarness({
       provider: async () => ({ output: { text: "x" }, usage: { inputTokens: 1, outputTokens: 1 } }),
-      config: () => ({ modelId, maxOutputTokens: 100, timeoutMs: 1000 }),
+      config: () => ({ modelId, maxOutputTokens: 100, timeoutMs: 1000, temperature: 0.2 }),
     });
     const result = await harness.callModel(CHAT_REQUEST);
     expect(result).toEqual({ ok: false, category: "price_unknown", usageId: null });
@@ -300,7 +303,7 @@ describe("createModelCaller: refusals before any provider call", () => {
   it("a non-finite estimate (e.g. a NaN price) -> price_unknown", async () => {
     const harness = buildHarness({
       provider: async () => ({ output: { text: "x" }, usage: { inputTokens: 1, outputTokens: 1 } }),
-      config: () => ({ modelId: "weird-model", maxOutputTokens: 10, timeoutMs: 1000 }),
+      config: () => ({ modelId: "weird-model", maxOutputTokens: 10, timeoutMs: 1000, temperature: 0.2 }),
       prices: { "weird-model": { inputUsdPerMTok: Number.NaN, outputUsdPerMTok: 0 } },
     });
     const result = await harness.callModel(CHAT_REQUEST);
@@ -310,7 +313,7 @@ describe("createModelCaller: refusals before any provider call", () => {
   it("a zero estimate (e.g. a free price) -> price_unknown", async () => {
     const harness = buildHarness({
       provider: async () => ({ output: { text: "x" }, usage: { inputTokens: 1, outputTokens: 1 } }),
-      config: () => ({ modelId: "free-model", maxOutputTokens: 0, timeoutMs: 1000 }),
+      config: () => ({ modelId: "free-model", maxOutputTokens: 0, timeoutMs: 1000, temperature: 0 }),
       prices: { "free-model": { inputUsdPerMTok: 0, outputUsdPerMTok: 0 } },
     });
     const result = await harness.callModel(CHAT_REQUEST);
@@ -813,6 +816,122 @@ describe("createModelCaller: reserve callCount", () => {
     await harness.callModel(CHAT_REQUEST);
 
     expect(harness.reserve).toHaveBeenCalledWith(expect.objectContaining({ kind: "chat", callCount: 1 }));
+  });
+});
+
+// D2 chat (plan approved by Pascal). See .git/D2-API-SPEC.md "Model layer": the engine
+// passes the provider the temperature from config and a delta forwarder that is a no-op
+// once the timeout fired or the call ended; it never logs deltas and never lets the
+// request set model, max tokens or temperature.
+describe("createModelCaller: streaming deltas and temperature (D2)", () => {
+  const OK_USAGE: ProviderUsage = { inputTokens: 5, outputTokens: 2 };
+
+  it("passes temperature from config to the provider", async () => {
+    const harness = buildHarness<"chat">({
+      provider: async () => ({ output: { text: "x" }, usage: OK_USAGE }),
+    });
+    await harness.callModel(CHAT_REQUEST);
+    const providerArg = harness.provider.mock.calls[0]?.[0] as ProviderRequest<"chat">;
+    expect(providerArg.temperature).toBe(0.7);
+  });
+
+  it("the request cannot override model, max tokens or temperature (extra fields are ignored)", async () => {
+    const harness = buildHarness<"chat">({
+      provider: async () => ({ output: { text: "x" }, usage: OK_USAGE }),
+    });
+    const polluted = {
+      ...CHAT_REQUEST,
+      modelId: "injected-model",
+      maxOutputTokens: 99_999,
+      temperature: 2,
+    } as ModelCallRequest<"chat">;
+    await harness.callModel(polluted);
+    const providerArg = harness.provider.mock.calls[0]?.[0] as ProviderRequest<"chat">;
+    expect(providerArg.modelId).toBe("test-chat-model");
+    expect(providerArg.maxOutputTokens).toBe(512);
+    expect(providerArg.temperature).toBe(0.7);
+  });
+
+  it("forwards onDelta to the provider and the provider's deltas reach the caller in order", async () => {
+    const onDelta = vi.fn();
+    const harness = buildHarness<"chat">({
+      provider: async (req: ProviderRequest<"chat">) => {
+        expect(typeof req.onDelta).toBe("function");
+        req.onDelta?.("Hel");
+        req.onDelta?.("lo");
+        return { output: { text: "Hello" }, usage: OK_USAGE };
+      },
+    });
+    const result = await harness.callModel({ ...CHAT_REQUEST, onDelta });
+    expect(result.ok).toBe(true);
+    expect(onDelta.mock.calls).toEqual([["Hel"], ["lo"]]);
+  });
+
+  it("a provider that emits deltas without any caller onDelta does not throw", async () => {
+    const harness = buildHarness<"chat">({
+      provider: async (req: ProviderRequest<"chat">) => {
+        req.onDelta?.("x");
+        return { output: { text: "x" }, usage: OK_USAGE };
+      },
+    });
+    const result = await harness.callModel(CHAT_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it("no delta reaches the caller after the timeout fired", async () => {
+    vi.useFakeTimers();
+    const onDelta = vi.fn();
+    let providerOnDelta: ((text: string) => void) | undefined;
+    const harness = buildHarness<"chat">({
+      provider: async (req: ProviderRequest<"chat">) => {
+        providerOnDelta = req.onDelta;
+        req.onDelta?.("before");
+        return new Promise<never>(() => {});
+      },
+      nowValues: [1000, 6000],
+    });
+
+    const resultPromise = harness.callModel({ ...CHAT_REQUEST, onDelta });
+    await vi.advanceTimersByTimeAsync(CHAT_CONFIG.timeoutMs);
+    const result = await resultPromise;
+    expect(result).toEqual({ ok: false, category: "provider_timeout", usageId: "usage-1" });
+    expect(onDelta.mock.calls).toEqual([["before"]]);
+
+    providerOnDelta?.("after-timeout");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onDelta.mock.calls).toEqual([["before"]]);
+  });
+
+  it("no delta reaches the caller after the call ended", async () => {
+    const onDelta = vi.fn();
+    let providerOnDelta: ((text: string) => void) | undefined;
+    const harness = buildHarness<"chat">({
+      provider: async (req: ProviderRequest<"chat">) => {
+        providerOnDelta = req.onDelta;
+        return { output: { text: "x" }, usage: OK_USAGE };
+      },
+    });
+    await harness.callModel({ ...CHAT_REQUEST, onDelta });
+    providerOnDelta?.("late");
+    expect(onDelta).not.toHaveBeenCalled();
+  });
+
+  it("deltas never appear in log events, settle args or console output", async () => {
+    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(() => {}),
+    );
+    const log = vi.fn();
+    const harness = buildHarness<"chat">({
+      provider: async (req: ProviderRequest<"chat">) => {
+        req.onDelta?.("sentinel-delta-4e8b");
+        return { output: { text: "ok" }, usage: OK_USAGE };
+      },
+      log,
+    });
+    await harness.callModel({ ...CHAT_REQUEST, onDelta: () => {} });
+    expect(JSON.stringify(log.mock.calls)).not.toContain("sentinel-delta-4e8b");
+    expect(JSON.stringify(harness.settle.mock.calls)).not.toContain("sentinel-delta-4e8b");
+    for (const spy of consoleSpies) expect(JSON.stringify(spy.mock.calls)).not.toContain("sentinel-delta-4e8b");
   });
 });
 

@@ -48,7 +48,7 @@ vi.mock("@/lib/server/model/prices", async () => {
 
 import { createModelCaller } from "@/lib/server/model/call";
 
-const TEST_CONFIG: ModelConfig = { modelId: "test-chat-model", maxOutputTokens: 100, timeoutMs: 1000 };
+const TEST_CONFIG: ModelConfig = { modelId: "test-chat-model", maxOutputTokens: 100, timeoutMs: 1000, temperature: 0.2 };
 
 function fakeProvider(): ProviderCall<"chat"> {
   return vi.fn(async () => ({
@@ -135,7 +135,7 @@ describe("createModelCaller (production): extra fields passed via a cast are ign
       provider,
       usage: { reserve: fakeReserve, settle: fakeSettle },
       getVerifiedUser: async () => ({ id: "injected-user", isAnonymous: false }),
-      config: () => ({ modelId: "injected-model", maxOutputTokens: 1, timeoutMs: 1 }),
+      config: () => ({ modelId: "injected-model", maxOutputTokens: 1, timeoutMs: 1, temperature: 0.2 }),
       prices: { "injected-model": { inputUsdPerMTok: 1, outputUsdPerMTok: 1 } },
     } as unknown as { provider: ProviderCall<"chat"> };
 

@@ -30,6 +30,8 @@ export interface ModelCallRequest<K extends ModelKind> {
   // Writes the message for this output and returns its id, so settle links the usage row
   // to the message the server just wrote (ADR 0006). Used by chat in PR D.
   linkMessage?: (output: OutputFor<K>) => Promise<string | null>;
+  // Streamed chat text, forwarded only while the call is running (never after a timeout).
+  onDelta?: (text: string) => void;
 }
 
 export type ModelCallResult<K extends ModelKind> =
@@ -109,7 +111,7 @@ export function buildModelCaller<K extends ModelKind>(
 
   return async (req) => {
     // Only these fields are read; anything else on the request is ignored.
-    const { kind, notebookId, input, linkMessage } = req;
+    const { kind, notebookId, input, linkMessage, onDelta } = req;
     let modelId: string | null = null;
 
     const refuse = (category: ModelErrorCategory): ModelCallResult<K> => {
@@ -215,6 +217,15 @@ export function buildModelCaller<K extends ModelKind>(
       }, cfg.timeoutMs);
     });
 
+    // Deltas pass only while this call is active; a late provider cannot write after the
+    // timeout or after the result was returned. Deltas are never logged.
+    let streaming = true;
+    const forwardDelta = onDelta
+      ? (text: string) => {
+          if (streaming && !controller.signal.aborted) onDelta(text);
+        }
+      : undefined;
+
     const start = now();
     let response: Awaited<ReturnType<ProviderCall<K>>>;
     try {
@@ -222,7 +233,14 @@ export function buildModelCaller<K extends ModelKind>(
       // arrives after the timeout is dropped and never settled.
       response = await Promise.race([
         Promise.resolve().then(() =>
-          provider({ modelId: cfg.modelId, maxOutputTokens: cfg.maxOutputTokens, input, signal: controller.signal }),
+          provider({
+            modelId: cfg.modelId,
+            maxOutputTokens: cfg.maxOutputTokens,
+            temperature: cfg.temperature,
+            input,
+            signal: controller.signal,
+            ...(forwardDelta ? { onDelta: forwardDelta } : {}),
+          }),
         ),
         timeout,
       ]);
@@ -238,6 +256,7 @@ export function buildModelCaller<K extends ModelKind>(
       );
     } finally {
       clearTimeout(timer);
+      streaming = false;
     }
     const latencyMs = Math.max(0, Math.round(now() - start));
 

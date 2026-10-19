@@ -45,6 +45,7 @@ function makeRequest(texts: string[], signal?: AbortSignal): ProviderRequest<"em
   return {
     modelId: MODEL_ID,
     maxOutputTokens: 0,
+    temperature: 0,
     input: { texts },
     signal: signal ?? new AbortController().signal,
   };

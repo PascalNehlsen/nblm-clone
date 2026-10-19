@@ -544,6 +544,56 @@ describe("C3 retrieval: lib/rag/ modules are server-only and never imported by c
   });
 });
 
+// D2 chat (plan approved by Pascal, 2026-10-19; .git/D2-API-SPEC.md): the prompt, citation
+// and stream-filter modules and everything in lib/server/chat/ are server-only. The route
+// stays a thin wrapper.
+describe("D2 chat: RAG and chat-turn modules exist and are marked server-only", () => {
+  const d2Files = [
+    "lib/rag/prompt.ts",
+    "lib/rag/citations.ts",
+    "lib/rag/stream-filter.ts",
+    "lib/server/chat/turn.ts",
+    "lib/server/chat/store.ts",
+    "lib/server/chat/http.ts",
+    "lib/server/model/chat.ts",
+  ].map((relative) => path.join(webDir, relative));
+
+  it("all seven files exist", () => {
+    for (const file of d2Files) {
+      expect(fs.existsSync(file), `${path.relative(webDir, file)} is missing`).toBe(true);
+    }
+  });
+
+  it("all seven begin with `import \"server-only\"` as their first line", () => {
+    for (const file of d2Files) {
+      const firstLine = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n")[0]?.trim() : undefined;
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+
+  it("every file in lib/server/chat/ begins with `import \"server-only\"`", () => {
+    const files = collectSourceFiles(path.join(webDir, "lib/server/chat"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const firstLine = fs.readFileSync(file, "utf8").split("\n")[0]?.trim();
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+
+  it("the chat route exists, sets maxDuration = 180 and delegates to handleChatRequest", () => {
+    const route = path.join(webDir, "app/(app)/notebooks/[id]/chat/route.ts");
+    expect(fs.existsSync(route), "chat route.ts is missing").toBe(true);
+    const content = fs.existsSync(route) ? fs.readFileSync(route, "utf8") : "";
+    // Spec value change: 60 became 180 (embedding 120 s + chat 30 s).
+    expect(content).toContain("export const maxDuration = 180");
+    expect(content).toContain("handleChatRequest");
+  });
+});
+
 describe("no \"use client\" file imports a server-only module", () => {
   const forbiddenImportTargets = ["lib/supabase/server", "lib/supabase/proxy", "lib/server/"];
 

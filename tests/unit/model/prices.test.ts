@@ -23,9 +23,30 @@ const pricesFile = path.join(repoRoot, "apps/web/lib/server/model/prices.ts");
 
 const TITAN_EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0";
 
-describe("PRICES: the one verified entry (Titan Text Embeddings V2)", () => {
-  it("has exactly the Titan embedding model id as its only key", () => {
-    expect(Object.keys(PRICES)).toEqual([TITAN_EMBED_MODEL_ID]);
+const NOVA_CHAT_MODEL_ID = "eu.amazon.nova-2-lite-v1:0";
+
+describe("PRICES: the verified entries (Titan Text Embeddings V2, Nova 2 Lite)", () => {
+  it("has exactly the Titan embedding id and the Nova 2 Lite EU profile id as keys", () => {
+    expect([...Object.keys(PRICES)].sort()).toEqual([TITAN_EMBED_MODEL_ID, NOVA_CHAT_MODEL_ID].sort());
+  });
+
+  // D2: regional eu.* profile price, eu-central-1 (not the global profile).
+  it("prices Nova 2 Lite at 0.429 USD / MTok input, 3.597 USD / MTok output", () => {
+    expect(PRICES[NOVA_CHAT_MODEL_ID]).toEqual({ inputUsdPerMTok: 0.429, outputUsdPerMTok: 3.597 });
+  });
+
+  it("documents the Nova source: the AWS price list SKUs, usagetypes and retrieval date appear in prices.ts", () => {
+    const content = fs.readFileSync(pricesFile, "utf8");
+    expect(content).toContain("UVBGYBB2KWGTDYAS");
+    expect(content).toContain("2Q2KMPM6X7WRKD55");
+    expect(content).toContain("EUC1-Nova2.0Lite-input-tokens");
+    expect(content).toContain("EUC1-Nova2.0Lite-output-tokens");
+    expect(content).toContain("2026-10-19");
+  });
+
+  it("costUsd for 1,000,000 input and 1,000,000 output Nova tokens is exactly 4.026 USD", () => {
+    const entry = PRICES[NOVA_CHAT_MODEL_ID] as ModelPrice;
+    expect(costUsd(entry, { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBe(4.026);
   });
 
   it("prices it at 0.2 USD / MTok input, 0 USD / MTok output", () => {
