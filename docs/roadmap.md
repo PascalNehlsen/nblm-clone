@@ -18,7 +18,7 @@ The goal is a small app built the way a production platform should be: a demo th
 - RLS matrix (owner, editor, viewer, stranger, anon) with real JWTs, catalog checks for bypasses, a repro kit
 - OpenTofu stacks: bootstrap (encrypted state, OIDC), AWS (organization with guardrails), Cloudflare (DNS), GitHub (rulesets, environments)
 - Plan in the PR, apply in CI with approval, plan guard against destroys, nightly drift check
-- Environments: preview (per PR), develop (`main`), production (release tag with approval)
+- Environments: preview (per PR, no AWS access), develop (`main`, the second Vercel project `nblm-web-develop`), production (release tag with approval, Vercel project `nblm-web`); ADR 0009
 - Release: migrations first, staged production deploy, smoke test and canary question against the exact artifact, promote, automatic rollback
 - Eval harness: facts, abstention and prompt-injection cases; security cases are a hard gate
 - CI: secret scan, workflow audit, dependency review, IaC and image scan, CodeQL, Codex review

@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VercelProjectProduction",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "${oidc_provider_arn}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${issuer}:aud": "${audience}",
+          "${issuer}:sub": "${subject}"
+        }
+      }
+    }
+  ]
+}

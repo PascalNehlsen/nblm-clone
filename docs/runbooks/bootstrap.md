@@ -2,6 +2,7 @@
 
 - Last rehearsed: never; steps 1 to 3 applied for real on 2026-10-17, step 4 on 2026-10-18
 - Who: the human, from the host, never from the sandbox or CI ([ADR 0002](../adr/0002-bootstrap-applied-locally.md))
+- Only bootstrap is applied here. Every other stack is planned and applied in CI with the roles from step 3: [infra-apply.md](infra-apply.md) ([ADR 0009](../adr/0009-infra-pipeline-and-develop-project.md))
 - Profiles (sso-session `nblm`): `nblm-workload` (workload admin), `nblm-mgmt-admin` (management admin), `nblm-mgmt-ro` (management read-only, for checks)
 
 ## Every step
