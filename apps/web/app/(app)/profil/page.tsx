@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CopyIdButton } from "./copy-id-button";
 import { createClient } from "@/lib/supabase/server";
@@ -13,14 +14,18 @@ export default async function ProfilePage() {
   if (!data.user) redirect("/login");
 
   return (
-    <main>
+    <main id="inhalt" className="page">
+      <Link href="/" className="back">
+        <span aria-hidden="true">←</span> Alle Notizbücher
+      </Link>
+      <p className="eyebrow">Konto</p>
       <h1>Profil</h1>
       {data.user.is_anonymous ? (
         <p>Im Demo-Zugang kannst du keine Notizbücher geteilt bekommen.</p>
       ) : (
         <>
           <p>Deine Nutzer-ID zum Teilen:</p>
-          <p>
+          <p className="id-card">
             <code data-testid="nutzer-id">{data.user.id}</code> <CopyIdButton value={data.user.id} />
           </p>
         </>

@@ -199,6 +199,123 @@ test.describe("asking a question", () => {
   });
 });
 
+const COMPOSER_HINT = "Enter sendet, Shift+Enter für einen Zeilenumbruch.";
+const CHIP_NAME = `[1] ${SOURCE_TITLE}, S. ${PAGE_NUMBER}`;
+
+test.describe("composer keyboard", () => {
+  test("Enter submits the question", async ({ browser }) => {
+    test.setTimeout(60_000);
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-enter");
+    await seedChunk(owner, id);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const textarea = section.getByLabel("Frage");
+    await textarea.fill("Wie viele Personen arbeiten dort?");
+    await textarea.press("Enter");
+
+    await expect(
+      section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" }),
+    ).toHaveCount(1);
+    await expect(section.getByRole("alert").filter({ hasText: "Modell nicht konfiguriert" })).toBeVisible({
+      timeout: 45_000,
+    });
+
+    await context.close();
+  });
+
+  test("Shift+Enter inserts a newline and does not submit", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-shift-enter");
+    await seedChunk(owner, id);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const textarea = section.getByLabel("Frage");
+    await textarea.click();
+    await textarea.pressSequentially("Zeile eins");
+    await textarea.press("Shift+Enter");
+    await textarea.pressSequentially("Zeile zwei");
+
+    expect(await textarea.inputValue()).toContain("\n");
+    await expect(section.getByRole("listitem")).toHaveCount(0);
+    await expect(section.getByRole("alert")).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("the textarea is described by a visible keyboard hint", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-hint");
+    await seedChunk(owner, id);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    await expect(section.getByText(COMPOSER_HINT)).toBeVisible();
+    await expect(section.getByLabel("Frage")).toHaveAccessibleDescription(COMPOSER_HINT);
+
+    await context.close();
+  });
+});
+
+test.describe("answer markers", () => {
+  test("a bare [2] without a citation stays plain text, only [1] becomes a ref", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-bare-ref");
+    const chunkId = await seedChunk(owner, id);
+    await seedPair(owner, id, "Frage?", "Antwort eins [1] und zwei [2].", [{ chunkId, quote: QUOTE }]);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const answer = section.getByRole("listitem").filter({ hasText: "Antwort eins" });
+    await expect(answer).toHaveCount(1);
+    await expect(answer).toContainText("[2]");
+    await expect(answer.locator(".ref")).toHaveCount(1);
+
+    await context.close();
+  });
+});
+
+test.describe("passage focus", () => {
+  test("opening moves focus to the passage, Escape closes it and returns focus to the chip", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-focus-esc");
+    const chunkId = await seedChunk(owner, id);
+    await seedPair(owner, id, "Wann?", "1999 [1].", [{ chunkId, quote: QUOTE }]);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const chip = section.getByRole("button", { name: CHIP_NAME });
+    await chip.click();
+
+    const region = page.getByRole("region", { name: "Fundstelle [1]" });
+    await expect(region).toBeVisible();
+    await expect(region).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("region", { name: "Fundstelle [1]" })).toHaveCount(0);
+    await expect(chip).toBeFocused();
+
+    await context.close();
+  });
+
+  test("Schließen closes the passage and returns focus to the chip", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-focus-close");
+    const chunkId = await seedChunk(owner, id);
+    await seedPair(owner, id, "Wann?", "1999 [1].", [{ chunkId, quote: QUOTE }]);
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const chip = section.getByRole("button", { name: CHIP_NAME });
+    await chip.click();
+
+    const region = page.getByRole("region", { name: "Fundstelle [1]" });
+    await expect(region).toBeFocused();
+    await region.getByRole("button", { name: "Schließen" }).click();
+    await expect(page.getByRole("region", { name: "Fundstelle [1]" })).toHaveCount(0);
+    await expect(chip).toBeFocused();
+
+    await context.close();
+  });
+});
+
 test.describe("a viewer", () => {
   test("sees the question form but not the owner's history", async ({ browser }) => {
     const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-viewer-owner");

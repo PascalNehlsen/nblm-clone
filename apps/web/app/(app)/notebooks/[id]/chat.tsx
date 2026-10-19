@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useReducer, useState, type FormEvent } from "react";
+import { useEffect, useReducer, useRef, useState, type FormEvent } from "react";
 import type { HistoryCitation, HistoryEntry } from "@/lib/chat/history";
 import { readChatEvents } from "@/lib/chat/ndjson";
 import { highlight } from "@/lib/chat/passage";
 import { CLIENT_DEADLINE_MS, INITIAL_TURN, turnReducer } from "@/lib/chat/turn-state";
+import { hueFor, splitRefs } from "@/lib/ui/source-hue";
 
 // The chat of one notebook (block D3). Everything the model wrote is rendered as plain React
 // text: no markdown, no HTML, no links, no images (AGENTS.md, ADR 0011). Streamed text is a
@@ -16,6 +17,10 @@ const MAX_QUESTION_CHARS = 2000;
 function citationLabel(c: HistoryCitation): string {
   if (!c.chunk) return `[${c.ordinal}] Quelle gelöscht`;
   return c.chunk.page === null ? `[${c.ordinal}] ${c.chunk.sourceTitle}` : `[${c.ordinal}] ${c.chunk.sourceTitle}, S. ${c.chunk.page}`;
+}
+
+function citationHue(c: HistoryCitation, hues: Record<string, number>): number | undefined {
+  return c.chunk ? hueFor(hues, c.chunk.sourceTitle) : undefined;
 }
 
 function Passage({ citation }: { citation: HistoryCitation }) {
@@ -36,32 +41,69 @@ function Passage({ citation }: { citation: HistoryCitation }) {
   );
 }
 
-function Entry({ entry }: { entry: HistoryEntry }) {
-  const [open, setOpen] = useState<number | null>(null);
-  const opened = entry.citations.find((c) => c.ordinal === open) ?? null;
+// The answer as text with its [n] markers shown in the color of the cited source.
+function AnswerText({ entry, hues }: { entry: HistoryEntry; hues: Record<string, number> }) {
   return (
-    <li>
-      <p>
-        <strong>{entry.role === "user" ? "Frage" : "Antwort"}:</strong> {entry.content}
-      </p>
+    <>
+      {splitRefs(entry.content).map((part, i) => {
+        if ("text" in part) return part.text;
+        const c = entry.citations.find((x) => x.ordinal === part.ref);
+        // A bare [n] without a checked citation stays plain text, so it never looks verified.
+        if (!c) return `[${part.ref}]`;
+        return (
+          <span key={i} className="ref" data-hue={citationHue(c, hues)}>
+            <span className="sr-only">[</span>
+            {part.ref}
+            <span className="sr-only">]</span>
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+type Opened = { entryId: string; ordinal: number } | null;
+
+function Entry({
+  entry,
+  hues,
+  opened,
+  onToggle,
+}: {
+  entry: HistoryEntry;
+  hues: Record<string, number>;
+  opened: Opened;
+  onToggle: (ordinal: number, chip: HTMLButtonElement) => void;
+}) {
+  const isUser = entry.role === "user";
+  return (
+    <li className={isUser ? "turn q" : "turn a"}>
+      <span className="who">{isUser ? "Frage" : "Antwort"}</span>
+      {isUser ? (
+        <p>{entry.content}</p>
+      ) : (
+        <p className="body">
+          <AnswerText entry={entry} hues={hues} />
+        </p>
+      )}
       {entry.citations.length > 0 ? (
-        <div>
+        <div className="chips">
           {entry.citations.map((c) => (
             <button
               key={c.ordinal}
               type="button"
-              aria-expanded={open === c.ordinal}
-              aria-controls={`passage-${entry.id}`}
-              onClick={() => setOpen(open === c.ordinal ? null : c.ordinal)}
+              className="chip"
+              data-hue={citationHue(c, hues)}
+              aria-expanded={opened?.entryId === entry.id && opened.ordinal === c.ordinal}
+              aria-controls="fundstelle"
+              onClick={(e) => onToggle(c.ordinal, e.currentTarget)}
             >
-              {citationLabel(c)}
+              <span className="num" aria-hidden="true">
+                {c.ordinal}
+              </span>
+              <span className="sr-only">[{c.ordinal}]</span> {citationLabel(c).replace(/^\[\d+\] /, "")}
             </button>
           ))}
-        </div>
-      ) : null}
-      {opened ? (
-        <div id={`passage-${entry.id}`} role="region" aria-label={`Fundstelle [${opened.ordinal}]`}>
-          <Passage citation={opened} />
         </div>
       ) : null}
     </li>
@@ -72,12 +114,46 @@ export function Chat({
   notebookId,
   initialHistory,
   historyFailed = false,
+  hues = {},
+  hasReadySources = true,
+  canAddSources = true,
 }: {
   notebookId: string;
   initialHistory: HistoryEntry[];
   historyFailed?: boolean;
+  hues?: Record<string, number>;
+  hasReadySources?: boolean;
+  canAddSources?: boolean;
 }) {
   const router = useRouter();
+  const [opened, setOpened] = useState<Opened>(null);
+  const openedEntry = opened ? initialHistory.find((e) => e.id === opened.entryId) : undefined;
+  const openedCitation = openedEntry?.citations.find((c) => c.ordinal === opened?.ordinal) ?? null;
+
+  // Focus follows the passage: into it when it opens, back to the chip that opened it when
+  // it closes (on small screens it covers part of the page as a sheet).
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const region = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (opened) region.current?.focus();
+  }, [opened]);
+  function closePassage() {
+    setOpened(null);
+    opener.current?.focus();
+  }
+  useEffect(() => {
+    if (!opened) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Back to the chip only if focus was in the passage; never pull it out of the composer.
+        const inPassage = region.current?.contains(document.activeElement) ?? false;
+        setOpened(null);
+        if (inPassage) opener.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [opened]);
   const [question, setQuestion] = useState("");
   const [turn, dispatch] = useReducer(turnReducer, INITIAL_TURN);
 
@@ -124,50 +200,122 @@ export function Chat({
   }
 
   return (
-    <section>
-      <h2>Fragen</h2>
-      {historyFailed ? <p role="status">Der Verlauf konnte nicht geladen werden.</p> : null}
-      <ol>
-        {initialHistory.map((entry) => (
-          <Entry key={entry.id} entry={entry} />
-        ))}
-        {turn.asked ? (
-          <li>
-            <p>
-              <strong>Frage:</strong> {turn.asked}
-            </p>
-          </li>
-        ) : null}
-      </ol>
-      {/* Always mounted, so screen readers announce the first streamed text too. */}
-      <div aria-live="polite">
-        {turn.pending ? (
-          <p>
-            <strong>Antwort:</strong> {turn.pending}
+    <section className="chat">
+      <div className="conversation">
+        <h2>Fragen</h2>
+        {historyFailed ? <p role="status">Der Verlauf konnte nicht geladen werden.</p> : null}
+        {!hasReadySources && initialHistory.length === 0 ? (
+          <p className="guide">
+            {canAddSources
+              ? "Noch keine Quellen bereit. Füge links eine Quelle hinzu; sobald sie bereit ist, kannst du hier Fragen stellen."
+              : "Noch keine Quellen bereit. Sobald jemand mit Bearbeitungsrechten eine Quelle hinzufügt, kannst du hier Fragen stellen."}
           </p>
         ) : null}
-        {turn.checked ? (
-          <p>
-            <strong>Antwort:</strong> {turn.checked.content}
+        {hasReadySources && initialHistory.length === 0 && !turn.asked ? (
+          <p className="guide">
+            Stell eine Frage zu deinen Quellen. Jede Antwort zeigt ihre Belege; ein Klick darauf öffnet die
+            Fundstelle im Original.
           </p>
         ) : null}
+        <ol className="thread">
+          {initialHistory.map((entry) => (
+            <Entry
+              key={entry.id}
+              entry={entry}
+              hues={hues}
+              opened={opened}
+              onToggle={(ordinal, chip) => {
+                opener.current = chip;
+                setOpened(opened?.entryId === entry.id && opened.ordinal === ordinal ? null : { entryId: entry.id, ordinal });
+              }}
+            />
+          ))}
+          {turn.asked ? (
+            <li className="turn q">
+              <span className="who">Frage</span>
+              <p>{turn.asked}</p>
+            </li>
+          ) : null}
+        </ol>
+        {/* Always mounted, so screen readers announce the first streamed text too. */}
+        <div aria-live="polite">
+          {turn.busy && !turn.pending && !turn.checked ? (
+            <div className="thinking">
+              <span className="sr-only">Antwort wird geschrieben</span>
+              <i />
+              <i />
+              <i />
+            </div>
+          ) : null}
+          {turn.pending ? (
+            <div className="turn a pending">
+              <span className="who">Antwort</span>
+              <p className="body">{turn.pending}</p>
+            </div>
+          ) : null}
+          {turn.checked ? (
+            <div className="turn a">
+              <span className="who">Antwort</span>
+              <p className="body">{turn.checked.content}</p>
+            </div>
+          ) : null}
+        </div>
+        <form onSubmit={onSubmit} className="composer">
+          <label>
+            <span className="sr-label sr-only">Frage</span>
+            <textarea
+              name="question"
+              aria-describedby="frage-hinweis"
+              required
+              maxLength={MAX_QUESTION_CHARS}
+              value={question}
+              placeholder="Frag deine Quellen …"
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
+            />
+          </label>
+          <button type="submit" className="primary" disabled={turn.busy}>
+            {turn.busy ? <span className="spin" aria-hidden="true" /> : null}
+            Fragen
+          </button>
+        </form>
+        <p id="frage-hinweis" className="hint-line">
+          Enter sendet, Shift+Enter für einen Zeilenumbruch.
+        </p>
+        {turn.alert ? <p role="alert">{turn.alert}</p> : null}
       </div>
-      <form onSubmit={onSubmit}>
-        <label>
-          Frage{" "}
-          <textarea
-            name="question"
-            required
-            maxLength={MAX_QUESTION_CHARS}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-        </label>{" "}
-        <button type="submit" disabled={turn.busy}>
-          Fragen
-        </button>
-      </form>
-      {turn.alert ? <p role="alert">{turn.alert}</p> : null}
+      <aside className="margin" aria-label="Fundstellen">
+        {opened && openedCitation ? (
+          <div
+            id="fundstelle"
+            ref={region}
+            tabIndex={-1}
+            role="region"
+            aria-label={`Fundstelle [${openedCitation.ordinal}]`}
+            className="passage"
+            data-hue={citationHue(openedCitation, hues)}
+            key={`${opened.entryId}-${opened.ordinal}`}
+          >
+            <div className="head">
+              <p className="src">{citationLabel(openedCitation)}</p>
+              <button type="button" className="quiet close" onClick={closePassage}>
+                Schließen
+              </button>
+            </div>
+            <Passage citation={openedCitation} />
+          </div>
+        ) : (
+          <p className="hint" id="fundstelle">
+            Klick auf einen Beleg unter einer Antwort, dann erscheint hier die Fundstelle im Original, farbig
+            markiert.
+          </p>
+        )}
+      </aside>
     </section>
   );
 }

@@ -1,5 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import Link from "next/link";
+import { Logo } from "@/components/logo";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,12 +9,24 @@ export const metadata: Metadata = {
   description: "Quellen hochladen, Fragen stellen, Antworten mit belegten Zitaten erhalten.",
 };
 
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f7f3ea" },
+    { media: "(prefers-color-scheme: dark)", color: "#15130f" },
+  ],
+};
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
       <body>
-        <header>
-          <strong>nblm-clone</strong>
+        <a className="skip" href="#inhalt">
+          Zum Inhalt springen
+        </a>
+        <header className="topbar">
+          <Link href="/" className="brand">
+            <Logo /> nblm <small>Lesesaal</small>
+          </Link>
         </header>
         {children}
       </body>

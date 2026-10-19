@@ -92,7 +92,7 @@ export function DemoButton({ siteKey }: { siteKey: string | null }) {
   }
 
   return (
-    <div>
+    <div className="demo">
       <button type="button" onClick={onClick} disabled={busy}>
         Demo starten (ohne Anmeldung)
       </button>
