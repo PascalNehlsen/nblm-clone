@@ -6,7 +6,7 @@
 
 ## Risk class
 
-- [ ] **high**: touches `supabase/`, `infra/`, auth, prompts or retrieval, `.github/workflows/`, `.claude/`
+- [ ] **high**: touches `supabase/`, `infra/`, `.github/`, `.claude/`, `scripts/`, gate tests (`tests/rls/`, `tests/ci/`), prompts or retrieval, `apps/web/lib/server/`, auth, a rule file or security config (full list in AGENTS.md; the `Risk class` notice and summary of the `risk class` job show the computed class)
 - [ ] **normal**
 
 High risk: link the approved plan and confirm the tests were red before the implementation.
