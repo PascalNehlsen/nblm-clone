@@ -53,15 +53,25 @@ The sandbox signs commits with its own SSH key "nblm sandbox agent" (`SHA256:sJX
 ## Flow per change
 
 ```text
-high risk:   planner -> human approves -> test-author (red) -> builder (green)
-             -> reviewer -> PR -> CI + Codex + eval -> human merges
-normal:      builder -> PR -> CI + Codex -> human merges
+high risk:   planner -> plan approved (host Claude session, or human for escalations)
+             -> test-author (red) -> builder (green)
+             -> reviewer (mandatory for supabase/, auth, .github/workflows/, infra/, .claude/;
+                optional for lib/rag/, prompts/) -> PR -> CI + Codex (once, final head) + eval
+             -> human merges
+normal:      builder -> PR -> CI + Codex (once, final head) -> human merges
 dependabot:  bot PR (version bumps only) -> human reads changelog + diff -> CI
              (+ reviewer for majors and gate workflows) -> human merges
 release:     tag -> production approval (human) -> migrate -> staged deploy -> canary -> promote
 ```
 
 Risk class **high** means the change touches `supabase/`, `infra/`, auth, prompts or retrieval, `.github/workflows/` or `.claude/`.
+
+Since 2026-10-18 (approved by Pascal) the loop is shorter, inside the same gates:
+
+- **Plan approval.** The host Claude session may approve a planner plan that stays inside the existing rules. It escalates to the human for new secrets or credentials, ADR changes, allowlist or egress changes, cost limits, gate changes (rulesets, environments, required checks, `.claude/`, `release.yml`, `infra/github/`) and anything irreversible. This is an instruction, not an enforced limit, and a Claude approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
+- **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Optional for `lib/rag/` and `prompts/`, where Codex and the eval remain the gates.
+- **Codex review.** Once per PR, on the final head. A rerun only follows code changes; docs or gate-log commits do not trigger one.
+- **PR size.** One PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. "Small" means one concern, not one file.
 
 Dependabot PRs touch `.github/workflows/` and stay labelled high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.
 
