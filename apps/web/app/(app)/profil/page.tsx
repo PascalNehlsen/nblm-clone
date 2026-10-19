@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CopyIdButton } from "./copy-id-button";
 import { createClient } from "@/lib/supabase/server";
@@ -14,6 +15,9 @@ export default async function ProfilePage() {
 
   return (
     <main id="inhalt" className="page">
+      <Link href="/" className="back">
+        ← Alle Notizbücher
+      </Link>
       <p className="eyebrow">Konto</p>
       <h1>Profil</h1>
       {data.user.is_anonymous ? (

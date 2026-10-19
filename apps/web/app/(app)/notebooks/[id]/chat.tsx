@@ -115,11 +115,13 @@ export function Chat({
   initialHistory,
   historyFailed = false,
   hues = {},
+  hasReadySources = true,
 }: {
   notebookId: string;
   initialHistory: HistoryEntry[];
   historyFailed?: boolean;
   hues?: Record<string, number>;
+  hasReadySources?: boolean;
 }) {
   const router = useRouter();
   const [opened, setOpened] = useState<Opened>(null);
@@ -141,8 +143,10 @@ export function Chat({
     if (!opened) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Back to the chip only if focus was in the passage; never pull it out of the composer.
+        const inPassage = region.current?.contains(document.activeElement) ?? false;
         setOpened(null);
-        opener.current?.focus();
+        if (inPassage) opener.current?.focus();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -198,6 +202,18 @@ export function Chat({
       <div className="conversation">
         <h2>Fragen</h2>
         {historyFailed ? <p role="status">Der Verlauf konnte nicht geladen werden.</p> : null}
+        {!hasReadySources && initialHistory.length === 0 ? (
+          <p className="guide">
+            Noch keine Quellen bereit. Füge links eine Quelle hinzu; sobald sie bereit ist, kannst du hier Fragen
+            stellen.
+          </p>
+        ) : null}
+        {hasReadySources && initialHistory.length === 0 && !turn.asked ? (
+          <p className="guide">
+            Stell eine Frage zu deinen Quellen. Jede Antwort zeigt ihre Belege; ein Klick darauf öffnet die
+            Fundstelle im Original.
+          </p>
+        ) : null}
         <ol className="thread">
           {initialHistory.map((entry) => (
             <Entry

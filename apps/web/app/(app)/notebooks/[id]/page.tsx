@@ -91,7 +91,13 @@ export default async function NotebookPage({
           </form>
         ) : null}
       </aside>
-      <Chat notebookId={notebook.id} initialHistory={history} historyFailed={historyFailed} hues={hues} />
+      <Chat
+        notebookId={notebook.id}
+        initialHistory={history}
+        historyFailed={historyFailed}
+        hues={hues}
+        hasReadySources={sources.some((source) => source.status === "ready")}
+      />
     </main>
   );
 }

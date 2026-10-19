@@ -33,7 +33,7 @@ export default async function Home({
       {params.fehler ? <p role="alert">{notebookErrorMessage(params.fehler)}</p> : null}
       {params.geloescht ? <p role="status">Das Notizbuch wurde gelöscht.</p> : null}
       {notebooks.length === 0 ? (
-        <p className="empty">Noch keine Notizbücher. Bald kannst du hier Quellen hochladen und Fragen dazu stellen.</p>
+        <p className="empty">Noch keine Notizbücher. Leg unten dein erstes an, füg Quellen hinzu und stell Fragen dazu.</p>
       ) : (
         <ul className="shelf">
           {notebooks.map((notebook) => (
