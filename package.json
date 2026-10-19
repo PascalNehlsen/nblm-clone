@@ -18,12 +18,15 @@
     "db:stop": "supabase stop"
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1146.0",
+    "@aws-sdk/credential-provider-web-identity": "3.972.78",
     "@playwright/test": "1.63.0",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@vercel/functions": "3.9.11",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.8",
     "react": "19.3.0",

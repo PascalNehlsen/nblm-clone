@@ -12,7 +12,7 @@ export interface ModelConfig {
 // fails closed with model_not_configured instead of breaking the build.
 const SETTINGS: Record<ModelKind, { env: string; maxOutputTokens: number; timeoutMs: number }> = {
   chat: { env: "BEDROCK_CHAT_MODEL_ID", maxOutputTokens: 1024, timeoutMs: 30_000 },
-  embedding: { env: "BEDROCK_EMBEDDING_MODEL_ID", maxOutputTokens: 0, timeoutMs: 15_000 },
+  embedding: { env: "BEDROCK_EMBEDDING_MODEL_ID", maxOutputTokens: 0, timeoutMs: 120_000 },
 };
 
 export function modelConfig(kind: ModelKind): ModelConfig | null {
