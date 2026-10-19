@@ -940,7 +940,11 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
-.reader .text { white-space: pre-line; }
+.reader .meta { display: flex; align-items: center; gap: var(--s3); border: none; padding: 0; margin: 0 0 var(--s3); font-family: var(--font-ui); font-size: 0.85rem; }
+.reader .meta a { font-weight: 600; }
+.reader .text { display: grid; gap: var(--s3); padding-left: var(--s3); border-left: 3px solid var(--src); }
+.reader .text p { white-space: pre-line; margin: 0; padding: 0; border: none; font-family: var(--font-read); line-height: 1.7; }
+.reader .page { display: block; font-family: var(--font-ui); font-size: 0.75rem; font-weight: 700; color: var(--ink-3); margin-bottom: var(--s1); }
 @media (max-width: 1279px) { .reader .text { max-height: 60vh; overflow-y: auto; } }
 .reader .more, .reader .loading { border: none; padding: 0; color: var(--ink-3); font-size: 0.85rem; }
 .margin .hint { display: flex; gap: var(--s2); align-items: start; margin: 0; }

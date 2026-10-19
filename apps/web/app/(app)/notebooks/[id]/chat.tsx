@@ -16,6 +16,8 @@ import { readSourceAction } from "./sources/actions";
 
 const MAX_QUESTION_CHARS = 2000;
 
+const KIND_LABELS = { text: "Text", pdf: "PDF", url: "Webseite" } as const;
+
 function citationLabel(c: HistoryCitation): string {
   if (!c.chunk) return `[${c.ordinal}] Quelle gelöscht`;
   return c.chunk.page === null ? `[${c.ordinal}] ${c.chunk.sourceTitle}` : `[${c.ordinal}] ${c.chunk.sourceTitle}, S. ${c.chunk.page}`;
@@ -147,16 +149,28 @@ export function Chat({
   }, [margin.item]);
 
   // A whole source is loaded on demand with the user's own session (RLS decides).
-  const [source, setSource] = useState<{ id: string; text: string | null; truncated: boolean; failed: boolean } | null>(null);
+  type Loaded = {
+    id: string;
+    kind: "text" | "pdf" | "url";
+    url: string | null;
+    sections: { page: number | null; text: string }[];
+    truncated: boolean;
+  };
+  const [source, setSource] = useState<{ id: string; loaded: Loaded | null; failed: boolean } | null>(null);
   useEffect(() => {
     if (!reading) return;
     let live = true;
     readSourceAction({ notebookId, sourceId: reading.sourceId })
       .then((r) => {
         if (!live) return;
-        setSource(r.ok ? { id: reading.sourceId, text: r.text, truncated: r.truncated, failed: false } : { id: reading.sourceId, text: null, truncated: false, failed: true });
+setSource(
+          r.ok
+            ? { id: reading.sourceId, loaded: { id: reading.sourceId, kind: r.kind, url: r.url, sections: r.sections, truncated: r.truncated }, failed: false }
+            : { id: reading.sourceId, loaded: null, failed: true },
+        );
+
       })
-      .catch(() => live && setSource({ id: reading.sourceId, text: null, truncated: false, failed: true }));
+      .catch(() => live && setSource({ id: reading.sourceId, loaded: null, failed: true }));
     return () => {
       live = false;
     };
@@ -351,10 +365,27 @@ export function Chat({
                 Schließen
               </button>
             </div>
-            {source?.id === reading.sourceId && source.text !== null ? (
+            {source?.id === reading.sourceId && source.loaded ? (
               <>
-                <p className="text">{source.text}</p>
-                {source.truncated ? <p className="more">Der Text ist länger; hier stehen die ersten Abschnitte.</p> : null}
+                <p className="meta">
+                  <span className="pill">{KIND_LABELS[source.loaded.kind]}</span>
+                  {source.loaded.url && /^https?:\/\//i.test(source.loaded.url) ? (
+                    <a href={source.loaded.url} target="_blank" rel="noopener noreferrer">
+                      Original öffnen
+                    </a>
+                  ) : null}
+                </p>
+                <div className="text">
+                  {source.loaded.sections.map((section, i) => (
+                    <p key={i}>
+                      {source.loaded!.kind === "pdf" && section.page !== null ? (
+                        <span className="page">Seite {section.page}</span>
+                      ) : null}
+                      {section.text}
+                    </p>
+                  ))}
+                </div>
+                {source.loaded.truncated ? <p className="more">Der Text ist länger; hier stehen die ersten Abschnitte.</p> : null}
               </>
             ) : source?.id === reading.sourceId && source.failed ? (
               <p role="status">Die Quelle konnte nicht geladen werden.</p>

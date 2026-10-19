@@ -120,6 +120,17 @@ export async function addTextSourceAction(formData: FormData): Promise<void> {
 
 // A web page as source (C2). The URL rules run here before any insert, so a refused URL
 // leaves no row; the fetch itself runs through the SSRF guard during ingestion.
+function isYouTubeHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host.endsWith(".youtube.com") ||
+    host === "youtube-nocookie.com" ||
+    host.endsWith(".youtube-nocookie.com")
+  );
+}
+
 export async function addUrlSourceAction(formData: FormData): Promise<void> {
   const { supabase, user } = await signedInClient();
   const notebookId = formData.get("notebookId");
@@ -130,6 +141,9 @@ export async function addUrlSourceAction(formData: FormData): Promise<void> {
   const raw = formData.get("url");
   const parsed = parseImportUrl(typeof raw === "string" ? raw.trim() : "");
   if (!parsed.ok) redirect(notebookPath(notebookId, "url"));
+  // A YouTube page has almost no text in its HTML (video and captions load by script), so it
+  // would only produce an empty or broken source. Refused before any fetch.
+  if (isYouTubeHost(parsed.url.hostname)) redirect(notebookPath(notebookId, "youtube"));
 
   let source: { id: string; storagePath: string };
   try {
@@ -174,7 +188,18 @@ const READ_CHUNK_LIMIT = 400;
 export async function readSourceAction(input: {
   notebookId: unknown;
   sourceId: unknown;
-}): Promise<{ ok: true; title: string; text: string; truncated: boolean } | { ok: false }> {
+}): Promise<
+  | {
+      ok: true;
+      title: string;
+      kind: "text" | "pdf" | "url";
+      url: string | null;
+      text: string;
+      sections: { page: number | null; text: string }[];
+      truncated: boolean;
+    }
+  | { ok: false }
+> {
   const { notebookId, sourceId } = input;
   if (!isUuid(notebookId) || !isUuid(sourceId)) return { ok: false };
   const supabase = await createClient();
@@ -182,23 +207,26 @@ export async function readSourceAction(input: {
   if (!auth.user) return { ok: false };
   const { data: source } = await supabase
     .from("sources")
-    .select("title")
+    .select("title, kind, source_url")
     .eq("notebook_id", notebookId)
     .eq("id", sourceId)
     .maybeSingle();
   if (!source) return { ok: false };
   const { data: chunks, error } = await supabase
     .from("chunks")
-    .select("content")
+    .select("content, page, ordinal")
     .eq("notebook_id", notebookId)
     .eq("source_id", sourceId)
     .order("ordinal", { ascending: true })
     .limit(READ_CHUNK_LIMIT + 1);
   if (error || !chunks) return { ok: false };
   const truncated = chunks.length > READ_CHUNK_LIMIT;
-  const text = chunks
-    .slice(0, READ_CHUNK_LIMIT)
-    .map((c) => String(c.content))
-    .join("\n\n");
-  return { ok: true, title: String(source.title), text, truncated };
+  const sections = chunks.slice(0, READ_CHUNK_LIMIT).map((c) => ({
+    page: typeof c.page === "number" ? c.page : null,
+    text: String(c.content),
+  }));
+  const kind = source.kind === "pdf" || source.kind === "url" ? source.kind : "text";
+  const url = kind === "url" && typeof source.source_url === "string" ? source.source_url : null;
+  const text = sections.map((s) => s.text).join("\n\n");
+  return { ok: true, title: String(source.title), kind, url, text, sections, truncated };
 }

@@ -57,6 +57,14 @@ describe("notebookErrorMessage: removal confirmation codes", () => {
   });
 });
 
+describe("notebookErrorMessage: youtube", () => {
+  it('"youtube" explains that videos are not supported yet and what to do instead', () => {
+    expect(notebookErrorMessage("youtube")).toBe(
+      "YouTube-Videos werden noch nicht unterstützt. Füge stattdessen den Text oder ein Transkript ein.",
+    );
+  });
+});
+
 describe("notebookErrorMessage: unknown input gets one generic message, never an echo", () => {
   const unknownCodes: unknown[] = [
     "99999",

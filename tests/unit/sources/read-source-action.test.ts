@@ -97,6 +97,86 @@ describe("readSourceAction", () => {
     expect(result.text.indexOf(FIRST)).toBeLessThan(result.text.indexOf(SECOND));
   });
 
+  it("selects kind, source_url and title from sources and content, page and ordinal from chunks", async () => {
+    await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    const columns = (table: string) =>
+      String(calls.find((c) => c.table === table && c.method === "select")?.args[0] ?? "")
+        .split(",")
+        .map((s) => s.trim());
+    expect(columns("sources")).toEqual(expect.arrayContaining(["kind", "source_url", "title"]));
+    expect(columns("chunks")).toEqual(expect.arrayContaining(["content", "page", "ordinal"]));
+  });
+
+  it("a url source returns kind url, its source_url and one section per chunk (page null)", async () => {
+    tables.sources = {
+      single: {
+        data: { kind: "url", source_url: "https://example.com/artikel", title: "Seite" },
+        error: null,
+      },
+      many: { data: [], error: null },
+    };
+    tables.chunks = {
+      single: { data: null, error: null },
+      many: {
+        data: [
+          { ordinal: 0, content: FIRST, page: null },
+          { ordinal: 1, content: SECOND, page: null },
+        ],
+        error: null,
+      },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result).toMatchObject({ kind: "url", url: "https://example.com/artikel" });
+    expect(result.sections).toEqual([
+      { page: null, text: FIRST },
+      { page: null, text: SECOND },
+    ]);
+  });
+
+  it("a pdf source returns kind pdf, url null and the page of each chunk", async () => {
+    tables.sources = {
+      single: { data: { kind: "pdf", source_url: null, title: "Bericht.pdf" }, error: null },
+      many: { data: [], error: null },
+    };
+    tables.chunks = {
+      single: { data: null, error: null },
+      many: {
+        data: [
+          { ordinal: 0, content: FIRST, page: 1 },
+          { ordinal: 1, content: SECOND, page: 2 },
+        ],
+        error: null,
+      },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result).toMatchObject({ kind: "pdf", url: null });
+    expect(result.sections).toEqual([
+      { page: 1, text: FIRST },
+      { page: 2, text: SECOND },
+    ]);
+    expect(result.text.indexOf(FIRST)).toBeLessThan(result.text.indexOf(SECOND));
+  });
+
+  it("a text source returns kind text and url null; a stray source_url is not exposed", async () => {
+    tables.sources = {
+      single: { data: { kind: "text", source_url: "https://stray.example/", title: "Notiz" }, error: null },
+      many: { data: [], error: null },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result).toMatchObject({ kind: "text", url: null });
+    expect(result.sections).toHaveLength(2);
+  });
+
   it.each([
     ["a non-uuid sourceId", { notebookId: NOTEBOOK_ID, sourceId: "not-a-uuid" }],
     ["a non-uuid notebookId", { notebookId: "not-a-uuid", sourceId: SOURCE_ID }],

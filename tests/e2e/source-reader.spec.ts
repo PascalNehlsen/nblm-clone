@@ -17,6 +17,8 @@ import {
 const READY_TITLE = "Lesebericht.txt";
 const PENDING_TITLE = "Wartende Quelle.txt";
 const OTHER_TITLE = "Zweite Quelle.txt";
+const URL_TITLE = "Webartikel";
+const PDF_TITLE = "Bericht.pdf";
 const CHUNK_ONE = "Erster Abschnitt: Die Fiktiva GmbH sitzt in Bonn.";
 const CHUNK_TWO = "Zweiter Abschnitt: Sie beschäftigt vierzig Personen.";
 const OTHER_CHUNK = "Anderer Inhalt: Der Hafen liegt in Kiel.";
@@ -104,6 +106,83 @@ test.describe("source reader", () => {
     const text = await region.innerText();
     expect(text.indexOf(CHUNK_ONE)).toBeGreaterThanOrEqual(0);
     expect(text.indexOf(CHUNK_ONE)).toBeLessThan(text.indexOf(CHUNK_TWO));
+
+    await context.close();
+  });
+
+  test("a text source shows the kind label Text and no original link", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-kind-text");
+    await seedReadySource(owner, id, READY_TITLE, [CHUNK_ONE, CHUNK_TWO]);
+    await page.goto(url);
+
+    await titleButton(page, READY_TITLE).click();
+    const region = sourceRegion(page, READY_TITLE);
+    await expect(region).toBeVisible();
+    await expect(region.getByText("Text", { exact: true })).toBeVisible();
+    await expect(region.getByRole("link", { name: "Original öffnen" })).toHaveCount(0);
+    await expect(region.getByText(/^Seite \d+$/)).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("a web page source shows the label Webseite and a safe link to the original", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-kind-url");
+    const sourceUrl = "https://example.com/artikel";
+    // Same insert as createUrlSource in lib/sources/sources.ts (the helper has no source_url option).
+    const { data, error } = await owner.client
+      .from("sources")
+      .insert({ notebook_id: id, kind: "url", title: URL_TITLE, source_url: sourceUrl })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`insert url source: ${error?.message}`);
+    const sourceId = data.id as string;
+    await insertChunks(owner, id, sourceId, [
+      { ordinal: 0, content: CHUNK_ONE, embedding: nearbyVector(1, 0.1) },
+      { ordinal: 1, content: CHUNK_TWO, embedding: nearbyVector(2, 0.1) },
+    ]);
+    await setSourceStatus(owner, sourceId, "ready");
+    await page.goto(url);
+
+    await titleButton(page, URL_TITLE).click();
+    const region = sourceRegion(page, URL_TITLE);
+    await expect(region).toBeVisible();
+    await expect(region.getByText("Webseite", { exact: true })).toBeVisible();
+    const link = region.getByRole("link", { name: "Original öffnen" });
+    await expect(link).toHaveAttribute("href", sourceUrl);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", /noopener/);
+    await expect(link).toHaveAttribute("rel", /noreferrer/);
+    await expect(region.getByText(/^Seite \d+$/)).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("a pdf source shows the label PDF and a Seite marker before each page's text", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-kind-pdf");
+    const sourceId = await createSource(owner, id, { kind: "pdf", title: PDF_TITLE });
+    await insertChunks(owner, id, sourceId, [
+      { ordinal: 1, content: CHUNK_TWO, embedding: nearbyVector(2, 0.1), page: 2 },
+      { ordinal: 0, content: CHUNK_ONE, embedding: nearbyVector(1, 0.1), page: 1 },
+    ]);
+    await setSourceStatus(owner, sourceId, "ready");
+    await page.goto(url);
+
+    await titleButton(page, PDF_TITLE).click();
+    const region = sourceRegion(page, PDF_TITLE);
+    await expect(region).toBeVisible();
+    await expect(region.getByText("PDF", { exact: true })).toBeVisible();
+    await expect(region.getByRole("link", { name: "Original öffnen" })).toHaveCount(0);
+    await expect(region.getByText("Seite 1", { exact: true })).toBeVisible();
+    await expect(region.getByText("Seite 2", { exact: true })).toBeVisible();
+    const text = await region.innerText();
+    const order = [
+      text.indexOf("Seite 1"),
+      text.indexOf(CHUNK_ONE),
+      text.indexOf("Seite 2"),
+      text.indexOf(CHUNK_TWO),
+    ];
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
 
     await context.close();
   });
