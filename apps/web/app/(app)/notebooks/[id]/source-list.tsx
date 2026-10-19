@@ -2,6 +2,7 @@ import { deleteSourceAction, retrySourceAction } from "./sources/actions";
 import { sourceErrorLabel } from "@/lib/ops/categories";
 import type { SourceStatus, SourceSummary } from "@/lib/sources/sources";
 import { hueFor } from "@/lib/ui/source-hue";
+import { ConfirmAction } from "@/components/confirm-action";
 
 const STATUS_LABELS: Record<Exclude<SourceStatus, "failed">, string> = {
   pending: "Wartet",
@@ -45,13 +46,16 @@ export function SourceList({
                   <button type="submit">Erneut versuchen</button>
                 </form>
               ) : null}
-              <form action={deleteSourceAction}>
-                <input type="hidden" name="notebookId" value={notebookId} />
-                <input type="hidden" name="sourceId" value={source.id} />
-                <button type="submit" className="quiet">
-                  Entfernen
-                </button>
-              </form>
+              <ConfirmAction
+                action={deleteSourceAction}
+                fields={{ notebookId, sourceId: source.id }}
+                trigger="Entfernen"
+                title="Quelle entfernen?"
+                confirmLabel="Endgültig entfernen"
+              >
+                „{source.title}“ wird mit ihren Abschnitten aus dem Notizbuch entfernt. Antworten, die sie
+                zitieren, zeigen danach „Quelle gelöscht“.
+              </ConfirmAction>
             </span>
           ) : null}
         </li>

@@ -744,8 +744,10 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   border-left: 2px solid var(--rule);
 }
 .ref {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   min-width: 1.35em;
   height: 1.35em;
   padding: 0 0.3em;
@@ -770,14 +772,19 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   color: var(--ink);
 }
 .chip .num {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   width: 22px;
   height: 22px;
   border-radius: 50%;
   background: var(--src, var(--ink-3));
   color: var(--card);
   font-size: 0.72rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
 }
 .chip[aria-expanded="true"] { border-color: var(--src); box-shadow: 0 0 0 2px var(--src-soft); }
 .chip { transition: transform var(--t) var(--ease), box-shadow var(--t) var(--ease), border-color var(--t) var(--ease); }
@@ -814,7 +821,10 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 }
 .composer label { gap: 0; }
 .composer textarea {
-  min-height: 52px;
+  /* One line of text sits in the vertical middle; more lines grow the field. */
+  min-height: 0;
+  padding: 12px 6px;
+  line-height: 1.5;
   max-height: 12rem;
   border: none;
   background: transparent;

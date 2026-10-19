@@ -43,6 +43,20 @@ describe("notebookErrorMessage: known codes", () => {
   });
 });
 
+describe("notebookErrorMessage: removal confirmation codes", () => {
+  it('"bestaetigung_quelle" asks to confirm removing the source', () => {
+    expect(notebookErrorMessage("bestaetigung_quelle")).toBe(
+      "Bitte bestätige, dass du die Quelle entfernen möchtest.",
+    );
+  });
+
+  it('"bestaetigung_mitglied" asks to confirm removing the member', () => {
+    expect(notebookErrorMessage("bestaetigung_mitglied")).toBe(
+      "Bitte bestätige, dass du das Mitglied entfernen möchtest.",
+    );
+  });
+});
+
 describe("notebookErrorMessage: unknown input gets one generic message, never an echo", () => {
   const unknownCodes: unknown[] = [
     "99999",

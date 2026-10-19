@@ -463,17 +463,29 @@ describe("ingestSourceAction", () => {
 describe("deleteSourceAction", () => {
   it("calls deleteSource with the user's client and the sourceId, then redirects without fehler", async () => {
     await expect(
-      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+      deleteSourceAction(
+        textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID, confirm: "on" }),
+      ),
     ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}` });
 
     expect(deleteSourceMock).toHaveBeenCalledWith(expect.anything(), VALID_SOURCE_ID);
+  });
+
+  it("without the confirm field it redirects with fehler=bestaetigung_quelle and never calls deleteSource", async () => {
+    await expect(
+      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+    ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=bestaetigung_quelle` });
+
+    expect(deleteSourceMock).not.toHaveBeenCalled();
   });
 
   it("a nicht_erlaubt error redirects with fehler=nicht_erlaubt", async () => {
     deleteSourceMock.mockRejectedValue(Object.assign(new Error("not allowed"), { code: "nicht_erlaubt" }));
 
     await expect(
-      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+      deleteSourceAction(
+        textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID, confirm: "on" }),
+      ),
     ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=nicht_erlaubt` });
   });
 });

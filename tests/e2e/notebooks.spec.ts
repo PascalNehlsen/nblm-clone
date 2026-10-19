@@ -323,7 +323,7 @@ test.describe("deleting a notebook requires explicit confirmation", () => {
     await page.getByRole("button", { name: "Notizbuch löschen" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
-    const hidden = page.locator("dialog form input[type=hidden][value=on]");
+    const hidden = page.getByRole("dialog").locator("form input[type=hidden][value=on]");
     await expect(hidden).toHaveCount(1);
     await hidden.evaluate((input) => input.remove());
 
@@ -355,6 +355,97 @@ test.describe("deleting a notebook requires explicit confirmation", () => {
 
     const response = await page.goto(notebookUrl);
     expect(response?.status()).toBe(404);
+  });
+});
+
+test.describe("removing a member requires explicit confirmation", () => {
+  async function shareWithViewer(browser: Browser, label: string) {
+    const ownerContext = await browser.newContext();
+    const viewerContext = await browser.newContext();
+    await ownerContext.addCookies(await seedLocalSession(`${label}-owner`));
+    await viewerContext.addCookies(await seedLocalSession(`${label}-viewer`));
+    const ownerPage = await ownerContext.newPage();
+    const viewerPage = await viewerContext.newPage();
+
+    await viewerPage.goto("/profil");
+    const viewerId = extractUuid(await viewerPage.getByTestId("nutzer-id").innerText());
+
+    const notebookUrl = await createNotebookViaUi(ownerPage, `Mitglied-Test ${Date.now()}`);
+    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
+    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
+    await ownerPage.getByRole("button", { name: "Teilen" }).click();
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    const memberRow = ownerPage.getByRole("listitem").filter({ hasText: viewerId.slice(0, 8) });
+    return { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow };
+  }
+
+  test("Entfernen only opens a dialog, and Abbrechen keeps the member", async ({ browser }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerId, memberRow } = await shareWithViewer(
+      browser,
+      "notebooks-e2e-member-cancel",
+    );
+    await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = ownerPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Mitglied entfernen?" })).toBeVisible();
+    await expect(dialog).toHaveAccessibleDescription(/Zugriff/);
+    await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Endgültig entfernen" })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
+
+    await ownerPage.reload();
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
+
+  test("the server rejects a member removal whose hidden confirmation input was removed (fehler=bestaetigung_mitglied), the member stays", async ({
+    browser,
+  }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerId, notebookUrl, memberRow } = await shareWithViewer(
+      browser,
+      "notebooks-e2e-member-guard",
+    );
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = ownerPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const hidden = ownerPage.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
+    await ownerPage.waitForURL(
+      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
+    );
+    expect(new URL(ownerPage.url()).searchParams.get("fehler")).toBe("bestaetigung_mitglied");
+
+    await ownerPage.goto(notebookUrl);
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
+
+  test("Endgültig entfernen removes the member, who then loses access", async ({ browser }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow } =
+      await shareWithViewer(browser, "notebooks-e2e-member-remove");
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    await ownerPage.getByRole("dialog").getByRole("button", { name: "Endgültig entfernen" }).click();
+
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toHaveCount(0);
+    const response = await viewerPage.goto(notebookUrl);
+    expect(response?.status()).toBe(404);
+
+    await ownerContext.close();
+    await viewerContext.close();
   });
 });
 

@@ -265,6 +265,7 @@ export function Chat({
             <span className="sr-label sr-only">Frage</span>
             <textarea
               name="question"
+              rows={1}
               aria-describedby="frage-hinweis"
               required
               maxLength={MAX_QUESTION_CHARS}

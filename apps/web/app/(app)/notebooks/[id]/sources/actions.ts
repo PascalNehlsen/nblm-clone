@@ -147,6 +147,8 @@ export async function deleteSourceAction(formData: FormData): Promise<void> {
   const sourceId = formData.get("sourceId");
   if (!isUuid(notebookId)) redirect("/");
   if (!isUuid(sourceId)) redirect(notebookPath(notebookId, "eingabe"));
+  // Irreversible: the form requires an explicit confirmation (the dialog in source-list.tsx).
+  if (formData.get("confirm") !== "on") redirect(notebookPath(notebookId, "bestaetigung_quelle"));
   try {
     await deleteSource(supabase, sourceId);
   } catch (error) {

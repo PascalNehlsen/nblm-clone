@@ -384,7 +384,87 @@ test.describe("an editor removes a source", () => {
     await expect(row).toBeVisible();
 
     await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
     await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+
+  test("Entfernen only opens a confirmation dialog, and Abbrechen keeps the source", async ({ browser }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-remove-cancel",
+      "Bearbeiter",
+    );
+    const title = `Bleibt ${Date.now()}`;
+
+    const form = await textForm(memberPage);
+    await form.getByLabel("Titel").fill(title);
+    await form.getByLabel("Text", { exact: true }).fill("Bleibt nach Abbrechen erhalten.");
+    await form.getByRole("button", { name: "Text hinzufügen" }).click();
+
+    const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
+    await expect(row).toBeVisible();
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+
+    await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Quelle entfernen?" })).toBeVisible();
+    await expect(dialog).toHaveAccessibleDescription(new RegExp(title));
+    await expect(dialog).toHaveAccessibleDescription(/wird mit ihren Abschnitten aus dem Notizbuch entfernt/);
+    await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Endgültig entfernen" })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
+
+    await memberPage.reload();
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+
+  test("the server rejects a removal whose hidden confirmation input was removed (fehler=bestaetigung_quelle), the source stays", async ({
+    browser,
+  }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-remove-guard",
+      "Bearbeiter",
+    );
+    const title = `Geschuetzt ${Date.now()}`;
+
+    const form = await textForm(memberPage);
+    await form.getByLabel("Titel").fill(title);
+    await form.getByLabel("Text", { exact: true }).fill("Darf ohne Bestätigung nicht verschwinden.");
+    await form.getByRole("button", { name: "Text hinzufügen" }).click();
+
+    const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
+    await expect(row).toBeVisible();
+    const notebookPath = new URL(memberPage.url()).pathname;
+
+    await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // Located by type and value, not by name: production builds prefix server-action field names.
+    const hidden = memberPage.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
+    await memberPage.waitForURL(
+      (url) => url.pathname === notebookPath && url.searchParams.has("fehler"),
+    );
+    expect(new URL(memberPage.url()).searchParams.get("fehler")).toBe("bestaetigung_quelle");
+
+    await memberPage.goto(notebookPath);
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
 
     await ownerContext.close();
     await memberContext.close();
