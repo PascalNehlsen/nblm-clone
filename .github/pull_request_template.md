@@ -11,6 +11,10 @@
 
 High risk: link the approved plan and confirm the tests were red before the implementation.
 
+Plan approved by: <!-- host session (within its limits in AGENTS.md) or human -->
+
+Codex reviewed head: <!-- SHA -->
+
 ## Evidence
 
 <!-- Paste real output, not "tests pass". -->
