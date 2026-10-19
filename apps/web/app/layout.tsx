@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
         <header className="topbar">
           <Link href="/" className="brand">
-            <Logo /> nblm <small>Lesesaal</small>
+            <Logo /> nblm
           </Link>
         </header>
         {children}

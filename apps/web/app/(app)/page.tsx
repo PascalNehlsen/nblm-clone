@@ -23,7 +23,6 @@ export default async function Home({
     <main id="inhalt" className="page">
       <div className="shelf-head">
         <div>
-          <p className="eyebrow">Lesesaal</p>
           <h1>Deine Notizbücher</h1>
         </div>
         <Link href="/profil" className="button quiet">

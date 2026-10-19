@@ -56,7 +56,7 @@ export default async function NotebookPage({
     <main id="inhalt" className="notebook">
       <div className="nb-head">
         <Link href="/" className="back">
-          <span aria-hidden="true">←</span> Alle Notizbücher
+          Alle Notizbücher
         </Link>
         <h1>{notebook.title}</h1>
         {sources.length > 0 ? (

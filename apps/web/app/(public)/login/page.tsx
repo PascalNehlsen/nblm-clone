@@ -26,9 +26,8 @@ export default async function LoginPage({
         ))}
       </div>
       <div className="login-hero">
-        <p className="eyebrow">Dein Lesesaal für Quellen</p>
         <p className="statement">
-          Frag deine Quellen. <em className="prism">Jede Antwort zeigt, wo es steht.</em>
+          Frag deine Quellen. <em>Jede Antwort zeigt, wo es steht.</em>
         </p>
         <p className="lede">
           Lade Texte, PDFs oder Webseiten hoch und stell Fragen dazu. Jede Aussage trägt die Farbe ihrer

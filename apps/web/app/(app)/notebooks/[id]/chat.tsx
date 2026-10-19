@@ -78,7 +78,7 @@ function Entry({
   const isUser = entry.role === "user";
   return (
     <li className={isUser ? "turn q" : "turn a"}>
-      <span className="who">{isUser ? "Frage" : "Antwort"}</span>
+      <span className="who sr-only">{isUser ? "Frage" : "Antwort"}</span>
       {isUser ? (
         <p>{entry.content}</p>
       ) : (
@@ -232,7 +232,7 @@ export function Chat({
           ))}
           {turn.asked ? (
             <li className="turn q">
-              <span className="who">Frage</span>
+              <span className="who sr-only">Frage</span>
               <p>{turn.asked}</p>
             </li>
           ) : null}
@@ -249,13 +249,13 @@ export function Chat({
           ) : null}
           {turn.pending ? (
             <div className="turn a pending">
-              <span className="who">Antwort</span>
+              <span className="who sr-only">Antwort</span>
               <p className="body">{turn.pending}</p>
             </div>
           ) : null}
           {turn.checked ? (
             <div className="turn a arrived">
-              <span className="who">Antwort</span>
+              <span className="who sr-only">Antwort</span>
               <p className="body">{turn.checked.content}</p>
             </div>
           ) : null}

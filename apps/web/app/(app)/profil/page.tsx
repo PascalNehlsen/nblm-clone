@@ -16,9 +16,8 @@ export default async function ProfilePage() {
   return (
     <main id="inhalt" className="page">
       <Link href="/" className="back">
-        <span aria-hidden="true">←</span> Alle Notizbücher
+        Alle Notizbücher
       </Link>
-      <p className="eyebrow">Konto</p>
       <h1>Profil</h1>
       {data.user.is_anonymous ? (
         <p>Im Demo-Zugang kannst du keine Notizbücher geteilt bekommen.</p>
