@@ -15,7 +15,7 @@ Checklist:
 3. **Secrets and config:** no secrets in code, logs, fixtures or CI output; `service_role` only under `lib/server/admin/`.
 4. **Migrations:** one new file per change, no edits to applied migrations, expand-contract for breaking changes, backout noted in the PR.
 5. **CI and supply chain:** actions pinned to a full SHA, `permissions: {}` at the top, `persist-credentials: false`, no `pull_request_target`, new dependencies justified.
-6. **Infra and gates:** no local apply, no change to rulesets, environments, `.claude/` or release workflow without an approved plan, providers pinned, `prevent_destroy` on stateful resources.
+6. **Infra and gates:** no local apply, no change to rulesets, environments, `.claude/` or release workflow without a plan the human approved, providers pinned, `prevent_destroy` on stateful resources.
 7. **Tests:** new behaviour has tests that would fail without the change.
 8. **Scope and docs:** change matches the plan; ADR or runbook updated where needed; known gaps listed.
 

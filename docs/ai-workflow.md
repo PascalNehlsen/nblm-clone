@@ -4,7 +4,7 @@ Claude Code writes most of the code here, and Codex reviews every PR. This page 
 
 ## The idea in one paragraph
 
-Agent rules are written as instructions, and instructions fail ([background](https://pascal-nehlsen.de/blog/agent-gate-it-cannot-open)). So every limit that matters sits outside the agent. The sandbox has no cloud credentials, so the agent cannot deploy or apply. Branch rulesets stop it from merging. The production environment needs a human. Inside those walls, the subagent roles and the permission rules catch the common mistakes early and cheaply.
+Agent rules are written as instructions, and instructions fail ([background](https://pascal-nehlsen.de/blog/agent-gate-it-cannot-open)). So every limit that matters sits outside the agent. The sandbox has no cloud credentials, so the builder cannot deploy or apply. The host session, which approves plans and pushes from the host, is the exception: it runs outside the sandbox with the human's credentials, so for it only the permission rules and the instructions apply (see the table in AGENTS.md). Branch rulesets stop it from merging. The production environment needs a human. Inside those walls, the subagent roles and the permission rules catch the common mistakes early and cheaply.
 
 ## Layers
 
@@ -14,7 +14,7 @@ Agent rules are written as instructions, and instructions fail ([background](htt
 | 2. Permission rules (`.claude/settings.json`) | Deny reading secret files and running apply, deploy, migration push and force push; ask before push and before editing guardrail files | Catch every spelling of a command; Claude Code documents Bash rules as not a security boundary |
 | 3. Subagent roles (`.claude/agents/` + `agent-guard.mjs`) | planner reads only; test-author writes only tests; reviewer reads and runs read-only git | Make a test file harmless when it runs, or stop the main session |
 | 4. Gates outside the agent | Rulesets (PR required, status checks, linear history, no bypass), CODEOWNERS, `production` environment approval, apply and deploy only in CI via OIDC | Judge whether a change is a good idea; that is the human's job |
-| 5. Independent review | Codex reviews every PR in CI (different model, different vendor); restores agent config from the base branch, so a PR cannot weaken its own review | Replace the human merge decision |
+| 5. Independent review | Codex reviews every PR (different model, different vendor). Once the CI job exists it restores agent config from the base branch, so a PR cannot weaken its own review; until then the host session runs it by hand, without that protection | Replace the human merge decision |
 
 The reviewer subagent is the same model family as the builder with a fresh context and fewer tools. It is useful, but it is not independent. The Codex review in CI is the independent one.
 
@@ -68,7 +68,7 @@ Risk class **high** means the change touches `supabase/`, `infra/`, auth, prompt
 
 Since 2026-10-18 (approved by Pascal) the loop is shorter, inside the same gates:
 
-- **Plan approval.** The host session (a separate Claude Code session on the host, outside the sandbox, never the one that implements the plan) may approve a planner plan only if it touches nothing under `.github/` or `infra/`, no scanner config, no rule file, no `security definer` allowlist, no data processor, secret, egress rule or cost limit, does nothing irreversible and has no open questions. The full list is in AGENTS.md. Everything else goes to the human. This is an instruction, not an enforced limit, and a plan approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
+- **Plan approval.** The host session (a separate Claude Code session on the host, outside the sandbox, never the one that implements the plan) may approve a planner plan only if it touches nothing under `infra/`, no rule file (a new ADR is fine), no security control config, no `security definer` allowlist, no data processor, secret, egress rule or cost limit, does nothing irreversible and has no open questions. The full list is in AGENTS.md. Everything else goes to the human. This is an instruction, not an enforced limit, and a plan approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
 - **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Also mandatory for `lib/rag/` and `prompts/` until the Codex review job and the eval run in CI as required checks; only a PR that updates AGENTS.md makes it optional there.
 - **Codex review.** Once per PR, on the final head. A rerun follows any later commit outside `docs/` and `README.md` and any change to a rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, this file, `docs/adr/`, `.claude/`, `.github/`); other docs and the PR body do not trigger one. Until the Codex CI job exists, the host session runs it by hand.
 - **PR size.** One PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. "Small" means one concern, not one file.

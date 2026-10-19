@@ -21,7 +21,8 @@ Instructions in this file are context, not enforcement. What actually holds:
 
 | Limit | Enforced by |
 |---|---|
-| No cloud or deploy credentials reachable by agents | Agents run in a Docker sandbox (`sbx`) with an egress allowlist; apply, deploy and migrations only run in CI via OIDC |
+| No cloud or deploy credentials reachable by the builder and its subagents | They run in a Docker sandbox (`sbx`) with an egress allowlist; apply, deploy and migrations only run in CI via OIDC |
+| Host session (outside the sandbox) | **Not enforced.** It can reach the human's host credentials: the `gh` token with scope `repo` (admin on this repo, so it could change the ruleset) and the AWS SSO profiles, including management admin, while an SSO session is active. Only `.claude/settings.json` (a speed bump) and these instructions bound it. Rows 2 and 3 hold against it only as long as it follows them |
 | Nothing reaches `main` without checks | GitHub rulesets: PR required, required status checks, linear history, no bypass |
 | Nothing reaches production without a human | GitHub Environment `production` with required reviewer |
 | Subagent roles (planner, test-author, reviewer) | Tool lists in `.claude/agents/` + `.claude/hooks/agent-guard.mjs` |
@@ -39,11 +40,13 @@ The main session is the **builder**; it runs in the sandbox. The **host session*
 
 Flow for **high**: planner → plan approved (host session or human, see below) → test-author (red) → builder (green) → reviewer (where mandatory) → PR with evidence → CI incl. Codex review and eval → human merges.
 
-**Plan approval** (high risk): the host session may approve a planner plan only if all of these hold: the plan changes nothing under `.github/` (workflows, CODEOWNERS, PR template, Dependabot) or `infra/`; it changes no scanner config or exception (`.gitleaks.toml`, `scripts/gitleaks.sh`, zizmor flags); it changes no rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`); it adds no `security definer` function and no entry to the pgTAP allowlist (ADR 0001); it adds no data processor (`docs/privacy.md`), secret, credential, allowlist or egress rule; it changes no cost limit; it does nothing irreversible; and it has no open questions. Everything else, and anything the host session is unsure about, goes to the human. This is an instruction-level rule, not enforced: nothing technical stops the session from approving a plan it should have escalated. A plan approval is not a review and not independent; the host session is the same model family as the builder and the planner. The PR records who approved the plan. The human still merges every PR.
+**Rule files** are `AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/privacy.md`, `docs/adr/`, `.claude/` and `.github/`.
+
+**Plan approval** (high risk): the host session may approve a planner plan only if all of these hold: the plan changes nothing under `infra/` and no rule file (adding a new ADR is fine; editing an existing one is not); it changes no security control config (e.g. `.gitleaks.toml`, `scripts/gitleaks.sh`, `.pre-commit-config.yaml`, zizmor flags, `eslint.config.mjs`, `vercel.json`, `supabase/config.toml`); it does not widen `service_role` use and does not remove or weaken an existing RLS-matrix or pgTAP test; it adds no `security definer` function and no entry to the pgTAP allowlist (ADR 0001); it adds no data processor, secret, credential, allowlist or egress rule; it changes no cost limit; it does nothing irreversible; and it has no open questions. Everything else, and anything the host session is unsure about, goes to the human. This is an instruction-level rule, not enforced: nothing technical stops the session from approving a plan it should have escalated. A plan approval is not a review and not independent; the host session is the same model family as the builder and the planner. The PR records who approved the plan. The human still merges every PR.
 
 **Reviewer subagent** (high risk): mandatory for changes under `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. For the other high-risk paths (`lib/rag/`, `prompts/`) it becomes optional only once the Codex review job and the eval run in CI as required checks, and only through a PR that updates this sentence; until then it is mandatory there too.
 
-**Codex review**: runs once per PR, on the final head. Rerun it after any later commit that touches a file outside `docs/` and `README.md`, or a rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`, `.github/`). Other docs and gate-log commits (the PR body) do not trigger a rerun. The PR records the head SHA Codex reviewed.
+**Codex review**: runs once per PR, on the final head. Rerun it after any later commit that touches a file outside `docs/` and `README.md`, or a rule file. Edits to the PR body and commits that change only other docs do not trigger a rerun. The PR records the head SHA Codex reviewed.
 
 Flow for **normal**: builder → PR with evidence → CI incl. Codex review → human merges.
 
