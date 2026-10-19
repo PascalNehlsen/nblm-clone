@@ -55,24 +55,26 @@ describe("createMarkerFilter", () => {
 
   // Changed from "emits held text longer than 2100 characters as is": held text that still
   // starts like a marker ([digits:) is now dropped, never emitted (review follow-up of PR #36).
-  it("drops held marker-like text longer than 2100 characters, then text flows again", () => {
-    const longTail = 'x'.repeat(2200);
-    const { out } = run([`A [1: "${longTail}`, " weiter"]);
-    expect(out.startsWith("A ")).toBe(true);
-    expect(out).not.toContain("[1:");
-    expect(out).not.toContain('"');
-    expect(out.endsWith(" weiter")).toBe(true);
+  // An overlong open quote discards the whole marker through its end (rest of the quote, then
+  // a following `"` and `]` if present), then normal text resumes. Exact outputs below.
+  it("drops an overlong marker with a closing quote and bracket, then text flows again", () => {
+    const text = `A [1: "${"x".repeat(2200)}"]`;
+    expect(run([text, " weiter"]).out).toBe("A  weiter");
+    expect(run([...text.split(""), " weiter"]).out).toBe("A  weiter");
   });
 
-  it("a marker with a 2,500 character quote, split into single chars, never reaches emit", () => {
-    const text = '[1: "' + "a".repeat(2500) + '"] Ende';
+  it.each([2001, 2500])("a marker with a %i character quote is dropped completely, one delta and single chars", (n) => {
+    const text = '[1: "' + "a".repeat(n) + '"] Ende';
+    expect(run([text]).out).toBe(" Ende");
     const { out, emits } = run(text.split(""));
-    for (const e of emits) {
-      expect(e).not.toContain("[1:");
-      expect(e).not.toContain("a".repeat(100));
-    }
-    expect(out).not.toContain("[1:");
-    expect(out.endsWith(" Ende")).toBe(true);
+    expect(out).toBe(" Ende");
+    for (const e of emits) expect(e).not.toContain("a");
+  });
+
+  it("a marker with exactly 2,000 quote characters is a valid-shaped marker and is dropped", () => {
+    const text = '[1: "' + "a".repeat(2000) + '"] Ende';
+    expect(run([text]).out).toBe(" Ende");
+    expect(run(text.split("")).out).toBe(" Ende");
   });
 
   it("a marker with 8 spaces before the quote, split into single chars, is dropped", () => {

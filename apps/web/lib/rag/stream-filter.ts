@@ -26,11 +26,32 @@ function couldBeMarker(held: string): boolean {
 
 export function createMarkerFilter(emit: (text: string) => void): { push(delta: string): void; end(): void } {
   let held = "";
+  // After an overlong open quote: skip the rest of the quote, then one '"' and one ']'.
+  let discard: "quote" | "close-bracket" | null = null;
 
   const feed = (input: string): string => {
     const out: string[] = [];
     let i = 0;
     while (i < input.length) {
+      if (discard !== null) {
+        const c = input[i];
+        if (discard === "quote") {
+          if (c === '"') {
+            discard = "close-bracket";
+            i++;
+          } else if (c === "]") {
+            discard = null;
+            i++;
+          } else {
+            i++;
+          }
+          continue;
+        }
+        // close-bracket: swallow one ']' if it follows the closing quote, else resume as text.
+        if (c === "]") i++;
+        discard = null;
+        continue;
+      }
       if (held === "") {
         // Copy the run of plain text up to the next "[" in one step.
         const next = input.indexOf("[", i);
@@ -48,9 +69,10 @@ export function createMarkerFilter(emit: (text: string) => void): { push(delta: 
       if (FULL_MARKER.test(held)) {
         held = "";
       } else if (QUOTE_TOO_LONG.test(held)) {
-        // An open quote longer than any valid one (2,000 characters): drop what was held, so
-        // no unchecked quote reaches the stream; the text after it flows on normally.
+        // An open quote longer than any valid one (2,000 characters): drop the whole marker
+        // through its end (citations.ts removes it from the saved answer the same way).
         held = "";
+        discard = "quote";
       } else if (!couldBeMarker(held)) {
         // Not a marker: the "[" goes out, the rest is read again (it may hold a new "[").
         out.push("[");
@@ -77,6 +99,7 @@ export function createMarkerFilter(emit: (text: string) => void): { push(delta: 
     end() {
       if (held && !STARTED_MARKER.test(held)) emit(held);
       held = "";
+      discard = null;
     },
   };
 }
