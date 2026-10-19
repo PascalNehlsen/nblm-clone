@@ -81,6 +81,8 @@
   --src-soft: hsl(var(--h) 70% 50% / 0.14);
   --src-mark: hsl(var(--h) 85% 58% / var(--marker));
 }
+/* Yellow needs a darker ink to stay above 4.5:1 on its own tint. */
+[data-hue="4"] { --src: hsl(var(--h) 75% 24%); }
 @media (prefers-color-scheme: dark) {
   [data-hue] {
     --src: hsl(var(--h) 75% 70%);
@@ -580,6 +582,8 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .members li { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; font-size: 0.9rem; }
 .members li > span:first-child { font-family: var(--font-mono); }
 .members li form { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: end; }
+.members li form label { display: flex; align-items: center; gap: var(--s2); }
+.members li form select { width: auto; }
 
 .danger-zone { border-color: color-mix(in srgb, var(--danger) 25%, var(--rule-2)); }
 
@@ -775,6 +779,9 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   -webkit-box-decoration-break: clone;
 }
 .margin .hint { display: flex; gap: var(--s2); align-items: start; margin: 0; }
+.passage:focus { outline: none; }
+.passage:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+.hint-line { font-size: 0.8rem; color: var(--ink-3); margin: calc(-1 * var(--s2)) 0 0; padding-left: var(--s2); }
 
 /* ---------- Profile ---------- */
 

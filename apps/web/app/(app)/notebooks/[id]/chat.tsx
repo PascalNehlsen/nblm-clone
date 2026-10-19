@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useReducer, useState, type FormEvent } from "react";
+import { useEffect, useReducer, useRef, useState, type FormEvent } from "react";
 import type { HistoryCitation, HistoryEntry } from "@/lib/chat/history";
 import { readChatEvents } from "@/lib/chat/ndjson";
 import { highlight } from "@/lib/chat/passage";
@@ -73,7 +73,7 @@ function Entry({
   entry: HistoryEntry;
   hues: Record<string, number>;
   opened: Opened;
-  onToggle: (ordinal: number) => void;
+  onToggle: (ordinal: number, chip: HTMLButtonElement) => void;
 }) {
   const isUser = entry.role === "user";
   return (
@@ -96,7 +96,7 @@ function Entry({
               data-hue={citationHue(c, hues)}
               aria-expanded={opened?.entryId === entry.id && opened.ordinal === c.ordinal}
               aria-controls="fundstelle"
-              onClick={() => onToggle(c.ordinal)}
+              onClick={(e) => onToggle(c.ordinal, e.currentTarget)}
             >
               <span className="num" aria-hidden="true">
                 {c.ordinal}
@@ -126,11 +126,24 @@ export function Chat({
   const openedEntry = opened ? initialHistory.find((e) => e.id === opened.entryId) : undefined;
   const openedCitation = openedEntry?.citations.find((c) => c.ordinal === opened?.ordinal) ?? null;
 
-  // Escape closes the passage (on small screens it covers part of the page as a sheet).
+  // Focus follows the passage: into it when it opens, back to the chip that opened it when
+  // it closes (on small screens it covers part of the page as a sheet).
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const region = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (opened) region.current?.focus();
+  }, [opened]);
+  function closePassage() {
+    setOpened(null);
+    opener.current?.focus();
+  }
   useEffect(() => {
     if (!opened) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpened(null);
+      if (e.key === "Escape") {
+        setOpened(null);
+        opener.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -192,9 +205,10 @@ export function Chat({
               entry={entry}
               hues={hues}
               opened={opened}
-              onToggle={(ordinal) =>
-                setOpened(opened?.entryId === entry.id && opened.ordinal === ordinal ? null : { entryId: entry.id, ordinal })
-              }
+              onToggle={(ordinal, chip) => {
+                opener.current = chip;
+                setOpened(opened?.entryId === entry.id && opened.ordinal === ordinal ? null : { entryId: entry.id, ordinal });
+              }}
             />
           ))}
           {turn.asked ? (
@@ -232,6 +246,7 @@ export function Chat({
             <span className="sr-label sr-only">Frage</span>
             <textarea
               name="question"
+              aria-describedby="frage-hinweis"
               required
               maxLength={MAX_QUESTION_CHARS}
               value={question}
@@ -250,12 +265,17 @@ export function Chat({
             Fragen
           </button>
         </form>
+        <p id="frage-hinweis" className="hint-line">
+          Enter sendet, Shift+Enter für einen Zeilenumbruch.
+        </p>
         {turn.alert ? <p role="alert">{turn.alert}</p> : null}
       </div>
       <aside className="margin" aria-label="Fundstellen">
         {opened && openedCitation ? (
           <div
             id="fundstelle"
+            ref={region}
+            tabIndex={-1}
             role="region"
             aria-label={`Fundstelle [${openedCitation.ordinal}]`}
             className="passage"
@@ -264,7 +284,7 @@ export function Chat({
           >
             <div className="head">
               <p className="src">{citationLabel(openedCitation)}</p>
-              <button type="button" className="quiet close" onClick={() => setOpened(null)}>
+              <button type="button" className="quiet close" onClick={closePassage}>
                 Schließen
               </button>
             </div>

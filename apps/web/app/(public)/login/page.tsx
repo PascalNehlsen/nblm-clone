@@ -25,6 +25,7 @@ export default async function LoginPage({
           Lade Texte, PDFs oder Webseiten hoch und stell Fragen dazu. Jede Aussage trägt die Farbe ihrer
           Quelle, ein Klick zeigt die markierte Fundstelle im Original.
         </p>
+        <p className="sr-only">Beispiel: eine Aussage mit Beleg und der markierten Fundstelle aus der Quelle.</p>
         <div className="specimen" data-hue="0" aria-hidden="true">
           <p>
             Die Hexe lockte die Kinder mit einem Häuschen aus Brot
