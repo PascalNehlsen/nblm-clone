@@ -48,6 +48,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { readSourceAction } from "@/app/(app)/notebooks/[id]/sources/actions";
+import { chunkPages } from "@/lib/server/ingest/chunk";
 
 const NOTEBOOK_ID = "11111111-1111-4111-8111-111111111111";
 const SOURCE_ID = "22222222-2222-4222-8222-222222222222";
@@ -88,13 +89,24 @@ describe("readSourceAction", () => {
     expect((order?.args[1] as { ascending?: boolean } | undefined)?.ascending).not.toBe(false);
   });
 
-  it("returns the title and the chunk texts in ordinal order", async () => {
+  it("queries sources filtered by notebook_id and id", async () => {
+    await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    const eqs = calls.filter((c) => c.table === "sources" && c.method === "eq").map((c) => c.args);
+    expect(eqs).toContainEqual(["notebook_id", NOTEBOOK_ID]);
+    expect(eqs).toContainEqual(["id", SOURCE_ID]);
+  });
+
+  it("returns the title and the chunk texts in ordinal order, without a text field", async () => {
     const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
 
     expect(result).toMatchObject({ ok: true, title: "Bericht.txt", truncated: false });
     if (!result.ok) throw new Error("expected ok");
-    expect(result.text.indexOf(FIRST)).toBeGreaterThanOrEqual(0);
-    expect(result.text.indexOf(FIRST)).toBeLessThan(result.text.indexOf(SECOND));
+    expect("text" in result).toBe(false);
+    expect(result.sections).toHaveLength(1);
+    const text = result.sections[0]!.text;
+    expect(text.indexOf(FIRST)).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf(FIRST)).toBeLessThan(text.indexOf(SECOND));
   });
 
   it("selects kind, source_url and title from sources and content, page and ordinal from chunks", async () => {
@@ -108,7 +120,7 @@ describe("readSourceAction", () => {
     expect(columns("chunks")).toEqual(expect.arrayContaining(["content", "page", "ordinal"]));
   });
 
-  it("a url source returns kind url, its source_url and one section per chunk (page null)", async () => {
+  it("a url source returns kind url, its source_url and one section (page null), non-overlapping chunks joined with a newline", async () => {
     tables.sources = {
       single: {
         data: { kind: "url", source_url: "https://example.com/artikel", title: "Seite" },
@@ -131,13 +143,10 @@ describe("readSourceAction", () => {
 
     if (!result.ok) throw new Error("expected ok");
     expect(result).toMatchObject({ kind: "url", url: "https://example.com/artikel" });
-    expect(result.sections).toEqual([
-      { page: null, text: FIRST },
-      { page: null, text: SECOND },
-    ]);
+    expect(result.sections).toEqual([{ page: null, text: `${FIRST}\n${SECOND}` }]);
   });
 
-  it("a pdf source returns kind pdf, url null and the page of each chunk", async () => {
+  it("a pdf source returns kind pdf, url null and one section per distinct page, overlap removed", async () => {
     tables.sources = {
       single: { data: { kind: "pdf", source_url: null, title: "Bericht.pdf" }, error: null },
       many: { data: [], error: null },
@@ -146,8 +155,9 @@ describe("readSourceAction", () => {
       single: { data: null, error: null },
       many: {
         data: [
-          { ordinal: 0, content: FIRST, page: 1 },
-          { ordinal: 1, content: SECOND, page: 2 },
+          { ordinal: 0, content: "Alpha Beta Gamma Delta Epsilon", page: 1 },
+          { ordinal: 1, content: "Delta Epsilon Zeta Eta", page: 1 },
+          { ordinal: 2, content: SECOND, page: 2 },
         ],
         error: null,
       },
@@ -158,10 +168,59 @@ describe("readSourceAction", () => {
     if (!result.ok) throw new Error("expected ok");
     expect(result).toMatchObject({ kind: "pdf", url: null });
     expect(result.sections).toEqual([
-      { page: 1, text: FIRST },
+      { page: 1, text: "Alpha Beta Gamma Delta Epsilon Zeta Eta" },
       { page: 2, text: SECOND },
     ]);
-    expect(result.text.indexOf(FIRST)).toBeLessThan(result.text.indexOf(SECOND));
+  });
+
+  it("a common prefix and suffix that does not start at a word boundary in the previous chunk is not dropped", async () => {
+    tables.chunks = {
+      single: { data: null, error: null },
+      many: {
+        data: [
+          { ordinal: 0, content: "Das Haus", page: null },
+          { ordinal: 1, content: "aus ist groß", page: null },
+        ],
+        error: null,
+      },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.sections).toEqual([{ page: null, text: "Das Haus\naus ist groß" }]);
+  });
+
+  it("chunks produced by the real chunker merge back to the original text exactly", async () => {
+    const paragraphs = Array.from({ length: 20 },(_, i) =>
+      [
+        `Abschnitt ${i + 1}: Die Fiktiva GmbH prüft im Quartal ${i + 1} die Berichte der Standorte.`,
+        `Dabei wurden ${100 + i * 7} Vorgänge bearbeitet, und jeder Vorgang erhielt eine eigene Nummer ${9000 + i * 13}.`,
+        `Besonders auffällig war, dass die Kosten im Bereich ${i % 3 === 0 ? "Logistik" : "Verwaltung"} stiegen.`,
+        `Die Geschäftsführung entschied daher, die Prozesse gründlich zu überarbeiten und neu zu dokumentieren.`,
+      ].join(" "),
+    );
+    const original = paragraphs.join("\n\n");
+    expect(original.length).toBeGreaterThan(5000);
+
+    const drafts = chunkPages([{ page: null, text: original }]);
+    expect(drafts.length).toBeGreaterThan(2);
+    // The chunker really overlaps neighbours (otherwise this test proves nothing).
+    expect(drafts[1]!.start).toBeLessThan(drafts[0]!.start + drafts[0]!.content.length);
+
+    tables.chunks = {
+      single: { data: null, error: null },
+      many: {
+        data: drafts.map((d) => ({ ordinal: d.ordinal, content: d.content, page: d.page })),
+        error: null,
+      },
+    };
+
+    const result = await readSourceAction({ notebookId: NOTEBOOK_ID, sourceId: SOURCE_ID });
+
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.sections).toHaveLength(1);
+    expect(result.sections[0]).toEqual({ page: null, text: original });
   });
 
   it("a text source returns kind text and url null; a stray source_url is not exposed", async () => {
@@ -174,7 +233,7 @@ describe("readSourceAction", () => {
 
     if (!result.ok) throw new Error("expected ok");
     expect(result).toMatchObject({ kind: "text", url: null });
-    expect(result.sections).toHaveLength(2);
+    expect(result.sections).toHaveLength(1);
   });
 
   it.each([

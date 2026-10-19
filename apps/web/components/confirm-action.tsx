@@ -32,7 +32,7 @@ export function ConfirmAction({
       <dialog ref={dialog} className="confirm" aria-labelledby={`${id}-t`} aria-describedby={`${id}-d`}>
         <h2 id={`${id}-t`}>{title}</h2>
         <p id={`${id}-d`}>{children}</p>
-        <form action={action}>
+        <form action={action} onSubmit={() => dialog.current?.close()}>
           {Object.entries(fields).map(([name, value]) => (
             <input key={name} type="hidden" name={name} value={value} />
           ))}

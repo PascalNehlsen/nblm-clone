@@ -16,12 +16,16 @@ function message(field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEleme
 
 let counter = 0;
 
+// The note's id is added to aria-describedby and removed again; an existing description stays.
 function clear(field: Element) {
-  const id = field.getAttribute("aria-describedby");
-  if (id?.startsWith("feld-fehler-")) {
+  const ids = (field.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+  const keep = ids.filter((id) => {
+    if (!id.startsWith("feld-fehler-")) return true;
     document.getElementById(id)?.remove();
-    field.removeAttribute("aria-describedby");
-  }
+    return false;
+  });
+  if (keep.length > 0) field.setAttribute("aria-describedby", keep.join(" "));
+  else field.removeAttribute("aria-describedby");
   field.removeAttribute("aria-invalid");
 }
 
@@ -49,7 +53,8 @@ export function FormValidation() {
       note.textContent = message(field);
       (field.closest("label") ?? field).insertAdjacentElement("afterend", note);
       field.setAttribute("aria-invalid", "true");
-      field.setAttribute("aria-describedby", note.id);
+      const existing = field.getAttribute("aria-describedby");
+      field.setAttribute("aria-describedby", existing ? `${existing} ${note.id}` : note.id);
       if (!focused) {
         focused = true;
         field.focus();

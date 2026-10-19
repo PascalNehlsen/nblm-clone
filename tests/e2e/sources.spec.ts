@@ -388,6 +388,8 @@ test.describe("an editor removes a source", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
     await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
+    // The dialog closes with the submit, it does not stay open over the page.
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
 
     await ownerContext.close();
     await memberContext.close();

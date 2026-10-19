@@ -182,7 +182,8 @@ setSource(
   useEffect(() => {
     if (!margin.item) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      // An open confirmation dialog handles its own Escape.
+      if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
         // Back to the chip only if focus was in the passage; never pull it out of the composer.
         const inPassage = region.current?.contains(document.activeElement) ?? false;
         setOpened(null);

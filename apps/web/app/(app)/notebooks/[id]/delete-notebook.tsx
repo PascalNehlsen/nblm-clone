@@ -19,7 +19,7 @@ export function DeleteNotebook({ notebookId, title }: { notebookId: string; titl
           „{title}“ wird mit allen Quellen, Fragen und Antworten endgültig gelöscht. Das lässt sich nicht rückgängig
           machen.
         </p>
-        <form action={deleteNotebookAction}>
+        <form action={deleteNotebookAction} onSubmit={() => dialog.current?.close()}>
           <input type="hidden" name="notebookId" value={notebookId} />
           <input type="hidden" name="confirm" value="on" />
           <div className="actions">

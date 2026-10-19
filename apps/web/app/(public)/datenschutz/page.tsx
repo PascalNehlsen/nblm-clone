@@ -26,20 +26,24 @@ export default function DatenschutzPage() {
       <p>
         Wenn du dich mit GitHub anmeldest, erhalten wir von GitHub deine GitHub-Nutzerkennung, deinen Namen, die Adresse
         deines Profilbilds und deine E-Mail-Adresse. Wir nutzen sie, um dein Konto zu führen (Art. 6 Abs. 1 lit. b
-        DSGVO). Für die Sitzung setzen wir ein technisch notwendiges Anmelde-Cookie; weitere Cookies verwenden wir nicht.
+        DSGVO). Für die Sitzung setzen wir ein technisch notwendiges Anmelde-Cookie; weitere Cookies setzen wir selbst nicht.
       </p>
       <h3>Demo ohne Anmeldung</h3>
       <p>
         Beim Klick auf „Demo starten“ legen wir ein anonymes Demo-Konto mit einer Kopie der Beispielquellen an. Demo-Konten
-        und alles, was darin entsteht, löschen wir automatisch nach 24 Stunden. Vor dem Start prüft Cloudflare Turnstile,
+        und alles, was darin entsteht, löschen wir automatisch nach 24 Stunden (ein Löschlauf alle 15 Minuten, also
+        spätestens nach 24 Stunden und 15 Minuten). Vor dem Start prüft Cloudflare Turnstile,
         ob ein Mensch die Demo startet (Art. 6 Abs. 1 lit. f DSGVO, Schutz vor Missbrauch). Das Turnstile-Skript wird erst
-        nach dem Klick geladen; Cloudflare erhält dabei IP-Adresse und technische Browsermerkmale.
+        nach dem Klick geladen; Cloudflare erhält dabei IP-Adresse und technische Browsermerkmale und kann für die
+        Prüfung eigene Cookies setzen.
       </p>
       <h3>Quellen, Fragen und Antworten</h3>
       <p>
         Wir speichern die Quellen, die du hinzufügst (Texte, PDF-Dateien, von dir genannte Webseiten), daraus gebildete
         Textabschnitte samt Vektoren für die Suche, deine Fragen, die Antworten und die Zitate (Art. 6 Abs. 1 lit. b
-        DSGVO). Zum Beantworten werden Frage und passende Textabschnitte an ein Sprachmodell in der EU gesendet. Pro
+        DSGVO). Beim Hinzufügen einer Quelle wird ihr Text an ein Modell in der EU gesendet, das daraus Vektoren für die Suche
+        berechnet; beim Fragen geschieht das mit deiner Frage. Zum Beantworten werden Frage und passende Textabschnitte
+        an ein Sprachmodell in der EU gesendet. Pro
         Anfrage speichern wir Verbrauchsdaten (Modell, Anzahl der Token, Kosten, Dauer, Status), aber keine Texte, um
         Kosten zu begrenzen und Missbrauch zu verhindern (Art. 6 Abs. 1 lit. f DSGVO). Inhalte von Fragen, Quellen und
         Antworten schreiben wir nicht in Protokolle.
@@ -71,7 +75,9 @@ export default function DatenschutzPage() {
         </li>
       </ul>
       <p>
-        Für Übermittlungen in die USA stützen sich die Anbieter auf den Angemessenheitsbeschluss der EU-Kommission zum
+        Supabase, Amazon Web Services und Vercel sind Unternehmen mit Sitz oder Muttergesellschaft in den USA; die
+        Verarbeitung für diese Anwendung findet bei ihnen in der EU statt. Für Übermittlungen in die USA stützen sich
+        die Anbieter auf den Angemessenheitsbeschluss der EU-Kommission zum
         EU-US Data Privacy Framework beziehungsweise auf Standardvertragsklauseln. Webseiten, die du als Quelle angibst,
         rufen wir von unserem Server aus ab; sie erhalten dabei keine Daten über dich.
       </p>
@@ -79,7 +85,10 @@ export default function DatenschutzPage() {
       <h2>4. Speicherdauer</h2>
       <ul>
         <li>Demo-Konten mit allen Inhalten: 24 Stunden.</li>
-        <li>Quellen, Abschnitte, Fragen und Antworten: bis du sie, das Notizbuch oder dein Konto löschst.</li>
+        <li>
+          Quellen und ihre Abschnitte: bis du die Quelle oder das Notizbuch löschst. Fragen und Antworten: bis das
+          Notizbuch gelöscht wird. Auf Anfrage löschen wir dein Konto mit allen Inhalten.
+        </li>
         <li>Protokoll der Rollenänderungen: 90 Tage.</li>
         <li>Verbrauchsdaten: 90 Tage mit Bezug zu Konto und Notizbuch, danach ohne diesen Bezug.</li>
         <li>Datenbanksicherungen können gelöschte Inhalte bis zum Ende ihrer Aufbewahrungsfrist enthalten.</li>

@@ -21,7 +21,8 @@ const URL_TITLE = "Webartikel";
 const PDF_TITLE = "Bericht.pdf";
 const CHUNK_ONE = "Erster Abschnitt: Die Fiktiva GmbH sitzt in Bonn.";
 const CHUNK_TWO = "Zweiter Abschnitt: Sie beschäftigt vierzig Personen.";
-const OTHER_CHUNK = "Anderer Inhalt: Der Hafen liegt in Kiel.";
+const CHUNK_ONE_B = "Dritter Abschnitt: Der Umsatz stieg im Jahr 2025 deutlich.";
+const OTHER_CHUNK ="Anderer Inhalt: Der Hafen liegt in Kiel.";
 const QUOTE = "Der Hafen liegt in Kiel";
 
 async function asSignedIn(session: SeededSession): Promise<SignedInUser> {
@@ -160,8 +161,10 @@ test.describe("source reader", () => {
   test("a pdf source shows the label PDF and a Seite marker before each page's text", async ({ browser }) => {
     const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-kind-pdf");
     const sourceId = await createSource(owner, id, { kind: "pdf", title: PDF_TITLE });
+    // Two chunks on page 1, one on page 2: each page gets exactly one marker.
     await insertChunks(owner, id, sourceId, [
-      { ordinal: 1, content: CHUNK_TWO, embedding: nearbyVector(2, 0.1), page: 2 },
+      { ordinal: 2, content: CHUNK_TWO, embedding: nearbyVector(3, 0.1), page: 2 },
+      { ordinal: 1, content: CHUNK_ONE_B, embedding: nearbyVector(2, 0.1), page: 1 },
       { ordinal: 0, content: CHUNK_ONE, embedding: nearbyVector(1, 0.1), page: 1 },
     ]);
     await setSourceStatus(owner, sourceId, "ready");
@@ -172,8 +175,9 @@ test.describe("source reader", () => {
     await expect(region).toBeVisible();
     await expect(region.getByText("PDF", { exact: true })).toBeVisible();
     await expect(region.getByRole("link", { name: "Original öffnen" })).toHaveCount(0);
-    await expect(region.getByText("Seite 1", { exact: true })).toBeVisible();
-    await expect(region.getByText("Seite 2", { exact: true })).toBeVisible();
+    await expect(region.getByText("Seite 1", { exact: true })).toHaveCount(1);
+    await expect(region.getByText("Seite 2", { exact: true })).toHaveCount(1);
+    await expect(region.getByText(/^Seite \d+$/)).toHaveCount(2);
     const text = await region.innerText();
     const order = [
       text.indexOf("Seite 1"),
@@ -262,7 +266,33 @@ test.describe("source reader", () => {
     await context.close();
   });
 
-  test("a viewer of a shared notebook can open a source", async ({ browser }) => {
+  test("Escape in an open confirmation dialog closes only the dialog, not the open passage", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-escape-dialog");
+    const sourceId = await seedReadySource(owner, id, OTHER_TITLE, [OTHER_CHUNK]);
+    const { data: chunk, error } = await owner.client.from("chunks").select("id").eq("source_id", sourceId).single();
+    if (error || !chunk) throw new Error(`select chunk: ${error?.message}`);
+    await insertMessage(owner, id, "user", "Wo liegt der Hafen?");
+    const answerId = await insertMessage(owner, id, "assistant", "In Kiel [1].");
+    await insertCitation(owner, id, answerId, 1, { chunkId: chunk.id as string, quote: QUOTE });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+
+    await page.getByRole("button", { name: `[1] ${OTHER_TITLE}` }).click();
+    const passage = page.getByRole("region", { name: "Fundstelle [1]" });
+    await expect(passage).toBeVisible();
+
+    const row = page.getByRole("listitem").filter({ hasText: OTHER_TITLE });
+    await row.getByRole("button", { name: "Entfernen" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(passage).toBeVisible();
+
+    await context.close();
+  });
+
+  test("a viewer of a shared notebook can open a source",async ({ browser }) => {
     const { context, page, owner, id, url } = await ownerWithNotebook(browser, "reader-e2e-viewer-owner");
     await seedReadySource(owner, id, READY_TITLE, [CHUNK_ONE, CHUNK_TWO]);
 

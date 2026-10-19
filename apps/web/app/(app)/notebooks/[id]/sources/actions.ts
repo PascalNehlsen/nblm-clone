@@ -15,6 +15,7 @@ import {
   uploadTextObject,
 } from "@/lib/sources/sources";
 import { createClient } from "@/lib/supabase/server";
+import { mergeByPage } from "@/lib/sources/merge";
 
 // Every action checks the session with getUser() itself (ADR 0005). Writes go through
 // the user's client, so RLS decides; these checks only refuse early and give a message.
@@ -194,7 +195,6 @@ export async function readSourceAction(input: {
       title: string;
       kind: "text" | "pdf" | "url";
       url: string | null;
-      text: string;
       sections: { page: number | null; text: string }[];
       truncated: boolean;
     }
@@ -221,12 +221,14 @@ export async function readSourceAction(input: {
     .limit(READ_CHUNK_LIMIT + 1);
   if (error || !chunks) return { ok: false };
   const truncated = chunks.length > READ_CHUNK_LIMIT;
-  const sections = chunks.slice(0, READ_CHUNK_LIMIT).map((c) => ({
-    page: typeof c.page === "number" ? c.page : null,
-    text: String(c.content),
-  }));
+  // Chunks overlap; merged per page so the reader shows each passage once.
+  const sections = mergeByPage(
+    chunks.slice(0, READ_CHUNK_LIMIT).map((c) => ({
+      page: typeof c.page === "number" ? c.page : null,
+      content: String(c.content),
+    })),
+  );
   const kind = source.kind === "pdf" || source.kind === "url" ? source.kind : "text";
   const url = kind === "url" && typeof source.source_url === "string" ? source.source_url : null;
-  const text = sections.map((s) => s.text).join("\n\n");
-  return { ok: true, title: String(source.title), kind, url, text, sections, truncated };
+  return { ok: true, title: String(source.title), kind, url, sections, truncated };
 }
