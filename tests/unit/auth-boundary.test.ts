@@ -481,6 +481,69 @@ describe("C1 ingestion: lib/sources/ modules exist and are NOT server-only", () 
   });
 });
 
+// C3 vector search: everything in lib/rag/ (retrieval now, prompts and citation checks
+// in block D) is server-only, and no client component may reach it in any import form.
+describe("C3 retrieval: lib/rag/ modules are server-only and never imported by client components", () => {
+  const ragDir = path.join(webDir, "lib/rag");
+
+  function isClientFile(content: string): boolean {
+    const first = content
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    return first === '"use client";' || first === "'use client';" || first === '"use client"' || first === "'use client'";
+  }
+
+  // Static import/export-from, import("..."), require("...") of the @/lib/rag path or a
+  // relative path that contains lib/rag.
+  function importsRag(content: string): boolean {
+    const patterns = [
+      /\bfrom\s*["'][^"']*lib\/rag(?:\/[^"']*)?["']/,
+      /\bimport\s*["'][^"']*lib\/rag(?:\/[^"']*)?["']/,
+      /\bimport\s*\(\s*["'][^"']*lib\/rag(?:\/[^"']*)?["']\s*\)/,
+      /\brequire\s*\(\s*["'][^"']*lib\/rag(?:\/[^"']*)?["']\s*\)/,
+    ];
+    return patterns.some((pattern) => pattern.test(content));
+  }
+
+  it("lib/rag/ has retrieve.ts and limits.ts", () => {
+    expect(fs.existsSync(path.join(ragDir, "retrieve.ts")), "lib/rag/retrieve.ts is missing").toBe(true);
+    expect(fs.existsSync(path.join(ragDir, "limits.ts")), "lib/rag/limits.ts is missing").toBe(true);
+  });
+
+  it('every file in lib/rag/ begins with `import "server-only"` as its first line', () => {
+    const files = collectSourceFiles(ragDir);
+    expect(files.length, "lib/rag/ has no source files").toBeGreaterThan(0);
+    for (const file of files) {
+      const firstLine = fs.readFileSync(file, "utf8").split("\n")[0]?.trim();
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+
+  it("the detector catches static, dynamic and require imports, and ignores unrelated paths", () => {
+    expect(importsRag('import { retrieve } from "@/lib/rag/retrieve";')).toBe(true);
+    expect(importsRag('const m = await import("@/lib/rag/retrieve");')).toBe(true);
+    expect(importsRag('const m = require("../../lib/rag/limits");')).toBe(true);
+    expect(importsRag('import "@/lib/rag/retrieve";')).toBe(true);
+    expect(importsRag('import { x } from "@/lib/sources/sources";')).toBe(false);
+    expect(isClientFile('"use client";\nimport x from "y";')).toBe(true);
+    expect(isClientFile('import x from "y";')).toBe(false);
+  });
+
+  it('no file under app/ that starts with "use client" imports from lib/rag', () => {
+    const offenders: string[] = [];
+    for (const file of collectSourceFiles(path.join(webDir, "app"))) {
+      const content = fs.readFileSync(file, "utf8");
+      if (isClientFile(content) && importsRag(content)) {
+        offenders.push(path.relative(webDir, file));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("no \"use client\" file imports a server-only module", () => {
   const forbiddenImportTargets = ["lib/supabase/server", "lib/supabase/proxy", "lib/server/"];
 
