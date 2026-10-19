@@ -45,7 +45,7 @@ pnpm db:stop
 
 GitHub login reads `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET` from the environment (names in `.env.example`); the stack also starts without them. Set them on your machine only, never in the sandbox. The GitHub OAuth app's callback is `http://127.0.0.1:54321/auth/v1/callback`.
 
-The web app needs `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `NEXT_PUBLIC_SITE_URL` in `apps/web/.env.local` (see `.env.example`); without them every page answers 500.
+The web app needs `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `NEXT_PUBLIC_SITE_URL` in `apps/web/.env.local` (see `.env.example`); without them every page answers 500. Model calls also need `SUPABASE_SECRET_KEY`, `BEDROCK_CHAT_MODEL_ID` and `BEDROCK_EMBEDDING_MODEL_ID` on the server; without them every model call fails closed, and the pages still work.
 
 End-to-end tests build the app and run it against the local stack in Chromium (`pnpm exec playwright install chromium` once):
 

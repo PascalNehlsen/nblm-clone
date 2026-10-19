@@ -20,7 +20,7 @@ Every model call (embeddings in PR C, chat in PR D) must pass a per-user daily b
 
 ## Consequences
 
-- The `service_role` key sits in the request path. It bypasses RLS everywhere, so it is confined to one module that exports only `reserve` and `settle`, enforced by a lint rule and a test (PR E2), and it is not set in Vercel Preview: previews fail closed.
+- The `service_role` key sits in the request path. It bypasses RLS everywhere, so it is confined to one module that exports only `reserve` and `settle`, enforced by a lint rule and a test (PR E2), and it is not set in Vercel Preview: previews fail closed. The only importer, the model-call wrapper, takes nothing but the provider from app code; fakes for the user, the usage store and the config can be injected only through a test entry point that lint and a source scan forbid app code to import.
 - Limits and the switch change without a deploy, but only through SQL by a human with access to the Supabase project. `service_role` can read them, not change them.
 - All reservations share one lock. That is fine at demo traffic; revisit if reservation latency shows up in the p95.
 - Stale reservations overcount until midnight, on the safe side.
