@@ -83,10 +83,18 @@ const callbackOk = () =>
 const authSettingsOk = () =>
   new Response(
     JSON.stringify({
-      external: { email: false, github: true, anonymous_users: false },
+      // F2 spec value change: anonymous sign-in must now be ON (demo login).
+      external: { email: false, github: true, anonymous_users: true },
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
+
+// The captcha is enforced: a sign-up without a token is refused with captcha_failed.
+const captchaEnforced = () =>
+  new Response(JSON.stringify({ code: 400, error_code: "captcha_failed", msg: "captcha protection: request disallowed" }), {
+    status: 400,
+    headers: { "content-type": "application/json" },
+  });
 
 function happyResponses({ includeSupabase = true } = {}) {
   const map = {
@@ -97,6 +105,7 @@ function happyResponses({ includeSupabase = true } = {}) {
   };
   if (includeSupabase) {
     map[`${SUPABASE_URL}/auth/v1/settings`] = [authSettingsOk];
+    map[`${SUPABASE_URL}/auth/v1/signup`] = [captchaEnforced];
   }
   return map;
 }
@@ -446,7 +455,7 @@ describe("runSmoke: auth-settings checks", () => {
       () =>
         new Response(
           JSON.stringify({
-            external: { email: true, github: true, anonymous_users: false },
+            external: { email: true, github: true, anonymous_users: true },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -465,13 +474,14 @@ describe("runSmoke: auth-settings checks", () => {
     assert.equal(r.pass, false);
   });
 
-  it("anonymous_users: true fails", async () => {
+  // Spec value change (F2): this used to be "anonymous_users: true fails".
+  it("anonymous_users: false fails (the demo login needs it on)", async () => {
     const responses = happyResponses();
     responses[`${SUPABASE_URL}/auth/v1/settings`] = [
       () =>
         new Response(
           JSON.stringify({
-            external: { email: false, github: true, anonymous_users: true },
+            external: { email: false, github: true, anonymous_users: false },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -496,7 +506,7 @@ describe("runSmoke: auth-settings checks", () => {
       () =>
         new Response(
           JSON.stringify({
-            external: { email: false, github: false, anonymous_users: false },
+            external: { email: false, github: false, anonymous_users: true },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -531,6 +541,136 @@ describe("runSmoke: auth-settings checks", () => {
     assert.ok(settingsCall);
     const headers = new Headers(settingsCall.init?.headers ?? {});
     assert.equal(headers.get("apikey"), PUBLISHABLE_KEY);
+  });
+});
+
+describe("runSmoke: captcha probe (F2)", () => {
+  async function runWithSignup(signup) {
+    const responses = happyResponses();
+    responses[`${SUPABASE_URL}/auth/v1/signup`] = [signup];
+    const fetch = makeFetch(responses);
+    const result = await runSmoke(
+      baseArgs({
+        bypassSecret: BYPASS_SECRET,
+        supabaseUrl: SUPABASE_URL,
+        publishableKey: PUBLISHABLE_KEY,
+        fetch,
+        sleep: makeSleep(),
+      }),
+    );
+    return { result, fetch, check: result.results.find((x) => x.name === "captcha") };
+  }
+
+  const json = (status, body) => () =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  it("passes on 400 with error_code captcha_failed", async () => {
+    const { result, check } = await runWithSignup(captchaEnforced);
+    assert.ok(check, 'expected a "captcha" result');
+    assert.equal(check.pass, true);
+    assert.equal(result.ok, true);
+  });
+
+  it("passes on 400 with the code field captcha_failed", async () => {
+    const { check } = await runWithSignup(json(400, { code: "captcha_failed", msg: "x" }));
+    assert.ok(check);
+    assert.equal(check.pass, true);
+  });
+
+  it("fails on 200 (captcha off), and does not print the body", async () => {
+    const marker = "ACCESS_TOKEN_DO_NOT_PRINT";
+    const { result, check } = await runWithSignup(json(200, { access_token: marker, user: { id: "u" } }));
+    assert.ok(check);
+    assert.equal(check.pass, false);
+    assert.equal(result.ok, false);
+    assert.ok(!JSON.stringify(result).includes(marker));
+    assert.ok(!formatReport(result).includes(marker));
+  });
+
+  for (const [status, body] of [
+    [400, { code: 400, error_code: "validation_failed", msg: "x" }],
+    [400, { code: 400, error_code: "anonymous_provider_disabled", msg: "x" }],
+    [422, { code: 422, error_code: "captcha_failed", msg: "x" }],
+    [429, { code: 429, error_code: "over_request_rate_limit", msg: "x" }],
+  ]) {
+    it(`fails on ${status} with ${body.error_code}`, async () => {
+      const { check } = await runWithSignup(json(status, body));
+      assert.ok(check);
+      assert.equal(check.pass, false);
+    });
+  }
+
+  it("fails on 400 with a body that is not JSON, and never prints it", async () => {
+    const marker = "NOT_JSON_BODY_DO_NOT_PRINT";
+    const { result, check } = await runWithSignup(() => new Response(marker, { status: 400 }));
+    assert.ok(check);
+    assert.equal(check.pass, false);
+    assert.ok(!JSON.stringify(result).includes(marker));
+    assert.ok(!formatReport(result).includes(marker));
+  });
+
+  it("never prints the captcha error body in the report on a pass either", async () => {
+    const { result } = await runWithSignup(
+      json(400, { error_code: "captcha_failed", msg: "BODY_MSG_DO_NOT_PRINT" }),
+    );
+    assert.ok(!JSON.stringify(result).includes("BODY_MSG_DO_NOT_PRINT"));
+    assert.ok(!formatReport(result).includes("BODY_MSG_DO_NOT_PRINT"));
+  });
+
+  it("POSTs {} to /auth/v1/signup with the apikey header, no captcha token, redirect manual, an AbortSignal and no bypass header", async () => {
+    const { fetch } = await runWithSignup(captchaEnforced);
+    const call = fetch.calls.find((c) => c.key === `${SUPABASE_URL}/auth/v1/signup`);
+    assert.ok(call, "expected a request to /auth/v1/signup");
+    assert.equal(call.init?.method, "POST");
+    assert.equal(call.init?.body, "{}");
+    assert.equal(call.init?.redirect, "manual");
+    assert.ok(call.init?.signal instanceof AbortSignal);
+    const headers = new Headers(call.init?.headers ?? {});
+    assert.equal(headers.get("apikey"), PUBLISHABLE_KEY);
+    assert.equal(headers.get("x-vercel-protection-bypass"), null);
+    assert.ok(!call.url.includes("captcha"));
+    assert.ok(!String(call.init?.body).includes("captcha"));
+    assert.equal(headers.get("x-captcha-token"), null);
+  });
+
+  it("is skipped, not failed, and never fetched without supabaseUrl and publishableKey", async () => {
+    const fetch = makeFetch(happyResponses({ includeSupabase: false }));
+    const result = await runSmoke(baseArgs({ fetch, sleep: makeSleep() }));
+    assert.equal(result.ok, true);
+    assert.ok(!fetch.calls.some((c) => c.url.includes("/auth/v1/signup")));
+    const check = result.results.find((x) => x.name === "captcha");
+    if (check) assert.notEqual(check.pass, false);
+  });
+
+  it("without supabaseUrl and publishableKey the result has a captcha row with reason skipped and pass true", async () => {
+    const fetch = makeFetch(happyResponses({ includeSupabase: false }));
+    const result = await runSmoke(baseArgs({ fetch, sleep: makeSleep() }));
+    assert.equal(result.ok, true);
+    const authSettings = result.results.find((x) => x.name === "auth-settings");
+    assert.ok(authSettings, 'expected an "auth-settings" row');
+    assert.equal(authSettings.reason, "skipped");
+    const check = result.results.find((x) => x.name === "captcha");
+    assert.ok(check, 'expected a "captcha" row');
+    assert.equal(check.pass, true);
+    assert.equal(check.reason, "skipped");
+    assert.ok(!fetch.calls.some((c) => c.url.includes("/auth/v1/signup")));
+  });
+
+  it("a failing settings check (anonymous off) fails the run even when the captcha probe passes", async () => {
+    const responses = happyResponses();
+    responses[`${SUPABASE_URL}/auth/v1/settings`] = [
+      json(200, { external: { email: false, github: true, anonymous_users: false } }),
+    ];
+    const result = await runSmoke(
+      baseArgs({
+        supabaseUrl: SUPABASE_URL,
+        publishableKey: PUBLISHABLE_KEY,
+        fetch: makeFetch(responses),
+        sleep: makeSleep(),
+      }),
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.results.find((x) => x.name === "auth-settings").pass, false);
   });
 });
 

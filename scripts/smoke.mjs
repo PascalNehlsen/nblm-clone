@@ -112,9 +112,41 @@ async function checkAuthSettings(fetch, sleep, supabaseUrl, publishableKey) {
   // Field names verified against the local Supabase Auth server on 2026-10-19.
   if (!external || typeof external !== "object") return result("auth-settings", path, response, "no external");
   if (external.email !== false) return result("auth-settings", path, response, "email sign-in on");
-  if (external.anonymous_users !== false) return result("auth-settings", path, response, "anonymous sign-in on");
+  // On since the demo login (block F2, ADR 0012); the captcha probe below checks Turnstile.
+  if (external.anonymous_users !== true) return result("auth-settings", path, response, "anonymous sign-in off");
   if (external.github !== true) return result("auth-settings", path, response, "github sign-in off");
   return result("auth-settings", path, response, null);
+}
+
+// Anonymous sign-in without a captcha token must be refused by Supabase (Turnstile through
+// the built-in captcha). One POST, no retry: if the captcha were off, it would create one
+// anonymous user, which the purge removes within 24 h. The body is read, never printed.
+async function checkCaptcha(fetch, supabaseUrl, publishableKey) {
+  const path = "/auth/v1/signup";
+  let response = null;
+  try {
+    response = await fetch(supabaseUrl + path, {
+      method: "POST",
+      redirect: "manual",
+      headers: { apikey: publishableKey, "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    response = null;
+  }
+  const outcome = (reason) => ({ ...result("captcha", path, response, reason), method: "POST" });
+  if (!response) return outcome("no response");
+  if (response.status === 200) return outcome("captcha off");
+  if (response.status !== 400) return outcome("status");
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return outcome("not json");
+  }
+  const code = body && typeof body === "object" ? (body.error_code ?? body.code) : undefined;
+  return outcome(code === "captcha_failed" ? null : "unexpected error code");
 }
 
 function invalid(reason) {
@@ -154,8 +186,10 @@ export async function runSmoke({ baseUrl, siteUrl, bypassSecret, supabaseUrl, pu
   );
   if (supabaseUrl && publishableKey) {
     results.push(await checkAuthSettings(fetch, sleep, supabaseUrl, publishableKey));
+    results.push(await checkCaptcha(fetch, supabaseUrl, publishableKey));
   } else {
     results.push({ name: "auth-settings", method: "GET", path: "/auth/v1/settings", status: null, location: null, pass: true, reason: "skipped" });
+    results.push({ name: "captcha", method: "POST", path: "/auth/v1/signup", status: null, location: null, pass: true, reason: "skipped" });
   }
   return { ok: results.every((r) => r.pass), results };
 }

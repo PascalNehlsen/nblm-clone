@@ -1,4 +1,5 @@
 import { signInWithGitHub } from "@/app/auth/actions";
+import { DemoButton } from "./demo-button";
 import { loginErrorMessage } from "@/lib/auth/errors";
 import { safeNextPath } from "@/lib/auth/redirect";
 
@@ -21,6 +22,7 @@ export default async function LoginPage({
         <input type="hidden" name="next" value={next} />
         <button type="submit">Mit GitHub anmelden</button>
       </form>
+      <DemoButton siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null} />
     </main>
   );
 }

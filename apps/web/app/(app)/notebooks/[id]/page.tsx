@@ -50,6 +50,9 @@ export default async function NotebookPage({
 
   return (
     <main>
+      {data.user.is_anonymous ? (
+        <p role="note">Demo: Dieses Notizbuch und dein Demo-Zugang werden nach 24 Stunden gelöscht.</p>
+      ) : null}
       <h1>{notebook.title}</h1>
       <p>Deine Rolle: {ROLE_LABELS[notebook.role]}</p>
       {fehler ? <p role="alert">{notebookErrorMessage(fehler)}</p> : null}
