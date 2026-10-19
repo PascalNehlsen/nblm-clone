@@ -9,15 +9,17 @@
 //
 //   planner      no writes, no shell
 //   reviewer     no writes; shell only for read-only git commands
-//   test-author  writes only under tests/ and supabase/tests/;
-//                shell only for the test runners
+//   test-author  writes only under tests/ and supabase/tests/; no shell at all.
+//                A test runner executes whatever a test file contains, so allowing
+//                runners let the role run arbitrary code (PR #22, PR #25). The builder
+//                reads the new tests and runs them.
 //   other        unknown subagents (including built-ins) get no write tools
 //
 // Exit 0 allows, exit 2 blocks (stderr goes back to the model). Anything that
 // is not clearly allowed is blocked, including unreadable input.
 //
 // This is a guard against mistakes, not a security boundary: a test file is
-// code and can do anything when it runs. The hard limits are outside the
+// code and can do anything when the builder runs it. The hard limits are outside the
 // agent: no credentials in the sandbox, branch rulesets, environment approval.
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -35,10 +37,6 @@ const ARGS = String.raw`(?: [\w./:=@~^+-]+)*`;
 // repository (for example ~/.aws/credentials). Ranges like main...HEAD stay legal.
 const REVIEWER_COMMAND = new RegExp(String.raw`^git (?:diff|log|show|status|blame)${ARGS}$`);
 const REVIEWER_FORBIDDEN = /--output|--no-index/;
-const TEST_AUTHOR_COMMAND = new RegExp(
-  String.raw`^(?:pnpm (?:test|test:[a-z0-9-]+|vitest|eval)|supabase test db|node --test)${ARGS}$`,
-);
-const TEST_AUTHOR_FORBIDDEN = /\.\./;
 const TEST_AUTHOR_PATH = /^(?:tests|supabase\/tests)\//;
 
 // Resolve symlinks on the longest existing prefix, so a not-yet-existing file
@@ -101,8 +99,8 @@ export function decide(payload, root) {
       }
       return null;
     }
-    if (tool === "Bash" && !shellAllowed(input.command, TEST_AUTHOR_COMMAND, TEST_AUTHOR_FORBIDDEN)) {
-      return "test-author: shell only for `pnpm test*`, `pnpm vitest`, `pnpm eval`, `supabase test db`, `node --test`";
+    if (tool === "Bash") {
+      return "test-author: writes tests only; the builder runs them. List the command and the expected failure instead";
     }
     return null;
   }

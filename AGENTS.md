@@ -25,7 +25,7 @@ Instructions in this file are context, not enforcement. What actually holds:
 | Host session (outside the sandbox) | **Not enforced.** It can reach the human's host credentials: the `gh` token with scope `repo` (admin on this repo, so it could change the ruleset) and the AWS SSO profiles, including management admin, while an SSO session is active. Only `.claude/settings.json` (a speed bump) and these instructions bound it. The `main` ruleset and `production` environment rows hold against it only as long as it follows them; the speed bump applies only when it runs in this repo with the project settings loaded |
 | Nothing reaches `main` without checks | GitHub rulesets: PR required, required status checks, linear history, no bypass |
 | Nothing reaches production without a human | GitHub Environment `production` with required reviewer |
-| Subagent roles (planner, test-author, reviewer) | Tool lists in `.claude/agents/` + `.claude/hooks/agent-guard.mjs` |
+| Subagent roles (planner, test-author, reviewer) | Tool lists in `.claude/agents/` + `.claude/hooks/agent-guard.mjs`. The test-author has no shell, but every file it writes under `tests/` or `supabase/tests/` (tests, helpers, SQL) is code that runs with the builder's rights when the builder runs a suite. That the builder reviews those changes before running anything is an instruction, **not enforced**. So is "only the test-author writes tests": built-in subagents such as `general-purpose` keep a shell |
 | Dangerous commands and secret files | `permissions.deny` / `ask` in `.claude/settings.json` (a speed bump: Claude Code documents Bash rules as not a security boundary) |
 
 Never describe an instruction-level limit as enforced. If a task seems to need a credential, a host outside the allowlist, or a change to any of the limits above, stop and say so.
@@ -38,7 +38,7 @@ The main session is the **builder**; it runs in the sandbox. The **host session*
 - **high:** `supabase/`, `infra/`, auth, prompts or retrieval (`lib/rag/`, `prompts/`), `.github/workflows/`, `.claude/`
 - **normal:** everything else
 
-Flow for **high**: planner → plan approved (host session or human, see below) → test-author (red) → builder (green) → reviewer (where mandatory) → PR with evidence → CI incl. Codex review and eval → human merges.
+Flow for **high**: planner → plan approved (host session or human, see below) → test-author (writes red tests) → builder confirms red → builder (green) → reviewer (where mandatory) → PR with evidence → CI incl. Codex review and eval → human merges.
 
 **Rule files** are `AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/privacy.md`, `docs/adr/`, `.claude/` and `.github/`.
 
@@ -56,7 +56,7 @@ Flow for **Dependabot**: applies only while every commit on the branch is from `
 
 1. **Small PRs**, one concern each. Small means one concern, not one file: one PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. Branches `feat/`, `fix/`, `infra/`, `docs/`, `chore/`. Never push to `main`.
 2. **Conventional Commits**, imperative, say why. The PR title becomes the squash commit, so it must be a valid Conventional Commit.
-3. **Tests first** for high-risk changes and for every bug fix.
+3. **Tests first** for high-risk changes and for every bug fix. The test-author writes them and runs nothing. Before running anything, the builder reviews every file the test-author created, changed or deleted under `tests/` and `supabase/tests/` (`git status` and `git diff`, helpers and SQL included), because a test can do anything when it runs. Then it runs the tests and pastes the red output.
 4. **Run locally before saying "done":** `pnpm lint && pnpm typecheck && pnpm test && pnpm test:rls`. Paste the actual output. Never claim a check passed without running it.
 5. **Review is not yours to give.** Never approve your own work, never write a review verdict yourself. The one bounded exception is plan approval by the host session as described above; it is not a review and does not replace one.
 6. **Gates are not yours to open.** Do not modify rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml` or `infra/github/` unless the task is explicitly about them and the human approved the plan.

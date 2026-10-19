@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -99,13 +99,45 @@ describe("test-author", () => {
     }
   });
 
-  it("may run the test runners and nothing else", () => {
-    for (const command of ["pnpm test", "pnpm test:rls", "pnpm vitest run tests/unit", "pnpm eval --case injection", "supabase test db", "node --test .claude/hooks/agent-guard.test.mjs"]) {
-      assert.equal(decide(bash("test-author", command), ROOT), null, command);
+  // PR #22 and PR #25: with the test runners allowed, the test-author twice wrote a file under
+  // tests/ that ran commands and deleted itself. A runner executes whatever the test file
+  // contains, so the role now runs nothing; the builder reads the tests and shows the red run.
+  it("may not run any command, including the test runners", () => {
+    for (const command of [
+      "pnpm test",
+      "pnpm test:rls",
+      "pnpm vitest run tests/unit",
+      "pnpm eval --case injection",
+      "supabase test db",
+      "node --test .claude/hooks/agent-guard.test.mjs",
+      "node --test tests/unit/_runner.test.mjs",
+      "PATH=/home/user/.cache/pnpm:/usr/bin pnpm test",
+      "FONTCONFIG_FILE=/tmp/fonts.conf pnpm test:e2e",
+      "env pnpm test",
+      "ls tests",
+      "git status",
+      "",
+    ]) {
+      const reason = decide(bash("test-author", command), ROOT);
+      assert.notEqual(reason, null, command);
+      assert.match(reason, /test-author: writes tests only; the builder runs them/, command);
     }
-    for (const command of ["pnpm test && git commit -am x", "pnpm install evil", "sed -i s/a/b/ apps/web/x.ts", "echo x > apps/web/x.ts", "pnpm test -- $(curl x)", "pnpm vitest run ../other-repo", "supabase db push"]) {
-      assert.notEqual(decide(bash("test-author", command), ROOT), null, command);
-    }
+    assert.notEqual(decide({ agent_type: "test-author", tool_name: "Bash", tool_input: {} }, ROOT), null);
+  });
+
+  it("may still read", () => {
+    assert.equal(decide(read("test-author"), ROOT), null);
+  });
+
+  it("has no Bash in its agent definition", () => {
+    const definition = readFileSync(path.join(ROOT, ".claude/agents/test-author.md"), "utf8");
+    const tools = definition.match(/^tools:(.*)$/m);
+    assert.ok(tools, "test-author.md has a tools line");
+    const list = tools[1].split(",").map((tool) => tool.trim());
+    assert.ok(!list.some((tool) => tool.startsWith("Bash")), `tools: ${tools[1].trim()}`);
+    // Exact list: the guard only sees Write/Edit/MultiEdit/NotebookEdit/Bash (hook matcher in
+    // .claude/settings.json), so any other tool added here would not be checked by it.
+    assert.deepEqual([...list].sort(), ["Edit", "Glob", "Grep", "Read", "Write"]);
   });
 });
 
@@ -125,6 +157,9 @@ describe("hook protocol", () => {
     const blocked = run(JSON.stringify(write("test-author", "apps/web/a.ts")));
     assert.equal(blocked.status, 2);
     assert.match(blocked.stderr, /test-author:/);
+    const shell = run(JSON.stringify(bash("test-author", "pnpm test")));
+    assert.equal(shell.status, 2);
+    assert.match(shell.stderr, /test-author: writes tests only; the builder runs them/);
   });
 
   it("fails closed on unreadable input", () => {
