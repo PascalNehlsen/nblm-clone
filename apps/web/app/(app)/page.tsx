@@ -35,9 +35,9 @@ export default async function Home({
       {notebooks.length === 0 ? (
         <p className="empty">Noch keine Notizbücher. Leg unten dein erstes an, füg Quellen hinzu und stell Fragen dazu.</p>
       ) : (
-        <ul className="shelf">
+        <ul className="shelf stagger">
           {notebooks.map((notebook) => (
-            <li key={notebook.id} className="book" data-hue={hues[notebook.id]}>
+            <li key={notebook.id} className="book" data-hue={hues[notebook.id]} data-tilt="8">
               <Link href={`/notebooks/${notebook.id}`}>{notebook.title}</Link>{" "}
               <span className="pill">{ROLE_LABELS[notebook.role]}</span>
             </li>

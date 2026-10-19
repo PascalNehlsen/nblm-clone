@@ -1,14 +1,14 @@
 import { notFound, redirect } from "next/navigation";
-import { deleteNotebookAction } from "../actions";
 import { AddSource } from "./add-source";
 import { Chat } from "./chat";
+import { DeleteNotebook } from "./delete-notebook";
 import { MemberList } from "./member-list";
 import { SourceList } from "./source-list";
 import { listHistory } from "@/lib/chat/history";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { listMembers } from "@/lib/notebooks/members";
 import { getNotebook } from "@/lib/notebooks/notebooks";
-import { ROLE_LABELS, isUuid } from "@/lib/notebooks/roles";
+import { isUuid } from "@/lib/notebooks/roles";
 import { listSources } from "@/lib/sources/sources";
 import { createClient } from "@/lib/supabase/server";
 import { assignHues } from "@/lib/ui/source-hue";
@@ -59,9 +59,12 @@ export default async function NotebookPage({
           <span aria-hidden="true">←</span> Alle Notizbücher
         </Link>
         <h1>{notebook.title}</h1>
-        <p className="pill">Deine Rolle: {ROLE_LABELS[notebook.role]}</p>
-        {data.user.is_anonymous ? (
-          <p role="note">Demo: Dieses Notizbuch und dein Demo-Zugang werden nach 24 Stunden gelöscht.</p>
+        {sources.length > 0 ? (
+          <div className="spectrum" aria-hidden="true">
+            {sources.map((source) => (
+              <span key={source.id} data-hue={hues[source.title]} />
+            ))}
+          </div>
         ) : null}
         {fehler ? <p role="alert">{notebookErrorMessage(fehler)}</p> : null}
       </div>
@@ -78,17 +81,8 @@ export default async function NotebookPage({
           notebookId={notebook.id}
           isAnonymous={data.user.is_anonymous ?? false}
         />
-        {notebook.role === "owner" ? (
-          <form action={deleteNotebookAction} className="panel danger-zone">
-            <input type="hidden" name="notebookId" value={notebook.id} />
-            <label>
-              <input type="checkbox" name="confirm" required /> Ich möchte dieses Notizbuch
-              endgültig löschen
-            </label>{" "}
-            <button type="submit" className="danger">
-              Notizbuch löschen
-            </button>
-          </form>
+        {notebook.role === "owner" && !data.user.is_anonymous ? (
+          <DeleteNotebook notebookId={notebook.id} title={notebook.title} />
         ) : null}
       </aside>
       <Chat

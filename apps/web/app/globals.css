@@ -97,9 +97,22 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100dvh;
+  background: var(--paper);
+  position: relative;
+  isolation: isolate;
+}
+/* A slow, quiet drift of warm light behind everything. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(1200px 600px at 100% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
-    var(--paper);
+    radial-gradient(40% 35% at 85% 10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    radial-gradient(35% 30% at 10% 90%, hsl(205 70% 50% / 0.07), transparent 70%),
+    radial-gradient(45% 45% at 60% 60%, hsl(140 60% 45% / 0.035), transparent 75%);
+  animation: drift 28s ease-in-out infinite alternate;
 }
 
 h1, h2, h3 {
@@ -218,7 +231,19 @@ button[type="submit"].primary {
   border-color: var(--ink);
   color: var(--paper);
 }
+.primary { position: relative; overflow: hidden; }
+.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.22) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 600ms var(--ease);
+}
+.primary:hover::after { transform: translateX(120%); }
 .primary:hover { background: color-mix(in srgb, var(--ink) 85%, var(--accent)); }
+.danger.solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+.danger.solid:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
 
 .quiet {
   border-color: transparent;
@@ -325,6 +350,15 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 
 /* ---------- Pages: shared ---------- */
 
+main { animation: page-in 420ms var(--ease) both; }
+.stagger > * { animation: rise 420ms var(--ease) both; }
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(5) { animation-delay: 200ms; }
+.stagger > *:nth-child(6) { animation-delay: 250ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 300ms; }
+
 .page {
   max-width: 72rem;
   margin: 0 auto;
@@ -374,12 +408,23 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   font-family: var(--font-read);
 }
 .specimen p { margin: 0; }
+.specimen .q { font-weight: 600; margin-bottom: var(--s2); animation: rise 500ms var(--ease) 0.6s both; }
+.specimen .a { animation: rise 500ms var(--ease) 1.3s both; }
+.specimen .ref { animation: pop 420ms cubic-bezier(0.3, 1.6, 0.5, 1) 2s both; }
 .specimen .passage-line {
   margin-top: var(--s3);
   padding-left: var(--s3);
   border-left: 3px solid var(--src);
   color: var(--ink-2);
   font-size: 0.95rem;
+  animation: slide-in 500ms var(--ease) 2.5s both;
+}
+.specimen mark {
+  color: inherit;
+  background-color: transparent;
+  background-image: linear-gradient(transparent 12%, var(--src-mark) 12%, var(--src-mark) 92%, transparent 92%);
+  background-repeat: no-repeat;
+  animation: sweep 900ms var(--ease) 3.1s both;
 }
 
 .login-card {
@@ -406,6 +451,9 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .divider::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .demo { display: grid; gap: var(--s2); }
 .demo p { font-size: 0.85rem; color: var(--ink-3); margin: 0; text-align: center; }
+.demo .widget { display: flex; justify-content: center; }
+.demo .widget:empty { display: none; }
+.login-card { animation: rise 520ms var(--ease) 0.2s both; }
 
 /* ---------- Notebook list ---------- */
 
@@ -446,7 +494,9 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   width: 10px;
   background: var(--src);
 }
-.book:hover { transform: translateY(-2px); }
+.book::before { transition: width var(--t) var(--ease); }
+.book:hover { transform: translateY(-4px) rotate(-0.3deg); box-shadow: 0 18px 40px -18px var(--src), var(--shadow); }
+.book:hover::before { width: 14px; }
 .book a {
   font-family: var(--font-read);
   font-size: 1.15rem;
@@ -462,6 +512,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   display: grid;
   gap: var(--s3);
   max-width: 34rem;
+  margin: 0 auto;
   padding: var(--s5);
   border-radius: var(--radius-lg);
   border: 1.5px dashed var(--rule);
@@ -470,6 +521,8 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .new-book .row label { flex: 1; }
 
 .empty {
+  margin: 0 auto var(--s6);
+  text-align: center;
   padding: var(--s6);
   border-radius: var(--radius-lg);
   background: var(--paper-2);
@@ -500,13 +553,20 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
     align-items: start;
   }
 }
-.nb-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s3) var(--s4);
-}
+.nb-head { display: grid; gap: var(--s2); justify-items: start; }
 .nb-head h1 { margin: 0; }
+/* The notebook's sources as one band of their colors, drawn in on load. */
+.spectrum {
+  display: flex;
+  gap: 3px;
+  width: min(28rem, 100%);
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  transform-origin: left;
+  animation: grow 900ms var(--ease) 150ms both;
+}
+.spectrum span { flex: 1; background: var(--src); }
 .back { display: inline-block; font-size: 0.9rem; color: var(--ink-3); text-decoration: none; margin-bottom: var(--s3); }
 .nb-head .back { margin-bottom: 0; }
 .back:hover { color: var(--ink); }
@@ -567,6 +627,11 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   border-radius: 4px;
   background: var(--src);
 }
+.sources li { transition: transform var(--t) var(--ease), box-shadow var(--t) var(--ease); animation: rise 380ms var(--ease) both; }
+.sources li:nth-child(2) { animation-delay: 60ms; }
+.sources li:nth-child(3) { animation-delay: 120ms; }
+.sources li:nth-child(n + 4) { animation-delay: 180ms; }
+.sources li:hover { transform: translateX(3px); box-shadow: -4px 0 18px -10px var(--src); }
 .sources .title { font-family: var(--font-read); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .sources .actions { grid-column: 1 / -1; display: flex; gap: var(--s1); }
 .sources .actions form { display: inline; }
@@ -597,7 +662,21 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .members li form label { display: flex; align-items: center; gap: var(--s2); }
 .members li form select { width: auto; }
 
-.danger-zone { border-color: color-mix(in srgb, var(--danger) 25%, var(--rule-2)); }
+.danger-zone { border-color: color-mix(in srgb, var(--danger) 25%, var(--rule-2)); display: flex; justify-content: center; }
+
+dialog.confirm {
+  max-width: min(30rem, calc(100vw - 2rem));
+  padding: var(--s6);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.45);
+}
+dialog.confirm[open] { animation: dialog-in 240ms var(--ease) both; }
+dialog.confirm::backdrop { background: rgb(20 15 10 / 0.5); backdrop-filter: blur(3px); animation: fade 200ms ease both; }
+dialog.confirm h2 { font-size: 1.4rem; }
+dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s2); margin-top: var(--s4); }
 
 /* ---------- Chat: conversation and the margin ---------- */
 
@@ -699,7 +778,8 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   font-size: 0.72rem;
 }
 .chip[aria-expanded="true"] { border-color: var(--src); box-shadow: 0 0 0 2px var(--src-soft); }
-.chip:hover { border-color: var(--src, var(--ink-3)); }
+.chip { transition: transform var(--t) var(--ease), box-shadow var(--t) var(--ease), border-color var(--t) var(--ease); }
+.chip:hover { border-color: var(--src, var(--ink-3)); transform: translateY(-1px); box-shadow: 0 6px 18px -8px var(--src, var(--ink-3)); }
 
 .pending .body { color: var(--ink-2); }
 .pending .body::after {
@@ -742,7 +822,12 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   field-sizing: content;
 }
 .composer textarea:focus { box-shadow: none; }
-.composer:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent), var(--shadow); }
+.composer { transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease); }
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 20px 50px -24px var(--accent);
+  transform: translateY(-1px);
+}
 .composer button { min-height: 44px; }
 .composer .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
 
@@ -813,6 +898,12 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 
 /* ---------- Motion ---------- */
 
+@keyframes page-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { 0% { opacity: 0; transform: scale(0.4); } 100% { opacity: 1; transform: none; } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes drift { from { transform: translate3d(-2%, -1%, 0) scale(1); } to { transform: translate3d(2%, 2%, 0) scale(1.06); } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sweep { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
@@ -837,4 +928,137 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
   .conversation { padding: var(--s4); }
   .login { padding: var(--s5) var(--s4); }
   .login-card { padding: var(--s5); }
+}
+
+/* ---------- Wow layer: light, depth and color in motion ---------- */
+
+/* Tilt and pointer light for [data-tilt] (components/pointer-light.tsx sets the variables). */
+[data-tilt] {
+  --rx: 0deg;
+  --ry: 0deg;
+  transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform 260ms var(--ease), box-shadow 260ms var(--ease);
+  will-change: transform;
+}
+[data-tilt]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 260ms var(--ease);
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), hsl(var(--h, 30) 90% 70% / 0.18), transparent 60%);
+}
+[data-tilt][data-lit]::after { opacity: 1; }
+.book[data-tilt]:hover { transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry)) translateY(-4px); }
+.login-card, .specimen, .passage { position: relative; }
+
+/* Login: a slow constellation of source cards behind the statement. */
+.login { position: relative; }
+.login > :not(.constellation) { position: relative; z-index: 1; }
+.constellation {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.floater {
+  position: absolute;
+  display: grid;
+  gap: 6px;
+  width: 120px;
+  padding: 14px 14px 14px 20px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--src) 30%, transparent);
+  box-shadow: 0 20px 40px -24px var(--src);
+  backdrop-filter: blur(2px);
+  opacity: 0.55;
+  animation: float 16s ease-in-out infinite alternate;
+}
+.floater::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  border-radius: 0 4px 4px 0;
+  background: var(--src);
+}
+.floater i { display: block; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--src) 35%, transparent); }
+.floater i:nth-child(2) { width: 80%; }
+.floater i:nth-child(3) { width: 55%; background: var(--src-mark); }
+.f0 { left: 4%; top: 8%; animation-duration: 18s; }
+.f1 { left: 40%; top: 4%; animation-duration: 22s; animation-delay: -6s; transform: rotate(-6deg); }
+.f2 { right: 6%; top: 12%; animation-duration: 20s; animation-delay: -3s; }
+.f3 { left: 2%; bottom: 10%; animation-duration: 24s; animation-delay: -9s; }
+.f4 { left: 46%; bottom: 4%; animation-duration: 19s; animation-delay: -12s; }
+.f5 { right: 3%; bottom: 14%; animation-duration: 21s; animation-delay: -5s; }
+@media (max-width: 900px) { .f1, .f4, .f5 { display: none; } .floater { opacity: 0.3; } }
+
+/* The promise in the headline runs through all source colors, then gets its marker. */
+.login-hero .statement em.prism {
+  background-image:
+    linear-gradient(transparent 58%, hsl(22 90% 58% / var(--marker)) 58%),
+    linear-gradient(100deg, var(--ink) 0%, hsl(22 75% 42%) 25%, hsl(205 70% 40%) 45%, hsl(320 60% 42%) 65%, var(--ink) 85%);
+  background-size: 100% 100%, 300% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: border-box, text;
+  background-clip: border-box, text;
+  -webkit-text-fill-color: transparent;
+  animation: sweep 1.1s var(--ease) 0.4s both, prism 7s ease-in-out 1.5s infinite alternate;
+}
+@media (prefers-color-scheme: dark) {
+  .login-hero .statement em.prism {
+    background-image:
+      linear-gradient(transparent 58%, hsl(22 90% 58% / var(--marker)) 58%),
+      linear-gradient(100deg, var(--ink) 0%, hsl(22 85% 65%) 25%, hsl(205 85% 70%) 45%, hsl(320 75% 72%) 65%, var(--ink) 85%);
+  }
+}
+
+/* The spectrum under a notebook title: drawn in, then a sheen passes now and then. */
+.spectrum { position: relative; }
+.spectrum::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.7), transparent);
+  transform: translateX(-100%);
+  animation: sheen 5s ease-in-out 1.2s infinite;
+}
+
+/* A passage opens like a page turning toward you, glowing in its source color. */
+.passage {
+  animation: page-turn 520ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  transform-origin: left center;
+}
+.margin:has(.passage) { box-shadow: 0 30px 60px -30px var(--src, rgb(0 0 0 / 0.3)), var(--shadow); }
+.margin:has(.passage[data-hue="0"]) { --src: hsl(22 62% 38%); }
+
+/* A checked answer that just arrived glows once. */
+.turn.arrived .body { animation: arrive 1.4s var(--ease) both; }
+
+@keyframes float {
+  0% { translate: 0 0; rotate: -2deg; }
+  50% { translate: 18px -22px; rotate: 2deg; }
+  100% { translate: -12px 14px; rotate: -1deg; }
+}
+@keyframes prism { from { background-position: 0 0, 0% 0; } to { background-position: 0 0, 100% 0; } }
+@keyframes sheen { 0%, 70% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+@keyframes page-turn {
+  from { opacity: 0; transform: perspective(900px) rotateY(-14deg) translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes arrive {
+  0% { box-shadow: -2px 0 0 0 var(--accent), 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  30% { box-shadow: -2px 0 0 0 var(--accent), 0 0 40px -6px color-mix(in srgb, var(--accent) 35%, transparent); }
+  100% { box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-tilt] { transform: none !important; }
+  .floater { animation: none; }
 }

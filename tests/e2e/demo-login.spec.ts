@@ -23,9 +23,13 @@ test.describe("demo login", () => {
     await expect(page.locator('script[src*="challenges.cloudflare.com"]')).toHaveCount(0);
   });
 
-  test("Demo starten lands on the copied template notebook with its two ready sources", async ({ page }) => {
+  test("Demo starten lands on the notebook list, and the copied notebook has its two ready sources", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.getByRole("heading", { name: "Deine Notizbücher" })).toBeVisible();
+
+    await page.getByRole("link", { name: /Demo: Beispielquellen/ }).click();
     await page.waitForURL(NOTEBOOK_URL);
 
     await expect(page.getByRole("heading", { name: "Demo: Beispielquellen" })).toBeVisible();
@@ -41,16 +45,17 @@ test.describe("demo login", () => {
     await expect(page.getByText("Beispiel: Noch in Arbeit.txt")).toHaveCount(0);
   });
 
-  test("the notebook shows the 24 hour note and no source controls, but the chat form", async ({ page }) => {
+  test("the notebook has no 24 hour note, no delete button, no source controls, but the chat form", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await page.getByRole("link", { name: /Demo: Beispielquellen/ }).click();
     await page.waitForURL(NOTEBOOK_URL);
+    await expect(page.getByRole("heading", { name: "Demo: Beispielquellen" })).toBeVisible();
 
-    await expect(
-      page
-        .getByRole("note")
-        .filter({ hasText: "Demo: Dieses Notizbuch und dein Demo-Zugang werden nach 24 Stunden gelöscht." }),
-    ).toBeVisible();
+    await expect(page.getByRole("note")).toHaveCount(0);
+    await expect(page.getByText("werden nach 24 Stunden gelöscht")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
 
     await expect(page.getByText("Quelle hinzufügen")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);

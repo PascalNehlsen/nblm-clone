@@ -254,7 +254,7 @@ export function Chat({
             </div>
           ) : null}
           {turn.checked ? (
-            <div className="turn a">
+            <div className="turn a arrived">
               <span className="who">Antwort</span>
               <p className="body">{turn.checked.content}</p>
             </div>
@@ -299,6 +299,7 @@ export function Chat({
             aria-label={`Fundstelle [${openedCitation.ordinal}]`}
             className="passage"
             data-hue={citationHue(openedCitation, hues)}
+            data-tilt="3"
             key={`${opened.entryId}-${opened.ordinal}`}
           >
             <div className="head">

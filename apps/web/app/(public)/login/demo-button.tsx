@@ -97,7 +97,7 @@ export function DemoButton({ siteKey }: { siteKey: string | null }) {
         Demo starten (ohne Anmeldung)
       </button>
       <p>Die Demo-Daten werden nach 24 Stunden gelöscht.</p>
-      <div ref={widget} />
+      <div ref={widget} className="widget" />
       {failed ? <p role="alert">{loginErrorMessage("sicherheitspruefung")}</p> : null}
     </div>
   );

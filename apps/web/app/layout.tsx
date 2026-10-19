@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/logo";
+import { PointerLight } from "@/components/pointer-light";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </Link>
         </header>
         {children}
+        <PointerLight />
       </body>
     </html>
   );
