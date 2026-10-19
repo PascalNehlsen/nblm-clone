@@ -5,7 +5,7 @@ DNS for **sec-nblm.dev**, bought at the Cloudflare Registrar. Planned in the PR 
 | File | Content |
 |---|---|
 | `versions.tf` | OpenTofu and provider pins (cloudflare 5.27.0); S3 backend `cloudflare/terraform.tfstate` with the same encrypted state as `infra/aws` |
-| `providers.tf` | Cloudflare provider; token only from `CLOUDFLARE_API_TOKEN` |
+| `providers.tf` | Cloudflare provider; API credential only from `CLOUDFLARE_API_TOKEN` |
 | `dns.tf` | `app` (production, Vercel `nblm-web`) and `develop` (Vercel `nblm-web-develop`) as CNAMEs to the targets Vercel shows, never proxied; null MX, SPF `-all` and DMARC `p=reject`, because the domain sends no mail |
 | `dnssec.tf` | DNSSEC on (`prevent_destroy`) |
 
