@@ -1,0 +1,215 @@
+name: infra-cloudflare
+
+# Plan and apply for infra/cloudflare: DNS and DNSSEC for sec-nblm.dev (ADR 0013,
+# docs/runbooks/infra-apply.md). Mirrors infra.yml (ADR 0009) step for step; a separate file
+# keeps the AWS pipeline untouched. State lives in the same encrypted S3 backend, so the jobs
+# still assume the AWS plan/apply roles. The Cloudflare token reaches only the Init, Plan and
+# Apply steps: a zone-scoped read token in `plan`, an edit token in `infra`.
+
+on:
+  pull_request:
+    paths:
+      - "infra/cloudflare/**"
+  push:
+    branches: [main]
+    paths:
+      - "infra/cloudflare/**"
+
+permissions: {}
+
+# Runs on main share one group and are never cancelled: an apply must not be cut
+# off halfway. Pull requests get their own group per branch, so a PR run can never
+# replace a main run that waits in the queue.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'infra-cloudflare' || format('infra-cloudflare-pr-{0}', github.ref) }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  PLAN_ROLE_ARN: arn:aws:iam::278311879197:role/nblm-tofu-plan
+  APPLY_ROLE_ARN: arn:aws:iam::278311879197:role/nblm-tofu-apply
+
+jobs:
+  plan-pr:
+    name: plan (PR)
+    # Same-repo branches only: a fork's code never runs with the plan role.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cf-plan-pr-${{ github.run_id }}
+
+      - name: Init
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: scripts/tofu.sh -chdir=infra/cloudflare init -input=false -lockfile=readonly
+
+      # The plan role cannot write state, so no lock (ADR 0003).
+      - name: Plan
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: scripts/tofu.sh -chdir=infra/cloudflare plan -input=false -lock=false -no-color -out=cloudflare.tfplan
+
+      - name: Plan in the summary
+        shell: bash
+        run: |
+          {
+            echo "<details><summary>tofu plan</summary>"
+            echo
+            echo '```text'
+            scripts/tofu.sh -chdir=infra/cloudflare show -no-color cloudflare.tfplan
+            echo '```'
+            echo "</details>"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # shell: bash adds pipefail, so a failing show fails the step too.
+      - name: Plan guard
+        shell: bash
+        run: scripts/tofu.sh -chdir=infra/cloudflare show -json cloudflare.tfplan | node scripts/plan-guard.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+  plan-main:
+    name: plan (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cf-plan-main-${{ github.run_id }}
+
+      - name: Init
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: scripts/tofu.sh -chdir=infra/cloudflare init -input=false -lockfile=readonly
+
+      # -detailed-exitcode: 0 no changes, 2 changes, anything else is an error.
+      - name: Plan
+        id: plan
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          rc=0
+          scripts/tofu.sh -chdir=infra/cloudflare plan -input=false -lock=false -no-color -detailed-exitcode -out=cloudflare.tfplan || rc=$?
+          case "$rc" in
+            0) echo "changes=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "changes=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
+
+      # Enforced plan encryption (ADR 0003) writes {"meta":...}; a plain plan is a zip ("PK").
+      - name: Check the plan file is encrypted
+        shell: bash
+        run: |
+          [ "$(head -c 8 infra/cloudflare/cloudflare.tfplan)" = '{"meta":' ] || { echo "::error::plan file is not encrypted"; exit 1; }
+
+      - name: Plan in the summary
+        shell: bash
+        run: |
+          {
+            echo "<details><summary>tofu plan</summary>"
+            echo
+            echo '```text'
+            scripts/tofu.sh -chdir=infra/cloudflare show -no-color cloudflare.tfplan
+            echo '```'
+            echo "</details>"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Plan guard
+        shell: bash
+        run: scripts/tofu.sh -chdir=infra/cloudflare show -json cloudflare.tfplan | node scripts/plan-guard.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Ciphertext (checked above), kept one day. The apply job downloads it by id.
+      - name: Upload the saved plan
+        id: upload
+        if: steps.plan.outputs.changes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudflare-tfplan-${{ github.run_attempt }}
+          path: infra/cloudflare/cloudflare.tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  apply:
+    name: apply
+    needs: plan-main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan-main.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: infra
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.plan-main.outputs.artifact-id }}
+          path: infra/cloudflare
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cf-apply-${{ github.run_id }}
+
+      - name: Init
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: scripts/tofu.sh -chdir=infra/cloudflare init -input=false -lockfile=readonly
+
+      # Same guard on the exact file that is applied.
+      - name: Plan guard
+        shell: bash
+        run: scripts/tofu.sh -chdir=infra/cloudflare show -json cloudflare.tfplan | node scripts/plan-guard.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # A saved plan refuses to apply if state changed after it was made.
+      - name: Apply the saved plan
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: scripts/tofu.sh -chdir=infra/cloudflare apply -input=false -no-color cloudflare.tfplan

@@ -53,3 +53,7 @@ The role ARNs are in the `apply` job log (`Outputs:`). OIDC federation must be o
 ## After a rehearsal
 
 Update "Last rehearsed" above with the date and what was applied.
+
+## infra/cloudflare (DNS for sec-nblm.dev)
+
+Same flow through `.github/workflows/infra-cloudflare.yml`: plan in the PR (environment `plan`, read-only Cloudflare token), plan and apply after merge (environment `infra`, edit token), plan guard on both. The AWS roles still run the jobs because the state lives in the same encrypted S3 bucket. Tokens are zone-scoped, created by hand with a 90-day expiry; rotate both in GitHub (`gh secret set CLOUDFLARE_API_TOKEN --env plan|infra`).

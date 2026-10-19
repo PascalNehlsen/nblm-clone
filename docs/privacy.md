@@ -15,6 +15,8 @@ Personal data the app stores, where it lives, and how long. Every new data proce
 
 Further processors (Sentry EU) are added with the PRs that introduce them.
 
+Cloudflare DNS and Registrar for `sec-nblm.dev` are not processors of user data: the records point to Vercel and are not proxied, so Cloudflare sees DNS lookups (as any resolver chain does) but no app traffic (infra/cloudflare).
+
 Websites fetched by the URL import (PR C2) are not processors: they receive a GET from Vercel's address with a generic User-Agent and no user data beyond the URL the user chose. The URL is never logged.
 
 ## Data
