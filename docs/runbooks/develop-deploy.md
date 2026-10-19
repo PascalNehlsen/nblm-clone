@@ -98,3 +98,14 @@ Order matters: the staged smoke test requires anonymous sign-in **on** and the c
 3. Vercel `nblm-web-develop`, Production: `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = the site key.
 4. Register the demo template ([runbook](demo-template.md)).
 5. Right before merging F2: Supabase, Authentication, Sign In / Providers, Anonymous sign-ins on.
+
+## Moving develop to develop.sec-nblm.dev (after the Cloudflare apply)
+
+In this order, so nothing is ever pointed at a host that does not answer:
+1. Wait until Vercel shows `develop.sec-nblm.dev` as valid (certificate issued).
+2. Cloudflare Turnstile widget: add the hostname `develop.sec-nblm.dev`.
+3. Supabase develop, URL configuration: add the redirect `https://develop.sec-nblm.dev/auth/callback`; then set the Site URL to `https://develop.sec-nblm.dev`.
+4. Vercel `nblm-web-develop`, Production: `NEXT_PUBLIC_SITE_URL=https://develop.sec-nblm.dev`.
+5. GitHub environment `develop`: `gh variable set DEVELOP_SITE_URL --env develop --body https://develop.sec-nblm.dev`.
+6. Rerun the last develop run (`gh run rerun <id>`), check the smoke results.
+7. Only then remove `nblm-web-develop.vercel.app` from the Supabase redirects and the Turnstile hostnames.
