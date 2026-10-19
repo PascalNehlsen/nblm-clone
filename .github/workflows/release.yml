@@ -138,7 +138,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           host="${SITE_URL#https://}"
-          code="$(curl -s -o "$RUNNER_TEMP/live.json" -w '%{http_code}' -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v13/deployments/$host?teamId=$VERCEL_ORG_ID")"
+          code="$(curl -s --max-time 30 -o "$RUNNER_TEMP/live.json" -w '%{http_code}' -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v13/deployments/$host?teamId=$VERCEL_ORG_ID")"
           id=""
           if [ "$code" = "200" ]; then
             # Only a production deployment of this very project counts as "previous".

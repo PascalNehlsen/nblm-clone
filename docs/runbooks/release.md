@@ -1,7 +1,7 @@
 # Runbook: release to production
 
 - Last rehearsed: never; the first `v*` tag after the production setup below is the first run
-- Who: the human creates the tag and approves the `production` environment; CI does the rest (`.github/workflows/release.yml`, ADR 0014). Nobody deploys or migrates production locally
+- Who: the human creates the tag and approves the `production` environment; CI does the rest (`.github/workflows/release.yml`, ADR 0015; canary ADR 0014). Nobody deploys or migrates production locally
 - What: tag on main, green on develop, then migrations, a deployment without the domain, smoke test and canary against exactly that deployment, promote to `app.sec-nblm.dev`, live smoke test, automatic promote of the previous deployment if the live check fails
 
 ## Production setup (once, before the first tag)
