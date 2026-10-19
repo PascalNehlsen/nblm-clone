@@ -16,13 +16,13 @@ locals {
   # Titan Text Embeddings V2 in eu-central-1, called directly (no inference profile).
   embedding_model_arn = "arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0"
 
-  # Chat (block D): Claude Haiku 5.5 through the EU system inference profile, which routes
+  # Chat (block D): Amazon Nova 2 Lite through the EU system inference profile, which routes
   # only to these six EU regions (read with get-inference-profile on 2026-10-19; the same
   # regions the region guard SCP allows for Bedrock). The model ARNs are usable only
   # through this profile (condition in the policy), never directly.
-  chat_profile_arn   = "arn:aws:bedrock:eu-central-1:278311879197:inference-profile/eu.anthropic.claude-haiku-5-5"
+  chat_profile_arn   = "arn:aws:bedrock:eu-central-1:278311879197:inference-profile/eu.amazon.nova-2-lite-v1:0"
   chat_model_regions = ["eu-central-1", "eu-west-1", "eu-west-3", "eu-north-1", "eu-south-1", "eu-south-2"]
-  chat_model_arns    = [for r in local.chat_model_regions : "arn:aws:bedrock:${r}::foundation-model/anthropic.claude-haiku-5-5"]
+  chat_model_arns    = [for r in local.chat_model_regions : "arn:aws:bedrock:${r}::foundation-model/amazon.nova-2-lite-v1:0"]
 }
 
 resource "aws_iam_openid_connect_provider" "vercel" {
@@ -58,7 +58,7 @@ resource "aws_iam_role_policy" "web_bedrock_embeddings" {
   })
 }
 
-# Chat: invoke and stream Claude Haiku 5.5, only through the EU inference profile.
+# Chat: invoke and stream Amazon Nova 2 Lite, only through the EU inference profile.
 resource "aws_iam_role_policy" "web_bedrock_chat" {
   for_each = local.web_roles
 

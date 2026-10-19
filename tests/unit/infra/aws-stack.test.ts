@@ -187,9 +187,9 @@ describe("infra/aws outputs", () => {
 // `${jsonencode(name)}`. Nothing is executed and no network is used.
 // ---------------------------------------------------------------------------
 
-const PROFILE_ARN = "arn:aws:bedrock:eu-central-1:278311879197:inference-profile/eu.anthropic.claude-haiku-5-5";
+const PROFILE_ARN = "arn:aws:bedrock:eu-central-1:278311879197:inference-profile/eu.amazon.nova-2-lite-v1:0";
 const EU_REGIONS = ["eu-central-1", "eu-west-1", "eu-west-3", "eu-north-1", "eu-south-1", "eu-south-2"];
-const EXPECTED_MODEL_ARNS = EU_REGIONS.map((r) => `arn:aws:bedrock:${r}::foundation-model/anthropic.claude-haiku-5-5`);
+const EXPECTED_MODEL_ARNS = EU_REGIONS.map((r) => `arn:aws:bedrock:${r}::foundation-model/amazon.nova-2-lite-v1:0`);
 const CHAT_ACTIONS = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"];
 
 type TplValue = string | string[];
