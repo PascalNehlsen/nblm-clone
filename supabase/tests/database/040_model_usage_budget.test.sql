@@ -799,7 +799,9 @@ create function pg_temp.check_security_definer_allowlist() returns setof text as
       to_regprocedure('private.add_notebook_owner()'),
       to_regprocedure('private.audit_membership()'),
       to_regprocedure('private.guard_last_owner()'),
-      to_regprocedure('private.redact_cited_answers()')
+      to_regprocedure('private.redact_cited_answers()'),
+      -- F1 demo login trigger function, allowlisted by ADR 0012 (null-safe until the migration exists)
+      to_regprocedure('private.copy_demo_template()')
     ]) as proc
   ),
   allowed as (

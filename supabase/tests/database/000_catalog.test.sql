@@ -100,7 +100,7 @@
 
 begin;
 
-select plan(59);
+select plan(60);
 
 -- ---------------------------------------------------------------------------
 -- Check definitions
@@ -180,7 +180,11 @@ create function pg_temp.check_security_definer_allowlist() returns setof text as
     -- message's content regardless of who is deleting the chunk -- inside
     -- that FK action the trigger runs as the deleting user, and an invoker
     -- update of someone else's message would silently update 0 rows under
-    -- RLS instead of erroring. private.clear_citation_quote() (the sibling
+    -- RLS instead of erroring. private.copy_demo_template() (F1, demo login)
+    -- is allowlisted because the AFTER INSERT trigger on notebooks copies the
+    -- template's sources and chunks into a notebook whose owner may not read
+    -- them and must not hold any grant on private.demo_template.
+    -- private.clear_citation_quote() (the sibling
     -- BEFORE UPDATE OF chunk_id trigger that nulls out `quote` alongside
     -- `chunk_id`) stays SECURITY INVOKER -- it only ever touches the row
     -- already being updated in place, so it is deliberately NOT added here.
@@ -188,7 +192,8 @@ create function pg_temp.check_security_definer_allowlist() returns setof text as
       to_regprocedure('private.add_notebook_owner()'),
       to_regprocedure('private.audit_membership()'),
       to_regprocedure('private.guard_last_owner()'),
-      to_regprocedure('private.redact_cited_answers()')
+      to_regprocedure('private.redact_cited_answers()'),
+      to_regprocedure('private.copy_demo_template()')
     ]) as proc
   ),
   allowed as (
@@ -664,6 +669,26 @@ select is_empty(
 select is_empty(
   'select * from pg_temp.check_authenticated_execute_on_private_functions()',
   'authenticated has no EXECUTE on any function in private other than notebook_role(uuid)'
+);
+
+-- F1: the allowlisted demo copy trigger function really exists as a SECURITY
+-- DEFINER function (so the allowlist entry is not a dead entry), and none of
+-- the definer checks above flags it.
+select ok(
+  coalesce(
+    (select p.prosecdef from pg_proc p where p.oid = to_regprocedure('private.copy_demo_template()')),
+    false
+  )
+  and not exists (
+    select 1 from pg_temp.check_security_definer_allowlist() as v where v like '%copy_demo_template%'
+    union all
+    select 1 from pg_temp.check_security_definer_returns_trigger() as v where v like '%copy_demo_template%'
+    union all
+    select 1 from pg_temp.check_security_definer_search_path() as v where v like '%copy_demo_template%'
+    union all
+    select 1 from pg_temp.check_security_definer_execute_grants() as v where v like '%copy_demo_template%'
+  ),
+  'private.copy_demo_template() exists as SECURITY DEFINER and passes every definer check'
 );
 
 -- ---------------------------------------------------------------------------
