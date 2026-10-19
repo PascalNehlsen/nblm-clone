@@ -23,8 +23,11 @@ export interface ProviderUsage {
 export interface ProviderRequest<K extends ModelKind> {
   modelId: string;
   maxOutputTokens: number;
+  temperature: number;
   input: InputFor<K>;
   signal: AbortSignal;
+  // Streamed text for chat. Never logged; the wrapper stops forwarding after a timeout.
+  onDelta?: (text: string) => void;
 }
 
 // The provider is injected, so the wrapper never depends on an SDK and tests use a fake.

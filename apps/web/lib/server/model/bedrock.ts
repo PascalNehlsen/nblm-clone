@@ -1,10 +1,11 @@
 import "server-only";
 
-import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { BedrockRuntimeClient, ConverseStreamCommand, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import { awsCredentialsProvider } from "@vercel/functions/oidc";
 import { ProviderError, type ProviderCall, type ProviderUsage } from "./types";
 
-// Titan Text Embeddings V2 on Bedrock, behind ProviderCall<"embedding">. Credentials come
+// Titan Text Embeddings V2 (embeddings) and the chat model through ConverseStream (chat) on
+// Bedrock, behind ProviderCall. Credentials come
 // from the Vercel OIDC role in AWS_ROLE_ARN (infra/aws, ADR 0009), never from AWS keys.
 // The region comes only from BEDROCK_REGION and must be in the EU (AGENTS.md residency),
 // never from the platform's own region variable. Nothing here logs, and errors carry only
@@ -33,7 +34,7 @@ type Env = Record<string, string | undefined>;
 // One client per region and role, so the OIDC credentials are cached across calls.
 const clients = new Map<string, BedrockRuntimeClient>();
 
-function clientSend(region: string, roleArn: string): BedrockSend {
+function clientFor(region: string, roleArn: string): BedrockRuntimeClient {
   const key = `${region}\n${roleArn}`;
   let client = clients.get(key);
   if (!client) {
@@ -44,7 +45,11 @@ function clientSend(region: string, roleArn: string): BedrockSend {
     });
     clients.set(key, client);
   }
-  const bound = client;
+  return client;
+}
+
+function clientSend(region: string, roleArn: string): BedrockSend {
+  const bound = clientFor(region, roleArn);
   return async (command, options) => {
     const response = await bound.send(command, options);
     return { body: response.body };
@@ -133,3 +138,97 @@ export function createBedrockEmbeddings(deps: { send?: BedrockSend; env?: Env } 
 }
 
 export const bedrockEmbeddings: ProviderCall<"embedding"> = createBedrockEmbeddings();
+
+// Chat: one ConverseStream call. The model gets no tools (no toolConfig, AGENTS.md); model,
+// max tokens and temperature come from the server config through the wrapper.
+
+// The subset of the SDK's stream events the adapter reads.
+export interface ConverseStreamEvent {
+  contentBlockDelta?: { delta?: { text?: string } };
+  metadata?: { usage?: { inputTokens?: unknown; outputTokens?: unknown } };
+  throttlingException?: unknown;
+  modelStreamErrorException?: unknown;
+  internalServerException?: unknown;
+  serviceUnavailableException?: unknown;
+  validationException?: unknown;
+}
+
+export type BedrockStreamSend = (
+  command: ConverseStreamCommand,
+  options: { abortSignal: AbortSignal },
+) => Promise<{ stream: AsyncIterable<ConverseStreamEvent> }>;
+
+function clientStreamSend(region: string, roleArn: string): BedrockStreamSend {
+  const bound = clientFor(region, roleArn);
+  return async (command, options) => {
+    const response = await bound.send(command, options);
+    if (!response.stream) throw new ProviderError("error");
+    return { stream: response.stream as AsyncIterable<ConverseStreamEvent> };
+  };
+}
+
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function streamExceptionKind(event: ConverseStreamEvent): ProviderError["kind"] | null {
+  if (event.throttlingException !== undefined) return "throttled";
+  if (
+    event.modelStreamErrorException !== undefined ||
+    event.internalServerException !== undefined ||
+    event.serviceUnavailableException !== undefined ||
+    event.validationException !== undefined
+  ) {
+    return "error";
+  }
+  return null;
+}
+
+export function createBedrockChat(deps: { sendStream?: BedrockStreamSend; env?: Env } = {}): ProviderCall<"chat"> {
+  return async ({ modelId, maxOutputTokens, temperature, input, signal, onDelta }) => {
+    const env = deps.env ?? process.env;
+    const region = env.BEDROCK_REGION?.trim() ?? "";
+    const roleArn = env.AWS_ROLE_ARN?.trim() ?? "";
+    if (!(BEDROCK_EU_REGIONS as readonly string[]).includes(region) || !roleArn) {
+      throw new ProviderError("error");
+    }
+    if (signal.aborted) throw new ProviderError("timeout");
+
+    const command = new ConverseStreamCommand({
+      modelId,
+      system: [{ text: input.system }],
+      messages: input.messages.map((m) => ({ role: m.role, content: [{ text: m.content }] })),
+      inferenceConfig: { maxTokens: maxOutputTokens, temperature },
+    });
+
+    const send = deps.sendStream ?? clientStreamSend(region, roleArn);
+    let text = "";
+    let usage: ProviderUsage | null = null;
+    try {
+      const { stream } = await send(command, { abortSignal: signal });
+      for await (const event of stream) {
+        const exception = streamExceptionKind(event);
+        if (exception) throw new ProviderError(exception);
+        const piece = event.contentBlockDelta?.delta?.text;
+        if (typeof piece === "string" && piece.length > 0) {
+          text += piece;
+          onDelta?.(piece);
+        }
+        const reported = event.metadata?.usage;
+        if (reported) {
+          usage =
+            isTokenCount(reported.inputTokens) && isTokenCount(reported.outputTokens)
+              ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens }
+              : null;
+        }
+      }
+    } catch (error) {
+      if (error instanceof ProviderError) throw new ProviderError(error.kind);
+      throw new ProviderError(errorKind(error));
+    }
+    if (!usage) throw new ProviderError("error");
+    return { output: { text }, usage };
+  };
+}
+
+export const bedrockChat: ProviderCall<"chat"> = createBedrockChat();

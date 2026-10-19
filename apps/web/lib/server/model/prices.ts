@@ -16,6 +16,12 @@ export const PRICES: PriceTable = {
   // AmazonBedrock, eu-central-1, publicationDate 2026-10-16, SKU QRGS5WQKSZZ4QQKV, usagetype
   // EUC1-TitanEmbeddingV2-Text-input-tokens (verified by Pascal on the host).
   "amazon.titan-embed-text-v2:0": { inputUsdPerMTok: 0.2, outputUsdPerMTok: 0 },
+  // Amazon Nova 2 Lite through the EU inference profile (regional, not global): 0.000429 USD
+  // per 1K input tokens (SKU UVBGYBB2KWGTDYAS, usagetype EUC1-Nova2.0Lite-input-tokens) and
+  // 0.003597 USD per 1K output tokens (SKU 2Q2KMPM6X7WRKD55, usagetype
+  // EUC1-Nova2.0Lite-output-tokens). Source: AWS public price list AmazonBedrock, eu-central-1,
+  // retrieved 2026-10-19 by the host session.
+  "eu.amazon.nova-2-lite-v1:0": { inputUsdPerMTok: 0.429, outputUsdPerMTok: 3.597 },
 };
 
 // Upper bound on the per-message framing tokens a provider adds.

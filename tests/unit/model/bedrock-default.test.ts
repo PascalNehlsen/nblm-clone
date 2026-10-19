@@ -61,6 +61,7 @@ describe("createBedrockEmbeddings: default path (no injected send)", () => {
       const request: ProviderRequest<"embedding"> = {
         modelId: "amazon.titan-embed-text-v2:0",
         maxOutputTokens: 0,
+        temperature: 0,
         input: { texts: ["hello"] },
         signal: controller.signal,
       };
