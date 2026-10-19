@@ -241,9 +241,110 @@ describe("runTurn: logs", () => {
       expect(text).not.toContain(QUESTION_SENTINEL);
       expect(text).not.toContain(CHUNK_SENTINEL);
       expect(text).not.toContain(ANSWER_SENTINEL);
+      // Extended for the fold fix: five drop-reason and folded counters were added.
       expect(Object.keys(h.logs[0] ?? {}).sort()).toEqual(
-        ["abstained", "chunks", "citations", "dropped", "event", "ms", "outcome", "reason"].sort(),
+        [
+          "abstained",
+          "chunks",
+          "citations",
+          "citationsFolded",
+          "dropped",
+          "droppedMalformed",
+          "droppedNotInChunk",
+          "droppedOverLimit",
+          "droppedUnknownChunk",
+          "event",
+          "ms",
+          "outcome",
+          "reason",
+        ].sort(),
       );
     }
+  });
+
+  it("the new counters are null on failure paths", async () => {
+    const failing: Harness[] = [
+      harness({ retrieval: { ok: false, reason: "not_found" } }),
+      harness({ chat: { kind: "refused", category: "budget_exceeded" } }),
+      harness({ saveThrows: true }),
+    ];
+    for (const h of failing) {
+      await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.logs[0]).toMatchObject({
+        outcome: "failed",
+        droppedUnknownChunk: null,
+        droppedNotInChunk: null,
+        droppedMalformed: null,
+        droppedOverLimit: null,
+        citationsFolded: null,
+      });
+    }
+  });
+
+  it("the new counters are 0 on the no-chunks abstention path", async () => {
+    const h = harness({ retrieval: { ok: true, chunks: [], usageId: "u-r" } });
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.logs[0]).toMatchObject({
+      droppedUnknownChunk: 0,
+      droppedNotInChunk: 0,
+      droppedMalformed: 0,
+      droppedOverLimit: 0,
+      citationsFolded: 0,
+    });
+  });
+
+  it("the new counters are 0 for an answer with one exact citation", async () => {
+    const h = harness();
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.logs[0]).toMatchObject({
+      droppedUnknownChunk: 0,
+      droppedNotInChunk: 0,
+      droppedMalformed: 0,
+      droppedOverLimit: 0,
+      citationsFolded: 0,
+    });
+  });
+
+  it("the new counters carry the counts from the citation check", async () => {
+    const answer = `${ANSWER_SENTINEL} [1: "sitzt in Bonn"] [9: "x"] [1: "gibt es nicht"] [2: "gibt es auch nicht"] [123: "Bonn"]`;
+    const h = harness({ chat: { kind: "ok", deltas: [answer] } });
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.logs[0]).toMatchObject({
+      citations: 1,
+      dropped: 4,
+      droppedUnknownChunk: 1,
+      droppedNotInChunk: 2,
+      droppedMalformed: 1,
+      droppedOverLimit: 0,
+      citationsFolded: 0,
+    });
+    expect(JSON.stringify(h.logs)).not.toContain(ANSWER_SENTINEL);
+  });
+});
+
+describe("runTurn: folded citations", () => {
+  const SS = String.fromCodePoint(0xdf);
+  const FOLD_CHUNKS = [chunk(1, `${CHUNK_SENTINEL} Er sagte, da${SS} er morgen kommt.`)];
+
+  it("a folded match does not abstain and is saved with the original chunk span", async () => {
+    const h = harness({
+      retrieval: { ok: true, chunks: FOLD_CHUNKS, usageId: "u-r" },
+      chat: { kind: "ok", deltas: [`${ANSWER_SENTINEL} Er kommt [1: "dass er morgen"].`] },
+    });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: QUESTION_SENTINEL });
+    const quote = `da${SS} er morgen`;
+    expect(h.saveTurn).toHaveBeenCalledWith({
+      notebookId: NOTEBOOK_ID,
+      question: QUESTION_SENTINEL,
+      answerId: ANSWER_ID,
+      answer: `${ANSWER_SENTINEL} Er kommt [1].`,
+      citations: [{ ordinal: 1, chunkId: "chunk-1", quote }],
+    });
+    expect(r).toMatchObject({ ok: true, message: { abstained: false, citations: [{ quote }] } });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 1, dropped: 0, abstained: false, citationsFolded: 1 });
+    const text = JSON.stringify(h.logs);
+    expect(text).not.toContain(ANSWER_SENTINEL);
+    expect(text).not.toContain(CHUNK_SENTINEL);
+    expect(text).not.toContain(QUESTION_SENTINEL);
   });
 });

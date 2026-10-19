@@ -30,6 +30,12 @@ export interface TurnLogEvent {
   citations: number | null;
   dropped: number | null;
   abstained: boolean | null;
+  // Why citations were dropped, and how many needed folding (ADR 0016). Counts only.
+  droppedUnknownChunk: number | null;
+  droppedNotInChunk: number | null;
+  droppedMalformed: number | null;
+  droppedOverLimit: number | null;
+  citationsFolded: number | null;
   ms: number;
 }
 
@@ -62,6 +68,11 @@ export async function runTurn(
     citations: null as number | null,
     dropped: null as number | null,
     abstained: null as boolean | null,
+    droppedUnknownChunk: null as number | null,
+    droppedNotInChunk: null as number | null,
+    droppedMalformed: null as number | null,
+    droppedOverLimit: null as number | null,
+    citationsFolded: null as number | null,
   };
   const finish = (result: TurnResult): TurnResult => {
     deps.log({
@@ -93,6 +104,11 @@ export async function runTurn(
     stats.citations = 0;
     stats.dropped = 0;
     stats.abstained = true;
+    stats.droppedUnknownChunk = 0;
+    stats.droppedNotInChunk = 0;
+    stats.droppedMalformed = 0;
+    stats.droppedOverLimit = 0;
+    stats.citationsFolded = 0;
     return finish({ ok: true, message: { id, content: ABSTENTION, citations: [], abstained: true } });
   }
 
@@ -124,6 +140,11 @@ export async function runTurn(
       stats.citations = message.citations.length;
       stats.dropped = checked.dropped;
       stats.abstained = abstained;
+      stats.droppedUnknownChunk = checked.droppedBy.unknown_chunk;
+      stats.droppedNotInChunk = checked.droppedBy.not_in_chunk;
+      stats.droppedMalformed = checked.droppedBy.malformed;
+      stats.droppedOverLimit = checked.droppedBy.over_limit;
+      stats.citationsFolded = checked.folded;
       saved = message;
       return message.id;
     },
