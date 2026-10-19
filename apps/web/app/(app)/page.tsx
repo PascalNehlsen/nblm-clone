@@ -25,9 +25,6 @@ export default async function Home({
         <div>
           <h1>Deine Notizbücher</h1>
         </div>
-        <Link href="/profil" className="button quiet">
-          Profil
-        </Link>
       </div>
       {params.fehler ? <p role="alert">{notebookErrorMessage(params.fehler)}</p> : null}
       {params.geloescht ? <p role="status">Das Notizbuch wurde gelöscht.</p> : null}

@@ -121,6 +121,58 @@ test.describe("getting around", () => {
   });
 });
 
+async function expectProfilInTopBar(page: Page): Promise<void> {
+  const links = page.getByRole("link", { name: "Profil", exact: true });
+  await expect(links).toHaveCount(1);
+  const profil = links.first();
+  await expect(profil).toBeVisible();
+  await expect(profil).toHaveAttribute("href", "/profil");
+  // Top bar, not page content.
+  await expect(page.locator("main").getByRole("link", { name: "Profil", exact: true })).toHaveCount(0);
+  // Same row as "Abmelden".
+  const logout = page.getByRole("button", { name: "Abmelden" });
+  await expect(logout).toBeVisible();
+  const a = await profil.boundingBox();
+  const b = await logout.boundingBox();
+  if (!a || !b) throw new Error("no bounding box for Profil link or Abmelden button");
+  expect(Math.abs(a.y + a.height / 2 - (b.y + b.height / 2))).toBeLessThan(40);
+}
+
+test.describe("profile link in the top bar", () => {
+  test("on the notebook list exactly one 'Profil' link sits next to Abmelden and leads to /profil", async ({
+    context,
+  }) => {
+    await context.addCookies(await seedLocalSession("navigation-e2e-profil-home"));
+    const page = await context.newPage();
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Deine Notizbücher" })).toBeVisible();
+
+    await expectProfilInTopBar(page);
+
+    await page.getByRole("link", { name: "Profil", exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/profil");
+    await expect(page.getByRole("heading", { name: "Profil", exact: true })).toBeVisible();
+  });
+
+  test("on a notebook page the 'Profil' link is present and leads to /profil", async ({ context }) => {
+    await context.addCookies(await seedLocalSession("navigation-e2e-profil-notebook"));
+    const page = await context.newPage();
+    await createNotebookViaUi(page, `Profil ${Date.now()}`);
+
+    await expectProfilInTopBar(page);
+
+    await page.getByRole("link", { name: "Profil", exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/profil");
+    await expect(page.getByRole("heading", { name: "Profil", exact: true })).toBeVisible();
+  });
+
+  test("a signed-out visitor on /login sees no 'Profil' link", async ({ page }) => {
+    await page.goto("/login");
+    await expect(page.getByRole("link", { name: "Profil", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Abmelden" })).toHaveCount(0);
+  });
+});
+
 test.describe("not found", () => {
   test("an unknown path shows the German not-found page and keeps status 404", async ({ context }) => {
     await context.addCookies(await seedLocalSession("navigation-e2e-404-path"));

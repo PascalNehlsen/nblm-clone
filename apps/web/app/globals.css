@@ -185,14 +185,61 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 .brand svg { color: var(--accent); }
 
-/* The app layout's sign-out form sits in the top bar's right corner. */
-.signout {
+/* The app layout's account links sit in the top bar's right corner. */
+.account {
   position: fixed;
-  top: 10px;
+  top: 8px;
   right: var(--s5);
   z-index: 30;
-  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
 }
+.account form { margin: 0; }
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--ink-2);
+  transition: background var(--t) var(--ease), color var(--t) var(--ease);
+}
+.icon-link:hover { background: var(--paper-2); color: var(--ink); }
+.icon-link { position: relative; }
+.tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 150ms var(--ease), translate 150ms var(--ease), visibility 0s 150ms;
+}
+.icon-link:hover .tip,
+.icon-link:focus-visible .tip { visibility: visible; opacity: 1; translate: -50% 0; transition-delay: 300ms, 300ms, 0s; }
+
+.field-error {
+  margin: calc(-1 * var(--s1)) 0 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 0.82rem;
+  font-weight: 600;
+  animation: rise 180ms var(--ease) backwards;
+}
+[aria-invalid="true"] { border-color: var(--danger) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent) !important; }
 
 /* ---------- Controls ---------- */
 
@@ -503,7 +550,8 @@ main { animation: page-in 420ms var(--ease) backwards; }
   border-radius: var(--radius-lg);
   border: 1.5px dashed var(--rule);
 }
-.new-book .row { display: flex; gap: var(--s2); align-items: end; }
+.new-book .row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: end; }
+.new-book .row .field-error { order: 3; flex-basis: 100%; margin: 0; }
 .new-book .row label { flex: 1; }
 
 .empty {
@@ -935,7 +983,7 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 
 @media (max-width: 640px) {
   .topbar { padding: 0 var(--s4); }
-  .signout { right: var(--s3); }
+  .account { right: var(--s3); }
   .page, .notebook { padding: var(--s4); }
   .conversation { padding: var(--s4); }
   .login { padding: var(--s5) var(--s4); }

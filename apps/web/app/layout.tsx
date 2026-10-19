@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/logo";
+import { FormValidation } from "@/components/form-validation";
 import { PointerLight } from "@/components/pointer-light";
 import "./globals.css";
 
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </header>
         {children}
         <PointerLight />
+        <FormValidation />
       </body>
     </html>
   );

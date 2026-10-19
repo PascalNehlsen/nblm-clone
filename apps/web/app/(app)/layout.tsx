@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signOut } from "@/app/auth/actions";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/paths";
@@ -22,11 +23,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <form action={signOut} className="signout">
-        <button type="submit" className="quiet">
-          Abmelden
-        </button>
-      </form>
+      <nav className="account" aria-label="Konto">
+        <Link href="/profil" className="icon-link" aria-label="Profil">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.7" />
+            <path d="M4 20c1.5-3.6 4.4-5.5 8-5.5s6.5 1.9 8 5.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          </svg>
+          <span role="tooltip" className="tip">
+            Profil
+          </span>
+        </Link>
+        <form action={signOut}>
+          <button type="submit" className="quiet">
+            Abmelden
+          </button>
+        </form>
+      </nav>
       {children}
     </>
   );
