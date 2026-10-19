@@ -22,6 +22,7 @@ export interface ClaimedSource {
   notebookId: string;
   kind: SourceKind;
   storagePath: string;
+  sourceUrl: string | null;
 }
 
 export interface ChunkRow {
@@ -43,6 +44,7 @@ export interface SourceStore {
 
 export interface ObjectStore {
   download(path: string): Promise<Uint8Array | null>;
+  uploadText(path: string, text: string): Promise<void>;
   remove(path: string): Promise<void>;
 }
 
@@ -99,6 +101,29 @@ export async function createSource(
     }
     if (error?.code === "42501") throw failure("createSource: not allowed", "nicht_erlaubt");
     throw failure("createSource failed", "fehler");
+  }
+  return { id: data.id, storagePath: data.storage_path };
+}
+
+// A web page source (C2): the URL was checked by parseImportUrl in the action; the
+// database checks the format again and keeps the column immutable (no update grant).
+export async function createUrlSource(
+  client: SupabaseClient,
+  notebookId: string,
+  title: string,
+  url: string,
+): Promise<{ id: string; storagePath: string }> {
+  const { data, error } = await client
+    .from("sources")
+    .insert({ notebook_id: notebookId, kind: "url", title, source_url: url })
+    .select("id, storage_path")
+    .single<{ id: string; storage_path: string }>();
+  if (error || !data) {
+    if (error?.code === "54000" && error.message.includes("notebook_source_limit")) {
+      throw failure("createUrlSource: source limit", "notebook_source_limit");
+    }
+    if (error?.code === "42501") throw failure("createUrlSource: not allowed", "nicht_erlaubt");
+    throw failure("createUrlSource failed", "fehler");
   }
   return { id: data.id, storagePath: data.storage_path };
 }
@@ -161,10 +186,22 @@ export function sourceStore(client: SupabaseClient): SourceStore {
         .update({ status: "processing", error_category: null })
         .eq("id", sourceId)
         .or(`status.in.(pending,failed),and(status.eq.processing,status_changed_at.lt."${cutoff}")`)
-        .select("id, notebook_id, kind, storage_path");
+        .select("id, notebook_id, kind, storage_path, source_url");
       if (error) throw failure("claiming the source failed", error.code ?? "fehler");
-      const row = (data as { id: string; notebook_id: string; kind: SourceKind; storage_path: string }[] | null)?.[0];
-      return row ? { id: row.id, notebookId: row.notebook_id, kind: row.kind, storagePath: row.storage_path } : null;
+      const row = (
+        data as
+          | { id: string; notebook_id: string; kind: SourceKind; storage_path: string; source_url: string | null }[]
+          | null
+      )?.[0];
+      return row
+        ? {
+            id: row.id,
+            notebookId: row.notebook_id,
+            kind: row.kind,
+            storagePath: row.storage_path,
+            sourceUrl: row.source_url ?? null,
+          }
+        : null;
     },
     markReady: (sourceId) => update(sourceId, { status: "ready", error_category: null }),
     markFailed: (sourceId, category) => update(sourceId, { status: "failed", error_category: category }),
@@ -197,6 +234,10 @@ export function objectStore(client: SupabaseClient): ObjectStore {
         throw new Error("downloading the file failed");
       }
       return new Uint8Array(await data.arrayBuffer());
+    },
+    // Fetched page text for a url source; no upsert, like the pasted-text upload.
+    async uploadText(path, text) {
+      await uploadTextObject(client, path, text);
     },
     async remove(path) {
       const { error } = await client.storage.from(BUCKET).remove([path]);

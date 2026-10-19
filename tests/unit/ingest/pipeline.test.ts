@@ -21,6 +21,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelErrorCategory } from "@/lib/ops/categories";
 import type { PdfResult } from "@/lib/server/ingest/pdf";
+import type { UrlTextResult } from "@/lib/server/ingest/url-source";
 import { ingestSource } from "@/lib/server/ingest/pipeline";
 import type { IngestDeps, IngestLogEvent } from "@/lib/server/ingest/pipeline";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
@@ -38,6 +39,16 @@ const DEFAULT_CLAIMED_TEXT: ClaimedSource = {
   notebookId: "notebook-1",
   kind: "text",
   storagePath: "notebook-1/source-1",
+  sourceUrl: null,
+};
+
+// C2 (URL import, see .git/C2-API-SPEC.md "pipeline.ts changes"): a kind "url" claim carries
+// the URL the user gave; the pipeline fetches it only if no object exists yet.
+const URL_SOURCE_URL = "https://example.com/artikel";
+const DEFAULT_CLAIMED_URL: ClaimedSource = {
+  ...DEFAULT_CLAIMED_TEXT,
+  kind: "url",
+  sourceUrl: URL_SOURCE_URL,
 };
 
 const HAPPY_PATH_TEXT = Array.from(
@@ -82,6 +93,8 @@ interface HarnessOptions {
   callModel?: (req: ModelCallRequest<"embedding">) => Promise<ModelCallResult<"embedding">>;
   insertChunks?: (rows: ChunkRow[]) => Promise<void>;
   remove?: (path: string) => Promise<void>;
+  uploadText?: (path: string, text: string) => Promise<void>;
+  fetchUrl?: (url: string) => Promise<UrlTextResult>;
 }
 
 function buildHarness(opts: HarnessOptions = {}) {
@@ -113,7 +126,14 @@ function buildHarness(opts: HarnessOptions = {}) {
   );
   const remove = withOrder(order, "remove", opts.remove ?? (async (): Promise<void> => {}));
 
-  const objects: ObjectStore = { download, remove };
+  const uploadText = withOrder(order, "uploadText", opts.uploadText ?? (async (): Promise<void> => {}));
+  const objects: ObjectStore = { download, remove, uploadText };
+
+  const fetchUrl = withOrder(
+    order,
+    "fetchUrl",
+    opts.fetchUrl ?? (async (): Promise<UrlTextResult> => ({ ok: true, text: HAPPY_PATH_TEXT })),
+  );
 
   const extractPdf = withOrder(
     order,
@@ -148,10 +168,12 @@ function buildHarness(opts: HarnessOptions = {}) {
     return tick * 10;
   });
 
-  const deps: IngestDeps = { sources, objects, extractPdf, callModel, log, now };
+  const deps: IngestDeps = { sources, objects, extractPdf, callModel, fetchUrl, log, now };
 
   return {
     deps,
+    uploadText,
+    fetchUrl,
     order,
     claim,
     markReady,
@@ -297,17 +319,6 @@ describe("ingestSource: content check and extraction failures", () => {
     expect(harness.extractPdf).not.toHaveBeenCalled();
     expect(harness.callModel).not.toHaveBeenCalled();
     expect(harness.markFailed).toHaveBeenCalledWith(DEFAULT_CLAIMED_TEXT.id, "unsupported_type");
-    expect(harness.log).toHaveBeenCalledTimes(1);
-  });
-
-  it("kind url fails as unsupported_type (C2 adds URL handling)", async () => {
-    const harness = buildHarness({ claim: { ...DEFAULT_CLAIMED_TEXT, kind: "url" } });
-
-    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_TEXT.id);
-
-    expect(result).toEqual({ ok: false, category: "unsupported_type" });
-    expect(harness.extractPdf).not.toHaveBeenCalled();
-    expect(harness.callModel).not.toHaveBeenCalled();
     expect(harness.log).toHaveBeenCalledTimes(1);
   });
 
@@ -482,6 +493,154 @@ describe("ingestSource: insertChunks batching", () => {
     expect(harness.markFailed).toHaveBeenCalledWith(DEFAULT_CLAIMED_TEXT.id, "db_failed");
     expect(harness.log).toHaveBeenCalledTimes(1);
   }, 20_000);
+});
+
+describe("ingestSource: url path (C2)", () => {
+  it("a missing object: fetches once, uploads the text, then embeds and marks ready", async () => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => null,
+      fetchUrl: async () => ({ ok: true, text: HAPPY_PATH_TEXT }),
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(harness.fetchUrl).toHaveBeenCalledTimes(1);
+    expect(harness.fetchUrl).toHaveBeenCalledWith(URL_SOURCE_URL);
+    expect(harness.uploadText).toHaveBeenCalledTimes(1);
+    expect(harness.uploadText).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.storagePath, HAPPY_PATH_TEXT);
+    expect(harness.order).toEqual([
+      "claim",
+      "deleteChunks",
+      "download",
+      "fetchUrl",
+      "uploadText",
+      "callModel",
+      "insertChunks",
+      "markReady",
+    ]);
+    expect(harness.extractPdf).not.toHaveBeenCalled();
+    expect(harness.callModel).toHaveBeenCalledTimes(1);
+    expect(harness.markReady).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.id);
+    expect(result.ok).toBe(true);
+
+    expect(harness.log).toHaveBeenCalledTimes(1);
+    const event = harness.log.mock.calls[0]![0] as IngestLogEvent;
+    expect(event.outcome).toBe("ready");
+    expect(event.kind).toBe("url");
+    expect(event.bytes).toBe(textBytes(HAPPY_PATH_TEXT).length);
+  });
+
+  it("an existing object (a retry after a later failure) is reused: no fetch, no upload", async () => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => textBytes(HAPPY_PATH_TEXT),
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(harness.fetchUrl).not.toHaveBeenCalled();
+    expect(harness.uploadText).not.toHaveBeenCalled();
+    expect(harness.callModel).toHaveBeenCalledTimes(1);
+    expect(harness.markReady).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.id);
+    expect(result.ok).toBe(true);
+  });
+
+  const FETCH_FAILURES = [
+    "url_blocked",
+    "url_dns_failed",
+    "url_timeout",
+    "url_too_large",
+    "url_unsupported_type",
+    "no_text",
+    "too_many_chunks",
+  ];
+  it.each(FETCH_FAILURES)("a fetch failure with %s fails the source with that category, nothing uploaded", async (category) => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => null,
+      fetchUrl: async () => ({ ok: false, category }),
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(result).toEqual({ ok: false, category });
+    expect(harness.markFailed).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.id, category);
+    expect(harness.uploadText).not.toHaveBeenCalled();
+    expect(harness.callModel).not.toHaveBeenCalled();
+    expect(harness.insertChunks).not.toHaveBeenCalled();
+    expect(harness.markReady).not.toHaveBeenCalled();
+    expect(harness.log).toHaveBeenCalledTimes(1);
+    const event = harness.log.mock.calls[0]![0] as IngestLogEvent;
+    expect(event.outcome).toBe("failed");
+    expect(event.category).toBe(category);
+    expect(event.kind).toBe("url");
+  });
+
+  it("sourceUrl null on a url row without an object fails as url_invalid, without fetching", async () => {
+    const harness = buildHarness({
+      claim: { ...DEFAULT_CLAIMED_URL, sourceUrl: null },
+      download: async () => null,
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(result).toEqual({ ok: false, category: "url_invalid" });
+    expect(harness.fetchUrl).not.toHaveBeenCalled();
+    expect(harness.uploadText).not.toHaveBeenCalled();
+    expect(harness.callModel).not.toHaveBeenCalled();
+    expect(harness.markFailed).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.id, "url_invalid");
+    expect(harness.log).toHaveBeenCalledTimes(1);
+  });
+
+  it("uploadText throwing fails as storage_failed and never embeds", async () => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => null,
+      uploadText: async () => {
+        throw new Error("storage is down");
+      },
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(result).toEqual({ ok: false, category: "storage_failed" });
+    expect(harness.fetchUrl).toHaveBeenCalledTimes(1);
+    expect(harness.callModel).not.toHaveBeenCalled();
+    expect(harness.markFailed).toHaveBeenCalledWith(DEFAULT_CLAIMED_URL.id, "storage_failed");
+    expect(harness.log).toHaveBeenCalledTimes(1);
+  });
+
+  it("a download that throws on a url row fails as storage_failed without fetching", async () => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => {
+        throw new Error("disk is down");
+      },
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(result).toEqual({ ok: false, category: "storage_failed" });
+    expect(harness.fetchUrl).not.toHaveBeenCalled();
+  });
+
+  it("a fetchUrl that throws fails the source (never an unhandled rejection) and the message does not leak", async () => {
+    const harness = buildHarness({
+      claim: DEFAULT_CLAIMED_URL,
+      download: async () => null,
+      fetchUrl: async () => {
+        throw new Error("boom for host example.com");
+      },
+    });
+
+    const result = await ingestSource(harness.deps, DEFAULT_CLAIMED_URL.id);
+
+    expect(result.ok).toBe(false);
+    expect(harness.markFailed).toHaveBeenCalledTimes(1);
+    expect(harness.callModel).not.toHaveBeenCalled();
+    expect(JSON.stringify([result, harness.log.mock.calls])).not.toContain("example.com");
+  });
 });
 
 describe("ingestSource: retry", () => {

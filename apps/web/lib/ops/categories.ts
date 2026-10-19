@@ -64,6 +64,34 @@ export const INGEST_CATEGORY_LABELS: Record<IngestErrorCategory, string> = {
   db_failed: "Datenbankfehler",
 };
 
+// Fixed categories for URL import failures (C2, ADR 0008), also stored in
+// sources.error_category. Empty or too long page text reuses no_text and too_many_chunks.
+export const URL_ERROR_CATEGORIES = [
+  "url_invalid",
+  "url_blocked",
+  "url_dns_failed",
+  "url_unreachable",
+  "url_timeout",
+  "url_http_error",
+  "url_too_many_redirects",
+  "url_too_large",
+  "url_unsupported_type",
+] as const;
+
+export type UrlErrorCategory = (typeof URL_ERROR_CATEGORIES)[number];
+
+export const URL_CATEGORY_LABELS: Record<UrlErrorCategory, string> = {
+  url_invalid: "Ungültige Adresse",
+  url_blocked: "Adresse nicht erlaubt",
+  url_dns_failed: "Adresse nicht gefunden",
+  url_unreachable: "Seite nicht erreichbar",
+  url_timeout: "Zeitüberschreitung beim Abruf",
+  url_http_error: "Seite antwortet mit Fehler",
+  url_too_many_redirects: "Zu viele Weiterleitungen",
+  url_too_large: "Seite zu groß",
+  url_unsupported_type: "Seitentyp nicht unterstützt",
+};
+
 function hasLabel<K extends string>(labels: Record<K, string>, key: string): key is K {
   return Object.hasOwn(labels, key);
 }
@@ -72,6 +100,7 @@ function hasLabel<K extends string>(labels: Record<K, string>, key: string): key
 export function sourceErrorLabel(category: string | null): string {
   if (category === null) return "Unbekannter Fehler";
   if (hasLabel(INGEST_CATEGORY_LABELS, category)) return INGEST_CATEGORY_LABELS[category];
+  if (hasLabel(URL_CATEGORY_LABELS, category)) return URL_CATEGORY_LABELS[category];
   if (hasLabel(CATEGORY_LABELS, category)) return CATEGORY_LABELS[category];
   return "Unbekannter Fehler";
 }

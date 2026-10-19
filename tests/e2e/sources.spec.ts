@@ -107,6 +107,13 @@ function textForm(page: Page) {
     .filter({ has: page.getByLabel("Text", { exact: true }) });
 }
 
+/** The add-URL form (C2), identified by its "Webadresse" field. */
+function urlForm(page: Page) {
+  return sourcesSection(page)
+    .locator("form")
+    .filter({ has: page.getByLabel("Webadresse") });
+}
+
 /** Shares `notebookUrl` (created by `owner`) with a fresh user as `role`
  * ("Bearbeiter" or "Betrachter") and returns that member's own page/context,
  * ready at the notebook URL. */
@@ -207,6 +214,83 @@ test.describe("an editor adds a text source", () => {
     await ownerContext.close();
     await memberContext.close();
   });
+});
+
+// C2 (URL import). No external network is used: every address below is refused by the
+// SSRF guard's syntactic check (parseImportUrl) in addUrlSourceAction before any row is
+// inserted, so nothing is ever fetched. 127.0.0.1 and 169.254.169.254 are IP literals in
+// blocked ranges (on a GitHub runner the latter is a live metadata endpoint, which is why
+// it must never be requested), localhost is refused by name, ftp: by scheme. Per
+// .git/C2-API-SPEC.md the action answers each with the "url" form error and creates no row.
+const URL_ERROR_TEXT = "Bitte gib eine http- oder https-Adresse ohne Zugangsdaten und ohne Port an.";
+
+test.describe("a viewer cannot import a URL", () => {
+  test("no Webadresse field and no Seite hinzufügen button", async ({ browser }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-url-viewer",
+      "Betrachter",
+    );
+
+    await expect(sourcesSection(memberPage).getByRole("heading", { name: "Quellen" })).toBeVisible();
+    await expect(memberPage.getByLabel("Webadresse")).toHaveCount(0);
+    await expect(memberPage.getByRole("button", { name: "Seite hinzufügen" })).toHaveCount(0);
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+});
+
+test.describe("an editor sees the URL form", () => {
+  test("a Webadresse field (type url) and a Seite hinzufügen button", async ({ browser }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-url-form",
+      "Bearbeiter",
+    );
+
+    const form = urlForm(memberPage);
+    await expect(form.getByLabel("Titel")).toBeVisible();
+    await expect(form.getByLabel("Webadresse")).toHaveAttribute("type", "url");
+    await expect(form.getByLabel("Webadresse")).toHaveAttribute("maxlength", "2048");
+    await expect(form.getByRole("button", { name: "Seite hinzufügen" })).toBeVisible();
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+});
+
+test.describe("an editor imports an address the guard refuses", () => {
+  const REFUSED_ADDRESSES = [
+    { name: "loopback IP literal", address: "http://127.0.0.1/" },
+    { name: "cloud metadata IP literal", address: "http://169.254.169.254/latest/meta-data/" },
+    { name: "localhost by name", address: "http://localhost/" },
+    { name: "a non-http scheme (ftp)", address: "ftp://example.com/" },
+  ];
+
+  for (const { name, address } of REFUSED_ADDRESSES) {
+    test(`${name} (${address}): the url error is shown and no source row is created`, async ({ browser }) => {
+      test.setTimeout(60_000);
+      const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+        browser,
+        "sources-e2e-url-refused",
+        "Bearbeiter",
+      );
+      const title = `Test-URL ${Date.now()}`;
+
+      const form = urlForm(memberPage);
+      await form.getByLabel("Titel").fill(title);
+      await form.getByLabel("Webadresse").fill(address);
+      await form.getByRole("button", { name: "Seite hinzufügen" }).click();
+
+      await expect(memberPage.getByText(URL_ERROR_TEXT)).toBeVisible({ timeout: 45_000 });
+      await expect(memberPage).toHaveURL(/fehler=url/);
+      await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
+
+      await ownerContext.close();
+      await memberContext.close();
+    });
+  }
 });
 
 test.describe("an editor removes a source", () => {

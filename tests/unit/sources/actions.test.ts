@@ -15,6 +15,7 @@ const {
   getUserMock,
   getNotebookMock,
   createSourceMock,
+  createUrlSourceMock,
   createSignedUploadMock,
   uploadTextObjectMock,
   deleteSourceMock,
@@ -35,6 +36,7 @@ const {
     getUserMock: vi.fn(),
     getNotebookMock: vi.fn(),
     createSourceMock: vi.fn(),
+    createUrlSourceMock: vi.fn(),
     createSignedUploadMock: vi.fn(),
     uploadTextObjectMock: vi.fn(),
     deleteSourceMock: vi.fn(),
@@ -56,6 +58,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/notebooks/notebooks", () => ({ getNotebook: getNotebookMock }));
 vi.mock("@/lib/sources/sources", () => ({
   createSource: createSourceMock,
+  createUrlSource: createUrlSourceMock,
   createSignedUpload: createSignedUploadMock,
   uploadTextObject: uploadTextObjectMock,
   deleteSource: deleteSourceMock,
@@ -66,6 +69,7 @@ vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 
 import {
   addTextSourceAction,
+  addUrlSourceAction,
   createPdfUploadAction,
   deleteSourceAction,
   ingestSourceAction,
@@ -92,6 +96,7 @@ beforeEach(() => {
   getUserMock.mockResolvedValue({ data: { user: defaultUser() } });
   getNotebookMock.mockResolvedValue({ id: VALID_NOTEBOOK_ID, title: "Notizbuch", role: "owner" });
   createSourceMock.mockResolvedValue({ id: VALID_SOURCE_ID, storagePath: `${VALID_NOTEBOOK_ID}/${VALID_SOURCE_ID}` });
+  createUrlSourceMock.mockResolvedValue({ id: VALID_SOURCE_ID, storagePath: `${VALID_NOTEBOOK_ID}/${VALID_SOURCE_ID}` });
   createSignedUploadMock.mockResolvedValue({ signedUrl: "https://signed.example/upload" });
   uploadTextObjectMock.mockResolvedValue(undefined);
   deleteSourceMock.mockResolvedValue(undefined);
@@ -287,6 +292,145 @@ describe("addTextSourceAction", () => {
     await expect(
       addTextSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, title: "Doc", text: "Hallo Welt" })),
     ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}` });
+  });
+});
+
+describe("addUrlSourceAction (C2)", () => {
+  const GOOD_URL = "https://example.com/artikel";
+
+  function urlForm(overrides: Record<string, string> = {}): FormData {
+    return textFormData({ notebookId: VALID_NOTEBOOK_ID, title: "Seite", url: GOOD_URL, ...overrides });
+  }
+
+  function expectNoWrite(): void {
+    expect(createUrlSourceMock).not.toHaveBeenCalled();
+    expect(createSourceMock).not.toHaveBeenCalled();
+    expect(uploadTextObjectMock).not.toHaveBeenCalled();
+    expect(runIngestionMock).not.toHaveBeenCalled();
+  }
+
+  it("no user redirects to /login before anything else", async () => {
+    getUserMock.mockResolvedValue({ data: { user: null } });
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({ url: "/login" });
+    expectNoWrite();
+  });
+
+  it("a non-uuid notebookId redirects to / without a write", async () => {
+    await expect(addUrlSourceAction(urlForm({ notebookId: "not-a-uuid" }))).rejects.toMatchObject({ url: "/" });
+    expectNoWrite();
+  });
+
+  it("a viewer is redirected with fehler=nicht_erlaubt and nothing is created", async () => {
+    getNotebookMock.mockResolvedValue({ id: VALID_NOTEBOOK_ID, title: "Notizbuch", role: "viewer" });
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=nicht_erlaubt`,
+    });
+    expectNoWrite();
+  });
+
+  it("a user without membership is redirected with fehler=nicht_erlaubt", async () => {
+    getNotebookMock.mockResolvedValue(null);
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=nicht_erlaubt`,
+    });
+    expectNoWrite();
+  });
+
+  it("an anonymous user is redirected with fehler=nicht_erlaubt even as owner", async () => {
+    getUserMock.mockResolvedValue({ data: { user: defaultUser({ is_anonymous: true }) } });
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=nicht_erlaubt`,
+    });
+    expectNoWrite();
+  });
+
+  const BAD_TITLES_FOR_URL = ["", "a".repeat(201)];
+  it.each(BAD_TITLES_FOR_URL)("bad title %j is redirected with fehler=titel before the URL is looked at", async (title) => {
+    await expect(addUrlSourceAction(urlForm({ title, url: "ftp://example.com/" }))).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=titel`,
+    });
+    expectNoWrite();
+  });
+
+  const BAD_URLS = [
+    "",
+    "   ",
+    "not a url",
+    "ftp://example.com/",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "https://user:pw@example.com/",
+    "https://example.com:8080/",
+    "http://localhost/",
+    "http://intranet/",
+    "http://127.0.0.1/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://[::1]/",
+    `https://example.com/${"a".repeat(2100)}`,
+  ];
+  it.each(BAD_URLS)("url %j is redirected with fehler=url before any insert", async (url) => {
+    await expect(addUrlSourceAction(urlForm({ url }))).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=url`,
+    });
+    expectNoWrite();
+  });
+
+  it("a missing url field is redirected with fehler=url", async () => {
+    const fd = new FormData();
+    fd.set("notebookId", VALID_NOTEBOOK_ID);
+    fd.set("title", "Seite");
+
+    await expect(addUrlSourceAction(fd)).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=url` });
+    expectNoWrite();
+  });
+
+  it("createUrlSource's notebook_source_limit error maps to fehler=limit and nothing is ingested", async () => {
+    createUrlSourceMock.mockRejectedValue(Object.assign(new Error("limit hit"), { code: "notebook_source_limit" }));
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=limit`,
+    });
+    expect(runIngestionMock).not.toHaveBeenCalled();
+  });
+
+  it("any other createUrlSource error maps to fehler=fehler and nothing is ingested", async () => {
+    createUrlSourceMock.mockRejectedValue(Object.assign(new Error("boom"), { code: "fehler" }));
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=fehler`,
+    });
+    expect(runIngestionMock).not.toHaveBeenCalled();
+  });
+
+  const ALLOWED_URL_ROLES = ["owner", "editor"] as const;
+  it.each(ALLOWED_URL_ROLES)("role %s: inserts kind url with the normalized URL, ingests, redirects without fehler", async (role) => {
+    getNotebookMock.mockResolvedValue({ id: VALID_NOTEBOOK_ID, title: "Notizbuch", role });
+
+    await expect(
+      addUrlSourceAction(urlForm({ title: "  Meine Seite  ", url: "  HTTPS://Example.COM/Artikel#abschnitt  " })),
+    ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}` });
+
+    expect(createUrlSourceMock).toHaveBeenCalledTimes(1);
+    expect(createUrlSourceMock).toHaveBeenCalledWith(
+      expect.anything(),
+      VALID_NOTEBOOK_ID,
+      "Meine Seite",
+      "https://example.com/Artikel",
+    );
+    expect(createSourceMock).not.toHaveBeenCalled();
+    expect(uploadTextObjectMock).not.toHaveBeenCalled();
+    expect(runIngestionMock).toHaveBeenCalledWith(expect.anything(), VALID_SOURCE_ID);
+    expect(createUrlSourceMock.mock.invocationCallOrder[0]!).toBeLessThan(runIngestionMock.mock.invocationCallOrder[0]!);
+  });
+
+  it("an ingestion failure still redirects without fehler (shown on the source in the list)", async () => {
+    runIngestionMock.mockResolvedValue({ ok: false, category: "url_blocked" });
+
+    await expect(addUrlSourceAction(urlForm())).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}` });
   });
 });
 

@@ -52,6 +52,15 @@ describe("normalizeText", () => {
     expect(normalizeText(input)).toBe("line1\nline2\nline3");
   });
 
+  it("removes trailing spaces and tabs before a newline and at the end of the input", () => {
+    expect(normalizeText("a \t \nb\t ")).toBe("a\nb");
+    expect(normalizeText("a  ")).toBe("a");
+  });
+
+  it("keeps spaces and tabs inside a line", () => {
+    expect(normalizeText("a  b\tc \t d")).toBe("a  b\tc \t d");
+  });
+
   it("is idempotent", () => {
     const messy =
       `Stra${SHARP_S}e\r\n\r\n\r\n  Zeile mit ${String.fromCharCode(0x07)}Kontrolle${String.fromCharCode(0x00)}zeichen${String.fromCharCode(0x85)}und Leerzeichen   \n\n${E_UMLAUT}nde  `;
@@ -59,4 +68,26 @@ describe("normalizeText", () => {
     const twice = normalizeText(once);
     expect(twice).toBe(once);
   });
+});
+
+// Bug fix: the trailing-whitespace rule backtracked quadratically on a long run of
+// spaces/tabs followed by a non-whitespace character (80,000 spaces took 5.7 s).
+// Whitespace before "x" is not trailing, so it must stay.
+describe("normalizeText: long whitespace runs are linear", () => {
+  const cases: Array<[string, string]> = [
+    ["spaces", " ".repeat(200_000)],
+    ["tabs", "\t".repeat(200_000)],
+    ["a mix of spaces and tabs", " \t".repeat(100_000)],
+  ];
+
+  for (const [name, run] of cases) {
+    it(`handles 200,000 characters of ${name} followed by x in under 500 ms`, () => {
+      const input = run + "x";
+      const start = performance.now();
+      const output = normalizeText(input);
+      const elapsed = performance.now() - start;
+      expect(output).toBe(input);
+      expect(elapsed).toBeLessThan(500);
+    }, 10_000);
+  }
 });

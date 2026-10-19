@@ -272,6 +272,7 @@ describe("sourceStore(client).claim(id)", () => {
       notebookId,
       kind: "text",
       storagePath: storagePath(notebookId, sourceId),
+      sourceUrl: null, // C2: claim() now also returns source_url (null for a text source)
     });
 
     const { data } = await owner.client.from("sources").select("status").eq("id", sourceId).single();

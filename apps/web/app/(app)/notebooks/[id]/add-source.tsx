@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { addTextSourceAction, createPdfUploadAction, ingestSourceAction } from "./sources/actions";
+import { addTextSourceAction, addUrlSourceAction, createPdfUploadAction, ingestSourceAction } from "./sources/actions";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
-import { MAX_TEXT_CHARS } from "@/lib/sources/limits";
+import { MAX_TEXT_CHARS, MAX_URL_LENGTH } from "@/lib/sources/limits";
 
 // The PDF goes from the browser straight to Storage with a signed upload URL (Vercel
 // caps request bodies at 4.5 MB); the server then checks and ingests it.
@@ -70,6 +70,16 @@ export function AddSource({ notebookId }: { notebookId: string }) {
           Text <textarea name="text" required maxLength={MAX_TEXT_CHARS} />
         </label>{" "}
         <button type="submit">Text hinzufügen</button>
+      </form>
+      <form action={addUrlSourceAction}>
+        <input type="hidden" name="notebookId" value={notebookId} />
+        <label>
+          Titel <input type="text" name="title" required maxLength={200} />
+        </label>{" "}
+        <label>
+          Webadresse <input type="url" name="url" required maxLength={MAX_URL_LENGTH} />
+        </label>{" "}
+        <button type="submit">Seite hinzufügen</button>
       </form>
     </>
   );
