@@ -125,11 +125,40 @@ export async function insertChunks(
   }
 }
 
+export type SourceStatus = "pending" | "processing" | "ready" | "failed";
+
+/**
+ * Sets a source's status as `actor` (owners and editors hold the column
+ * grant on `status` and `error_category`). A failed source gets a category
+ * because the check constraint only allows one together with `failed`; every
+ * other status leaves it null. `.select()` makes a silent RLS no-op (0 rows)
+ * a hard error. Throws on error.
+ */
+export async function setSourceStatus(
+  actor: SignedInUser,
+  sourceId: string,
+  status: SourceStatus,
+): Promise<void> {
+  const { data, error } = await actor.client
+    .from("sources")
+    .update({ status, error_category: status === "failed" ? "extract_failed" : null })
+    .eq("id", sourceId)
+    .select("id");
+  if (error || !data || data.length !== 1) {
+    throw new Error(`setSourceStatus(${sourceId}, ${status}): ${error?.code ?? "no row"} ${error?.message ?? ""}`);
+  }
+}
+
 /**
  * Inserts `count` chunks against a fresh source in one request, every one
  * `noise` away from queryVector() with a distinct seed. Returns the created
  * source id and the ids PostgREST assigned, read back via `.select()` since
  * chunks are not client-id'd like sources/notebooks are.
+ *
+ * `options.status` is the status the source ends in. It defaults to `ready`
+ * (match_chunks only searches ready sources), set after the chunks are
+ * inserted, the order the ingestion pipeline uses. Pass `pending` to keep the
+ * column default untouched.
  */
 export async function createSourceWithChunks(
   actor: SignedInUser,
@@ -137,7 +166,9 @@ export async function createSourceWithChunks(
   count: number,
   noise: number,
   seedOffset = 0,
+  options: { status?: SourceStatus } = {},
 ): Promise<{ sourceId: string; chunkIds: string[] }> {
+  const status = options.status ?? "ready";
   const sourceId = await createSource(actor, notebookId);
   const rows = Array.from({ length: count }, (_, i) => ({
     notebook_id: notebookId,
@@ -151,6 +182,9 @@ export async function createSourceWithChunks(
   const { data, error } = await actor.client.from("chunks").insert(rows).select("id");
   if (error) {
     throw new Error(`createSourceWithChunks(${notebookId}): ${error.code ?? "?"} ${error.message}`);
+  }
+  if (status !== "pending") {
+    await setSourceStatus(actor, sourceId, status);
   }
   return { sourceId, chunkIds: (data ?? []).map((row) => row.id as string) };
 }

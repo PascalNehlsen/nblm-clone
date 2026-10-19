@@ -63,7 +63,7 @@
 
 begin;
 
-select plan(208);
+select plan(220);
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -2040,7 +2040,7 @@ select pg_temp.act_lives(
 select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match access source') $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'match access source', 'ready') $f$,
     (select source_match_access from pg_temp.fixture), (select notebook_match_access from pg_temp.fixture)
   ),
   'match_chunks fixture: owner creates a source in the access-test notebook'
@@ -2098,7 +2098,7 @@ select pg_temp.act_lives(
 select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match clamp source') $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'match clamp source', 'ready') $f$,
     (select source_match_clamp from pg_temp.fixture), (select notebook_match_clamp from pg_temp.fixture)
   ),
   'match_chunks clamp fixture: owner creates a source'
@@ -2155,7 +2155,7 @@ select pg_temp.act_lives(
 select pg_temp.setup_insert(
   (select foreign_owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'foreign source') $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'foreign source', 'ready') $f$,
     (select source_recall_foreign from pg_temp.fixture), (select notebook_match_recall_foreign from pg_temp.fixture)
   ),
   'recall fixture: the foreign owner creates a source'
@@ -2180,7 +2180,7 @@ select pg_temp.act_lives(
 select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'own source') $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'own source', 'ready') $f$,
     (select source_recall_own from pg_temp.fixture), (select notebook_match_recall_own from pg_temp.fixture)
   ),
   'recall fixture: the caller creates a source in their own notebook'
@@ -2229,7 +2229,7 @@ select pg_temp.act_lives(
 select pg_temp.setup_insert(
   (select owner_id from pg_temp.fixture),
   format(
-    $f$ insert into public.sources (id, notebook_id, kind, title) values (%L, %L, 'text', 'match exact source') $f$,
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'match exact source', 'ready') $f$,
     (select source_match_exact from pg_temp.fixture), (select notebook_match_exact from pg_temp.fixture)
   ),
   'exact-top-8 fixture: owner creates a source'
@@ -2255,6 +2255,136 @@ select ok(
      )
    ) as r) s),
   'match_chunks returns exactly the 8 nearest of 60 own chunks, in distance order (ordinals 0..7)'
+);
+
+-- Only chunks of ready sources are searched. One notebook with a ready source
+-- (5 chunks, farther away) next to a pending, a processing and a failed source
+-- (3 chunks each, much closer to the query vector). With match_count 8 an
+-- unfiltered search would return the 9 closer non-ready chunks first (capped
+-- at 8) and the ready source would lose rows; the filtered search returns the
+-- ready source's 5 rows and nothing from the others.
+create table pg_temp.status_fixture (
+  notebook_id uuid not null default gen_random_uuid(),
+  source_ready uuid not null default gen_random_uuid(),
+  source_pending uuid not null default gen_random_uuid(),
+  source_processing uuid not null default gen_random_uuid(),
+  source_failed uuid not null default gen_random_uuid()
+);
+insert into pg_temp.status_fixture default values;
+
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format('insert into public.notebooks (id, title) values (%L, %L)', (select notebook_id from pg_temp.status_fixture), 'match status notebook'),
+  'ready-only fixture: owner creates the notebook'
+);
+select pg_temp.setup_insert(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'ready source', 'ready') $f$,
+    (select source_ready from pg_temp.status_fixture), (select notebook_id from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: a ready source'
+);
+select pg_temp.setup_insert(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'pending source', 'pending') $f$,
+    (select source_pending from pg_temp.status_fixture), (select notebook_id from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: a pending source'
+);
+select pg_temp.setup_insert(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.sources (id, notebook_id, kind, title, status) values (%L, %L, 'text', 'processing source', 'processing') $f$,
+    (select source_processing from pg_temp.status_fixture), (select notebook_id from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: a processing source'
+);
+select pg_temp.setup_insert(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.sources (id, notebook_id, kind, title, status, error_category) values (%L, %L, 'text', 'failed source', 'failed', 'extract_failed') $f$,
+    (select source_failed from pg_temp.status_fixture), (select notebook_id from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: a failed source'
+);
+
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.chunks (notebook_id, source_id, ordinal, content, embedding)
+        select %L, %L, gs, 'ready chunk ' || gs, pg_temp.vector_literal(gs + 1, 0.05)::extensions.vector
+        from generate_series(0, 4) as gs $f$,
+    (select notebook_id from pg_temp.status_fixture), (select source_ready from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: 5 chunks for the ready source'
+);
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.chunks (notebook_id, source_id, ordinal, content, embedding)
+        select %L, %L, gs, 'pending chunk ' || gs, pg_temp.vector_literal(gs + 11, 0.0005)::extensions.vector
+        from generate_series(0, 2) as gs $f$,
+    (select notebook_id from pg_temp.status_fixture), (select source_pending from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: 3 closer chunks for the pending source'
+);
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.chunks (notebook_id, source_id, ordinal, content, embedding)
+        select %L, %L, gs, 'processing chunk ' || gs, pg_temp.vector_literal(gs + 21, 0.0005)::extensions.vector
+        from generate_series(0, 2) as gs $f$,
+    (select notebook_id from pg_temp.status_fixture), (select source_processing from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: 3 closer chunks for the processing source'
+);
+select pg_temp.act_lives(
+  (select owner_id from pg_temp.fixture),
+  format(
+    $f$ insert into public.chunks (notebook_id, source_id, ordinal, content, embedding)
+        select %L, %L, gs, 'failed chunk ' || gs, pg_temp.vector_literal(gs + 31, 0.0005)::extensions.vector
+        from generate_series(0, 2) as gs $f$,
+    (select notebook_id from pg_temp.status_fixture), (select source_failed from pg_temp.status_fixture)
+  ),
+  'ready-only fixture: 3 closer chunks for the failed source'
+);
+
+select ok(
+  (select r = '5'
+   from (select pg_temp.act_scalar(
+     (select owner_id from pg_temp.fixture),
+     format(
+       'select count(*)::text from public.match_chunks(%L::extensions.vector, %L, 8)',
+       pg_temp.vector_literal(0, 0), (select notebook_id from pg_temp.status_fixture)
+     )
+   ) as r) s),
+  'match_chunks returns 5 rows (the ready source''s) from a notebook that also holds 9 closer non-ready chunks'
+);
+select ok(
+  (select r = '5'
+   from (select pg_temp.act_scalar(
+     (select owner_id from pg_temp.fixture),
+     format(
+       'select count(*)::text from public.match_chunks(%L::extensions.vector, %L, 8) where source_id = %L',
+       pg_temp.vector_literal(0, 0), (select notebook_id from pg_temp.status_fixture),
+       (select source_ready from pg_temp.status_fixture)
+     )
+   ) as r) s),
+  'the ready source keeps all 5 of its rows in the top-k'
+);
+select ok(
+  (select r = '0'
+   from (select pg_temp.act_scalar(
+     (select owner_id from pg_temp.fixture),
+     format(
+       'select count(*)::text from public.match_chunks(%L::extensions.vector, %L, 8) where source_id = any (%L::uuid[])',
+       pg_temp.vector_literal(0, 0), (select notebook_id from pg_temp.status_fixture),
+       (select array[source_pending, source_processing, source_failed]::text from pg_temp.status_fixture)
+     )
+   ) as r) s),
+  'pending, processing and failed sources contribute no rows to match_chunks'
 );
 
 select * from finish();

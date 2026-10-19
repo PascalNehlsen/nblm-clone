@@ -19,7 +19,100 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { anonClient, signInAnonymousUser, signUpUser, type SignedInUser } from "./helpers/clients";
 import { addMember, createNotebook } from "./helpers/notebooks";
-import { createSourceWithChunks, queryVector } from "./helpers/sources";
+import { createSourceWithChunks, queryVector, setSourceStatus } from "./helpers/sources";
+
+describe("match_chunks: only chunks of ready sources are returned", () => {
+  // The non-ready sources hold chunks that are much closer to the query vector
+  // (tiny noise) than the ready source's, and there are fewer than match_count
+  // rows in total per source, so an unfiltered search would return them first.
+  let owner: SignedInUser;
+  let editor: SignedInUser;
+  let viewer: SignedInUser;
+  let anonymousMember: SignedInUser;
+  let stranger: SignedInUser;
+  let notebookId: string;
+  let readyChunkIds: string[];
+  let notReadyChunkIds: string[];
+
+  beforeAll(async () => {
+    owner = await signUpUser("match-ready-owner");
+    editor = await signUpUser("match-ready-editor");
+    viewer = await signUpUser("match-ready-viewer");
+    anonymousMember = await signInAnonymousUser();
+    stranger = await signUpUser("match-ready-stranger");
+
+    notebookId = await createNotebook(owner, "match-ready");
+    await addMember(owner, notebookId, editor.userId, "editor");
+    await addMember(owner, notebookId, viewer.userId, "viewer");
+    await addMember(owner, notebookId, anonymousMember.userId, "viewer");
+
+    readyChunkIds = (await createSourceWithChunks(owner, notebookId, 3, 0.05, 0, { status: "ready" })).chunkIds;
+    const pending = await createSourceWithChunks(owner, notebookId, 3, 0.0005, 100, { status: "pending" });
+    const processing = await createSourceWithChunks(owner, notebookId, 3, 0.0005, 200, { status: "processing" });
+    const failed = await createSourceWithChunks(owner, notebookId, 3, 0.0005, 300, { status: "failed" });
+    notReadyChunkIds = [...pending.chunkIds, ...processing.chunkIds, ...failed.chunkIds];
+  });
+
+  async function idsFor(user: SignedInUser): Promise<string[]> {
+    const { data, error } = await user.client.rpc("match_chunks", {
+      query_embedding: queryVector(),
+      p_notebook_id: notebookId,
+      match_count: 50,
+    });
+    expect(error).toBeNull();
+    return (data ?? []).map((row: { id: string }) => row.id);
+  }
+
+  it.each([
+    ["owner", () => owner],
+    ["editor", () => editor],
+    ["viewer", () => viewer],
+    ["anonymous-signin member", () => anonymousMember],
+  ])("%s gets the ready source's chunks and none of the pending, processing or failed ones", async (_name, who) => {
+    const ids = await idsFor(who());
+    expect(new Set(ids)).toEqual(new Set(readyChunkIds));
+    for (const id of notReadyChunkIds) {
+      expect(ids).not.toContain(id);
+    }
+  });
+
+  it("a stranger still gets no rows", async () => {
+    const { data, error } = await stranger.client.rpc("match_chunks", {
+      query_embedding: queryVector(),
+      p_notebook_id: notebookId,
+      match_count: 50,
+    });
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it("anon still gets 42501", async () => {
+    const { data, error } = await anonClient().rpc("match_chunks", {
+      query_embedding: queryVector(),
+      p_notebook_id: notebookId,
+      match_count: 50,
+    });
+    expect(data).toBeNull();
+    expect(error?.code).toBe("42501");
+  });
+
+  it("a source that becomes ready appears, and drops out again when it goes back to processing", async () => {
+    const source = await createSourceWithChunks(owner, notebookId, 2, 0.0005, 400, { status: "processing" });
+    expect(await idsFor(viewer)).not.toContain(source.chunkIds[0]);
+
+    await setSourceStatus(owner, source.sourceId, "ready");
+    const whenReady = await idsFor(viewer);
+    for (const id of source.chunkIds) {
+      expect(whenReady).toContain(id);
+    }
+
+    await setSourceStatus(owner, source.sourceId, "processing");
+    const whenProcessing = await idsFor(viewer);
+    for (const id of source.chunkIds) {
+      expect(whenProcessing).not.toContain(id);
+    }
+  });
+});
 
 describe("match_chunks: access", () => {
   let owner: SignedInUser;
