@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 import { deleteNotebookAction } from "../actions";
 import { AddSource } from "./add-source";
+import { Chat } from "./chat";
 import { MemberList } from "./member-list";
 import { SourceList } from "./source-list";
+import { listHistory } from "@/lib/chat/history";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { listMembers } from "@/lib/notebooks/members";
 import { getNotebook } from "@/lib/notebooks/notebooks";
@@ -35,6 +37,14 @@ export default async function NotebookPage({
   if (!notebook) notFound();
   const members = await listMembers(supabase, id);
   const sources = await listSources(supabase, id);
+  // A failing history query must not take the notebook page down.
+  let history: Awaited<ReturnType<typeof listHistory>> = [];
+  let historyFailed = false;
+  try {
+    history = await listHistory(supabase, id);
+  } catch {
+    historyFailed = true;
+  }
   const canEditSources =
     (notebook.role === "owner" || notebook.role === "editor") && !(data.user.is_anonymous ?? false);
 
@@ -55,6 +65,7 @@ export default async function NotebookPage({
         <SourceList sources={sources} notebookId={notebook.id} canEdit={canEditSources} />
         {canEditSources ? <AddSource notebookId={notebook.id} /> : null}
       </section>
+      <Chat notebookId={notebook.id} initialHistory={history} historyFailed={historyFailed} />
       {notebook.role === "owner" ? (
         <form action={deleteNotebookAction}>
           <input type="hidden" name="notebookId" value={notebook.id} />
