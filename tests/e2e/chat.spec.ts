@@ -168,6 +168,41 @@ test.describe("chat history", () => {
   });
 });
 
+test.describe("chat layout", () => {
+  test("the question is a right-aligned bubble and the answer sits on the left", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-layout");
+    const chunkId = await seedChunk(owner, id);
+    await seedPair(owner, id, "Wann wurde die Firma gegründet?", "Sie wurde 1999 gegründet [1].", [
+      { chunkId, quote: QUOTE },
+    ]);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const list = section.getByRole("list");
+    const question = section.getByRole("listitem").filter({ hasText: "Wann wurde die Firma gegründet?" });
+    const answer = section.getByRole("listitem").filter({ hasText: "Sie wurde 1999 gegründet" });
+    await expect(question).toHaveCount(1);
+    await expect(answer).toHaveCount(1);
+
+    const listBox = (await list.first().boundingBox())!;
+    const questionBox = (await question.boundingBox())!;
+    const answerBox = (await answer.boundingBox())!;
+    expect(listBox).toBeTruthy();
+    expect(questionBox).toBeTruthy();
+    expect(answerBox).toBeTruthy();
+
+    const listRight = listBox.x + listBox.width;
+    // Question: right edge flush with the list, and a bubble (not full width).
+    expect(Math.abs(questionBox.x + questionBox.width - listRight)).toBeLessThanOrEqual(4);
+    expect(questionBox.x - listBox.x).toBeGreaterThan(listBox.width * 0.15);
+    // Answer: left edge flush with the list.
+    expect(Math.abs(answerBox.x - listBox.x)).toBeLessThanOrEqual(4);
+
+    await context.close();
+  });
+});
+
 test.describe("asking a question", () => {
   test("without a configured model the alert says Modell nicht konfiguriert and no pending text remains", async ({
     browser,

@@ -786,22 +786,32 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 }
 .conversation > h2 { font-size: 1.05rem; margin: 0; }
 
-.thread { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s5); }
+.thread { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s4); }
+/* A chat: your questions as bubbles on the right, answers on the left with their evidence. */
 .turn { display: grid; gap: var(--s2); animation: rise 260ms var(--ease) backwards; }
+.turn.q { justify-self: end; max-width: min(75%, 36rem); }
 .turn.q p {
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 18px 18px 4px 18px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  color: var(--ink);
   font-family: var(--font-read);
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
+.turn.a { justify-self: start; max-width: min(88%, 48rem); }
 .turn.a .body {
-  font-family: var(--font-read);
-  font-size: 1.08rem;
-  line-height: 1.7;
-  max-width: 44rem;
   margin: 0;
-  padding-left: var(--s4);
-  border-left: 2px solid var(--rule);
+  padding: 12px 18px;
+  border-radius: 18px 18px 18px 4px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--card));
+  border: 1px solid var(--rule-2);
+  font-family: var(--font-read);
+  font-size: 1.05rem;
+  line-height: 1.7;
 }
 .ref {
   display: inline-flex;
@@ -821,8 +831,10 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   color: var(--src, var(--ink-2));
 }
 
-.chips { display: flex; flex-wrap: wrap; gap: var(--s2); padding-left: var(--s4); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); padding-left: var(--s2); }
 .chip {
+  justify-content: flex-start;
+  text-align: left;
   min-height: 34px;
   padding: 0 var(--s3) 0 6px;
   font-size: 0.82rem;
@@ -861,7 +873,13 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   background: var(--accent);
   animation: blink 1s steps(2) infinite;
 }
-.thinking { display: inline-flex; gap: 5px; padding-left: var(--s4); }
+.thinking {
+  display: inline-flex;
+  gap: 5px;
+  padding: 14px 18px;
+  border-radius: 18px 18px 18px 4px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--card));
+}
 .thinking i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); animation: pulse 1s ease-in-out infinite; }
 .thinking i:nth-child(2) { animation-delay: 0.15s; }
 .thinking i:nth-child(3) { animation-delay: 0.3s; }
@@ -1117,8 +1135,8 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   to { opacity: 1; transform: none; }
 }
 @keyframes arrive {
-  0% { box-shadow: -2px 0 0 0 var(--accent), 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
-  30% { box-shadow: -2px 0 0 0 var(--accent), 0 0 40px -6px color-mix(in srgb, var(--accent) 35%, transparent); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  30% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 40px -6px color-mix(in srgb, var(--accent) 35%, transparent); }
   100% { box-shadow: none; }
 }
 
