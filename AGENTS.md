@@ -8,7 +8,7 @@ Scope and milestones: `docs/roadmap.md`. Decisions: `docs/adr/`. How agents are 
 
 ## Stack
 
-- Next.js (App Router, TypeScript strict) on Vercel, region `fra1`. UI language is German; code, docs, commits and PRs are English.
+- Next.js (App Router, TypeScript strict) on Vercel, region `fra1`, as two projects: `nblm-web-develop` is develop (its production environment deploys `main`), `nblm-web` is production (release tag). Previews of either project get no AWS access (ADR 0009). UI language is German; code, docs, commits and PRs are English.
 - Supabase in Frankfurt (develop and production projects): Postgres + pgvector, Auth (GitHub OAuth, anonymous demo sign-in behind Turnstile), private Storage, pg_cron.
 - LLM and embeddings via AWS Bedrock in the EU, reached from Vercel through OIDC (no AWS keys). Model ids only from env vars, all model config server-side.
 - OpenTofu in `infra/` (stacks: bootstrap, aws, cloudflare, github). Vercel via `vercel.json` + CLI, Supabase via `supabase/config.toml`.
