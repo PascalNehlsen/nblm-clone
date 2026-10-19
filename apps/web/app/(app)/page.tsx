@@ -44,17 +44,20 @@ export default async function Home({
           ))}
         </ul>
       )}
-      <form action={createNotebookAction} className="new-book">
-        <h2>Neues Notizbuch</h2>
-        <div className="row">
-          <label>
-            Titel <input name="title" required maxLength={200} />
-          </label>{" "}
-          <button type="submit" className="primary">
-            Anlegen
-          </button>
-        </div>
-      </form>
+      {/* Demo users have exactly one notebook (ADR 0012); a second one would be refused. */}
+      {data.user.is_anonymous ? null : (
+        <form action={createNotebookAction} className="new-book">
+          <h2>Neues Notizbuch</h2>
+          <div className="row">
+            <label>
+              Titel <input name="title" required maxLength={200} />
+            </label>{" "}
+            <button type="submit" className="primary">
+              Anlegen
+            </button>
+          </div>
+          </form>
+      )}
     </main>
   );
 }

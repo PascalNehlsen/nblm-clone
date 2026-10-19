@@ -20,10 +20,11 @@ export function PointerLight() {
 
     const onMove = (e: PointerEvent) => {
       const target = (e.target as Element | null)?.closest<HTMLElement>("[data-tilt]") ?? null;
+      // Cancel first: a frame scheduled for the previous card must not re-light it.
+      cancelAnimationFrame(frame);
       if (active && active !== target) reset(active);
       active = target;
       if (!target) return;
-      cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const r = target.getBoundingClientRect();
         const x = (e.clientX - r.left) / r.width;
@@ -36,17 +37,20 @@ export function PointerLight() {
         target.setAttribute("data-lit", "");
       });
     };
-    const onLeave = () => {
+    // Leaving the window: pointerout with no related target (pointerleave on document is unreliable).
+    const onOut = (e: PointerEvent) => {
+      if (e.relatedTarget !== null) return;
+      cancelAnimationFrame(frame);
       if (active) reset(active);
       active = null;
     };
 
     document.addEventListener("pointermove", onMove, { passive: true });
-    document.addEventListener("pointerleave", onLeave);
+    document.documentElement.addEventListener("pointerout", onOut);
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerleave", onLeave);
+      document.documentElement.removeEventListener("pointerout", onOut);
     };
   }, []);
   return null;

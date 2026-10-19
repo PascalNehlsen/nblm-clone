@@ -61,30 +61,23 @@ describe("startDemoCore: notebook lookup and creation", () => {
   });
 
   it("demo_notebook_exists goes to the list", async () => {
-    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null).mockResolvedValueOnce(OTHER_ID);
+    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null);
     const deps = makeDeps({
       firstNotebookId,
       createNotebook: vi.fn(async () => ({ error: "demo_notebook_exists" })),
     });
     await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
-    expect(firstNotebookId.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(firstNotebookId).toHaveBeenCalledTimes(1);
   });
 
   it("demo_notebook_exists inside a longer Postgres message is still recognised", async () => {
-    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null).mockResolvedValueOnce(OTHER_ID);
+    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null);
     const deps = makeDeps({
       firstNotebookId,
       createNotebook: vi.fn(async () => ({ error: "P0001: demo_notebook_exists (context)" })),
     });
     await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
-  });
-
-  it("demo_notebook_exists with no notebook on the second lookup goes to /", async () => {
-    const deps = makeDeps({
-      firstNotebookId: vi.fn(async () => null),
-      createNotebook: vi.fn(async () => ({ error: "demo_notebook_exists" })),
-    });
-    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
+    expect(firstNotebookId).toHaveBeenCalledTimes(1);
   });
 });
 

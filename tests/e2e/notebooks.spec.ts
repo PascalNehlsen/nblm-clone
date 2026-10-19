@@ -298,6 +298,8 @@ test.describe("deleting a notebook requires explicit confirmation", () => {
     await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Endgültig löschen" })).toBeVisible();
 
+    await expect(dialog).toHaveAccessibleDescription(/endgültig gelöscht/);
+
     await dialog.getByRole("button", { name: "Abbrechen" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(new URL(page.url()).pathname).toBe(new URL(notebookUrl).pathname);
@@ -306,6 +308,34 @@ test.describe("deleting a notebook requires explicit confirmation", () => {
     const response = await page.goto(notebookUrl);
     expect(response?.status()).not.toBe(404);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  });
+
+  test("the server rejects a delete whose hidden confirmation input was removed (fehler=bestaetigung), the notebook survives", async ({
+    context,
+  }) => {
+    // The hidden input is located by type and value, not by name: production builds prefix
+    // server-action field names.
+    await context.addCookies(await seedLocalSession("notebooks-e2e-confirm-guard"));
+    const page = await context.newPage();
+    const title = `Bestaetigung-Test ${Date.now()}`;
+    const notebookUrl = await createNotebookViaUi(page, title);
+
+    await page.getByRole("button", { name: "Notizbuch löschen" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const hidden = page.locator("dialog form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig löschen" }).click();
+    await page.waitForURL(
+      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
+    );
+    expect(new URL(page.url()).searchParams.get("fehler")).toBe("bestaetigung");
+
+    const response = await page.goto(notebookUrl);
+    expect(response?.status()).not.toBe(404);
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
   });
 
   test("Endgültig löschen in the dialog deletes the notebook and lands on the list with a status", async ({

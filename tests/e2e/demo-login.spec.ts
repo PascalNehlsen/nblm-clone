@@ -45,6 +45,41 @@ test.describe("demo login", () => {
     await expect(page.getByText("Beispiel: Noch in Arbeit.txt")).toHaveCount(0);
   });
 
+  test("an anonymous demo user cannot create more notebooks from the list", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.getByRole("heading", { name: "Deine Notizbücher" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Neues Notizbuch" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Anlegen" })).toHaveCount(0);
+  });
+
+  test("the notebook card tilts in 3D on hover (computed transform is a non-identity matrix3d)", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+
+    const card = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: /Demo: Beispielquellen/ }) });
+    await expect(card).toHaveCount(1);
+    await card.hover();
+    const box = await card.boundingBox();
+    if (!box) throw new Error("card has no bounding box");
+    await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.15);
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.2);
+    // A real 3D tilt: the computed transform is a non-identity matrix3d. "none" and the
+    // 2D identity matrix (what broken CSS yields) must both fail.
+    await expect
+      .poll(() =>
+        card.evaluate((el) => {
+          const t = getComputedStyle(el).transform;
+          if (t === "none") return false;
+          const m = new DOMMatrixReadOnly(t);
+          return !m.isIdentity && m.is2D === false;
+        }),
+      )
+      .toBe(true);
+  });
+
   test("the notebook has no 24 hour note, no delete button, no source controls, but the chat form", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
