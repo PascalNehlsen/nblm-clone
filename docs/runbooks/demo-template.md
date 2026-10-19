@@ -1,6 +1,6 @@
 # Runbook: demo template and demo jobs
 
-- Last rehearsed: never (locally through `supabase/seed.sql`; develop after F1 is merged)
+- Last rehearsed: 2026-10-19 on production (three public-domain texts: Grundgesetz Art. 1 to 5, Grimm "Hänsel und Gretel", Goethe "Der Zauberlehrling"; "Demo starten" checked in a private window); develop earlier the same day
 - Who: the human, in the Supabase SQL editor of the project, as `postgres` ([ADR 0012](../adr/0012-demo-login.md))
 - What: register the notebook that demo users get a copy of, change the cap, switch copies off, check the pg_cron jobs
 
