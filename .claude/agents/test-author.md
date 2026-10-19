@@ -1,6 +1,6 @@
 ---
 name: test-author
-description: Writes the failing tests for an approved plan before implementation starts. Use after the human approved the planner's plan, and to start every bug fix with a failing test.
+description: Writes the failing tests for an approved plan before implementation starts. Use after the planner's plan was approved (by the host Claude session or, for the escalation cases in AGENTS.md, by the human), and to start every bug fix with a failing test.
 tools: Read, Grep, Glob, Write, Edit, Bash
 model: sonnet
 ---
