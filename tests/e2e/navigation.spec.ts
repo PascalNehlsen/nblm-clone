@@ -57,6 +57,44 @@ test.describe("empty states", () => {
       ),
     ).toBeVisible();
   });
+
+  test("a viewer of a shared notebook without sources is told that editors add sources, not to add one themselves", async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext();
+    const viewerContext = await browser.newContext();
+    await ownerContext.addCookies(await seedLocalSession("navigation-e2e-viewer-empty-owner"));
+    await viewerContext.addCookies(await seedLocalSession("navigation-e2e-viewer-empty-viewer"));
+    const ownerPage = await ownerContext.newPage();
+    const viewerPage = await viewerContext.newPage();
+
+    await viewerPage.goto("/profil");
+    const viewerId = (await viewerPage.getByTestId("nutzer-id").innerText()).match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+    )?.[0];
+    if (!viewerId) throw new Error("no viewer id found on /profil");
+
+    await createNotebookViaUi(ownerPage, `Leer geteilt ${Date.now()}`);
+    const notebookUrl = ownerPage.url();
+    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
+    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
+    await ownerPage.getByRole("button", { name: "Teilen" }).click();
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    await viewerPage.goto(notebookUrl);
+    const fragen = viewerPage
+      .locator("section")
+      .filter({ has: viewerPage.getByRole("heading", { name: "Fragen", exact: true }) });
+    await expect(
+      fragen.getByText(
+        "Noch keine Quellen bereit. Sobald jemand mit Bearbeitungsrechten eine Quelle hinzufügt, kannst du hier Fragen stellen.",
+      ),
+    ).toBeVisible();
+    await expect(viewerPage.locator("body")).not.toContainText("Füge links eine Quelle hinzu");
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
 });
 
 test.describe("getting around", () => {
@@ -96,8 +134,9 @@ test.describe("not found", () => {
   test("a missing notebook shows the same German not-found page", async ({ context }) => {
     await context.addCookies(await seedLocalSession("navigation-e2e-404-notebook"));
     const page = await context.newPage();
-    await page.goto("/notebooks/00000000-0000-4000-8000-000000000000");
+    const response = await page.goto("/notebooks/00000000-0000-4000-8000-000000000000");
 
+    expect(response?.status()).toBe(404);
     await expectGermanNotFound(page);
   });
 

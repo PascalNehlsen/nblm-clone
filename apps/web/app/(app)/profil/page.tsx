@@ -16,7 +16,7 @@ export default async function ProfilePage() {
   return (
     <main id="inhalt" className="page">
       <Link href="/" className="back">
-        ← Alle Notizbücher
+        <span aria-hidden="true">←</span> Alle Notizbücher
       </Link>
       <p className="eyebrow">Konto</p>
       <h1>Profil</h1>

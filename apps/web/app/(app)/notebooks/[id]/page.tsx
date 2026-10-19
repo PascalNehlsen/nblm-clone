@@ -56,7 +56,7 @@ export default async function NotebookPage({
     <main id="inhalt" className="notebook">
       <div className="nb-head">
         <Link href="/" className="back">
-          ← Alle Notizbücher
+          <span aria-hidden="true">←</span> Alle Notizbücher
         </Link>
         <h1>{notebook.title}</h1>
         <p className="pill">Deine Rolle: {ROLE_LABELS[notebook.role]}</p>
@@ -97,6 +97,7 @@ export default async function NotebookPage({
         historyFailed={historyFailed}
         hues={hues}
         hasReadySources={sources.some((source) => source.status === "ready")}
+        canAddSources={canEditSources}
       />
     </main>
   );

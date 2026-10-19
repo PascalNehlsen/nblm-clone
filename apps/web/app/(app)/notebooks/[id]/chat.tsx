@@ -116,12 +116,14 @@ export function Chat({
   historyFailed = false,
   hues = {},
   hasReadySources = true,
+  canAddSources = true,
 }: {
   notebookId: string;
   initialHistory: HistoryEntry[];
   historyFailed?: boolean;
   hues?: Record<string, number>;
   hasReadySources?: boolean;
+  canAddSources?: boolean;
 }) {
   const router = useRouter();
   const [opened, setOpened] = useState<Opened>(null);
@@ -204,8 +206,9 @@ export function Chat({
         {historyFailed ? <p role="status">Der Verlauf konnte nicht geladen werden.</p> : null}
         {!hasReadySources && initialHistory.length === 0 ? (
           <p className="guide">
-            Noch keine Quellen bereit. Füge links eine Quelle hinzu; sobald sie bereit ist, kannst du hier Fragen
-            stellen.
+            {canAddSources
+              ? "Noch keine Quellen bereit. Füge links eine Quelle hinzu; sobald sie bereit ist, kannst du hier Fragen stellen."
+              : "Noch keine Quellen bereit. Sobald jemand mit Bearbeitungsrechten eine Quelle hinzufügt, kannst du hier Fragen stellen."}
           </p>
         ) : null}
         {hasReadySources && initialHistory.length === 0 && !turn.asked ? (
