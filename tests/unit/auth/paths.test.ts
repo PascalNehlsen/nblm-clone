@@ -5,10 +5,34 @@ import { describe, expect, it } from "vitest";
 import { isPublicPath, PUBLIC_PATHS } from "../../../apps/web/lib/auth/paths";
 
 describe("PUBLIC_PATHS", () => {
-  it("is exactly /login, /auth/callback, /api/canary and /api/eval", () => {
+  it("is exactly /login, /auth/callback, /api/canary, /api/eval, /impressum and /datenschutz", () => {
     // /api/canary is the release canary entry (ADR 0014, R2); its secret header protects it.
     // /api/eval is the live eval entry; its own secret header protects it the same way.
-    expect(PUBLIC_PATHS).toEqual(["/login", "/auth/callback", "/api/canary", "/api/eval"]);
+    // /impressum and /datenschutz are the public legal pages.
+    expect(PUBLIC_PATHS).toEqual([
+      "/login",
+      "/auth/callback",
+      "/api/canary",
+      "/api/eval",
+      "/impressum",
+      "/datenschutz",
+    ]);
+  });
+});
+
+describe("isPublicPath: legal pages", () => {
+  it("matches /impressum and /datenschutz exactly", () => {
+    expect(isPublicPath("/impressum")).toBe(true);
+    expect(isPublicPath("/datenschutz")).toBe(true);
+  });
+
+  it("keeps everything below or next to them protected", () => {
+    expect(isPublicPath("/impressum/x")).toBe(false);
+    expect(isPublicPath("/impressum/")).toBe(false);
+    expect(isPublicPath("/impressumx")).toBe(false);
+    expect(isPublicPath("/datenschutz/x")).toBe(false);
+    expect(isPublicPath("/datenschutz/")).toBe(false);
+    expect(isPublicPath("/datenschutzx")).toBe(false);
   });
 });
 

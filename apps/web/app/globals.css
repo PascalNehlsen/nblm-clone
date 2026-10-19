@@ -40,6 +40,9 @@
   --s5: 24px;
   --s6: 32px;
   --s7: 48px;
+  --max: 1920px;
+  /* Horizontal inset that keeps content within --max on very wide screens. */
+  --edge: max(var(--s5), calc((100vw - var(--max)) / 2 + var(--s5)));
 
   font-family: var(--font-ui);
   font-size: 16px;
@@ -99,6 +102,9 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100dvh;
+  /* The footer sits at the bottom even when a page has little content. */
+  display: flex;
+  flex-direction: column;
   background: var(--paper);
   position: relative;
   isolation: isolate;
@@ -167,7 +173,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   align-items: center;
   gap: var(--s3);
   height: 56px;
-  padding: 0 var(--s5);
+  padding: 0 var(--edge);
   background: color-mix(in srgb, var(--paper) 86%, transparent);
   backdrop-filter: saturate(1.2) blur(8px);
   border-bottom: 1px solid var(--rule-2);
@@ -188,7 +194,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .account {
   position: fixed;
   top: 8px;
-  right: var(--s5);
+  right: var(--edge);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -381,7 +387,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 
 /* ---------- Pages: shared ---------- */
 
-main { animation: page-in 420ms var(--ease) backwards; }
+main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 .stagger > * { animation: rise 420ms var(--ease) backwards; }
 .stagger > *:nth-child(2) { animation-delay: 50ms; }
 .stagger > *:nth-child(3) { animation-delay: 100ms; }
@@ -405,7 +411,8 @@ main { animation: page-in 420ms var(--ease) backwards; }
   max-width: 72rem;
   margin: 0 auto;
   padding: var(--s7) var(--s5);
-  min-height: calc(100dvh - 56px);
+  /* Fills the space between top bar and footer (body is a flex column), no extra height. */
+  flex: 1 0 auto;
 }
 @media (min-width: 900px) {
   .login { grid-template-columns: 1.2fr 1fr; gap: var(--s7); }
@@ -567,7 +574,7 @@ main { animation: page-in 420ms var(--ease) backwards; }
 /* ---------- Notebook ---------- */
 
 .notebook {
-  max-width: 96rem;
+  max-width: var(--max);
   margin: 0 auto;
   padding: var(--s5);
   display: grid;
@@ -1119,3 +1126,21 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   [data-tilt] { transform: none !important; }
   .floater { animation: none; }
 }
+
+/* ---------- Footer and legal pages ---------- */
+
+.site-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: center;
+  gap: var(--s5);
+  padding: var(--s6) var(--s5) var(--s5);
+  font-size: 0.85rem;
+}
+.site-footer a { color: var(--ink-3); text-decoration: none; }
+.site-footer a:hover { color: var(--ink); text-decoration: underline; }
+.legal { max-width: 46rem; }
+.legal h2 { margin-top: var(--s6); }
+.legal h3 { margin-top: var(--s4); font-family: var(--font-ui); font-size: 1rem; }
+.legal p, .legal li { line-height: 1.7; }
+.legal ul { padding-left: 1.2rem; display: grid; gap: var(--s2); }

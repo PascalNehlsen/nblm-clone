@@ -31,6 +31,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </Link>
         </header>
         {children}
+        <footer className="site-footer">
+          <Link href="/impressum">Impressum</Link>
+          <Link href="/datenschutz">Datenschutz</Link>
+        </footer>
         <PointerLight />
         <FormValidation />
       </body>
