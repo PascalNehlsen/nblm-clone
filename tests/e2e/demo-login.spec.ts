@@ -102,6 +102,7 @@ test.describe("demo login", () => {
 
     const chat = page.locator("section").filter({ has: page.getByRole("heading", { name: "Fragen", exact: true }) });
     await expect(chat.getByLabel("Frage")).toBeVisible();
+    await chat.getByLabel("Frage").fill("Worum geht es?");
     await expect(chat.getByRole("button", { name: "Fragen", exact: true })).toBeEnabled();
   });
 });

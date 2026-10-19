@@ -1,8 +1,11 @@
+"use client";
+
 import { deleteSourceAction, retrySourceAction } from "./sources/actions";
 import { sourceErrorLabel } from "@/lib/ops/categories";
 import type { SourceStatus, SourceSummary } from "@/lib/sources/sources";
 import { hueFor } from "@/lib/ui/source-hue";
 import { ConfirmAction } from "@/components/confirm-action";
+import { useMargin } from "@/components/margin";
 
 const STATUS_LABELS: Record<Exclude<SourceStatus, "failed">, string> = {
   pending: "Wartet",
@@ -28,12 +31,28 @@ export function SourceList({
   canEdit: boolean;
   hues?: Record<string, number>;
 }) {
+  const margin = useMargin();
   if (sources.length === 0) return <p>Noch keine Quellen.</p>;
+  const reading = margin.item?.kind === "source" ? margin.item.sourceId : null;
   return (
     <ul>
       {sources.map((source) => (
         <li key={source.id} data-hue={hueFor(hues, source.title)}>
-          <span className="title">{source.title}</span>{" "}
+          {source.status === "ready" ? (
+            <button
+              type="button"
+              className="title"
+              aria-expanded={reading === source.id}
+              aria-controls="fundstelle"
+              onClick={(e) =>
+                margin.open(reading === source.id ? null : { kind: "source", sourceId: source.id, title: source.title }, e.currentTarget)
+              }
+            >
+              {source.title}
+            </button>
+          ) : (
+            <span className="title">{source.title}</span>
+          )}{" "}
           <span className="pill status" data-state={source.status}>
             {statusText(source)}
           </span>

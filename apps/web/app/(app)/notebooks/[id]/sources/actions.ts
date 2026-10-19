@@ -166,3 +166,39 @@ export async function retrySourceAction(formData: FormData): Promise<void> {
   await runIngestion(supabase, sourceId);
   redirect(notebookPath(notebookId));
 }
+
+// Reading a whole source (the margin's source view). The user's own client, so RLS decides;
+// both ids must match, so a source of another notebook is never returned.
+const READ_CHUNK_LIMIT = 400;
+
+export async function readSourceAction(input: {
+  notebookId: unknown;
+  sourceId: unknown;
+}): Promise<{ ok: true; title: string; text: string; truncated: boolean } | { ok: false }> {
+  const { notebookId, sourceId } = input;
+  if (!isUuid(notebookId) || !isUuid(sourceId)) return { ok: false };
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return { ok: false };
+  const { data: source } = await supabase
+    .from("sources")
+    .select("title")
+    .eq("notebook_id", notebookId)
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (!source) return { ok: false };
+  const { data: chunks, error } = await supabase
+    .from("chunks")
+    .select("content")
+    .eq("notebook_id", notebookId)
+    .eq("source_id", sourceId)
+    .order("ordinal", { ascending: true })
+    .limit(READ_CHUNK_LIMIT + 1);
+  if (error || !chunks) return { ok: false };
+  const truncated = chunks.length > READ_CHUNK_LIMIT;
+  const text = chunks
+    .slice(0, READ_CHUNK_LIMIT)
+    .map((c) => String(c.content))
+    .join("\n\n");
+  return { ok: true, title: String(source.title), text, truncated };
+}

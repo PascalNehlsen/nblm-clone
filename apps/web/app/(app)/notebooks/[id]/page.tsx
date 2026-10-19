@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { AddSource } from "./add-source";
 import { Chat } from "./chat";
 import { DeleteNotebook } from "./delete-notebook";
+import { MarginProvider } from "@/components/margin";
 import { MemberList } from "./member-list";
 import { SourceList } from "./source-list";
 import { listHistory } from "@/lib/chat/history";
@@ -53,6 +54,7 @@ export default async function NotebookPage({
   const hues = assignHues(sources.map((source) => source.title));
 
   return (
+    <MarginProvider>
     <main id="inhalt" className="notebook">
       <div className="nb-head">
         <Link href="/" className="back">
@@ -94,5 +96,6 @@ export default async function NotebookPage({
         canAddSources={canEditSources}
       />
     </main>
+    </MarginProvider>
   );
 }
