@@ -1,13 +1,19 @@
 import { notFound, redirect } from "next/navigation";
 import { deleteNotebookAction } from "../actions";
+import { AddSource } from "./add-source";
 import { MemberList } from "./member-list";
+import { SourceList } from "./source-list";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { listMembers } from "@/lib/notebooks/members";
 import { getNotebook } from "@/lib/notebooks/notebooks";
 import { ROLE_LABELS, isUuid } from "@/lib/notebooks/roles";
+import { listSources } from "@/lib/sources/sources";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Notizbuch" };
+
+// Ingestion runs inline in the server actions of this page (ADR 0007).
+export const maxDuration = 300;
 
 export default async function NotebookPage({
   params,
@@ -28,6 +34,9 @@ export default async function NotebookPage({
   const notebook = await getNotebook(supabase, id, data.user.id);
   if (!notebook) notFound();
   const members = await listMembers(supabase, id);
+  const sources = await listSources(supabase, id);
+  const canEditSources =
+    (notebook.role === "owner" || notebook.role === "editor") && !(data.user.is_anonymous ?? false);
 
   return (
     <main>
@@ -41,6 +50,11 @@ export default async function NotebookPage({
         notebookId={notebook.id}
         isAnonymous={data.user.is_anonymous ?? false}
       />
+      <section>
+        <h2>Quellen</h2>
+        <SourceList sources={sources} notebookId={notebook.id} canEdit={canEditSources} />
+        {canEditSources ? <AddSource notebookId={notebook.id} /> : null}
+      </section>
       {notebook.role === "owner" ? (
         <form action={deleteNotebookAction}>
           <input type="hidden" name="notebookId" value={notebook.id} />

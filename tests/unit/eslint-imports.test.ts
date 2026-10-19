@@ -306,3 +306,44 @@ describe("eslint no-restricted-imports: only call.ts and testing.ts may import l
     expect(flaggedByNoRestrictedImports(messages)).toBe(false);
   });
 });
+
+// C1 ingestion (plan approved by Pascal, 2026-10-19): only lib/server/model/ may
+// reach the Bedrock provider or the AWS Bedrock SDK, so every model call still
+// passes through createModelCaller's budget check (AGENTS.md). bedrock.ts and
+// embeddings.ts both live under lib/server/model/, so that whole directory is the
+// exception, not a single file (unlike the narrower admin/usage exception above).
+describe("eslint no-restricted-imports: only lib/server/model/ may import the Bedrock provider or SDK", () => {
+  it.each([
+    ["apps/web/app/x.ts", "@/lib/server/model/bedrock"],
+    ["apps/web/lib/server/ingest/run.ts", "@/lib/server/model/bedrock"],
+    ["apps/web/lib/server/ingest/run.ts", "../model/bedrock"],
+  ] as const)("flags %s importing %s", async (file, specifier) => {
+    const messages = await lint(
+      file,
+      `import { bedrockEmbeddings } from "${specifier}";\nexport const x = bedrockEmbeddings;\n`,
+    );
+    expect(flaggedByNoRestrictedImports(messages)).toBe(true);
+  });
+
+  it.each([
+    ["apps/web/lib/sources/x.ts", "@aws-sdk/client-bedrock-runtime"],
+    ["apps/web/app/x/page.jsx", "@aws-sdk/client-bedrock-runtime"],
+    ["apps/web/lib/server/ingest/x.ts", "@aws-sdk/client-bedrock-runtime/dist-cjs/index.js"],
+    ["apps/web/lib/server/admin/usage.ts", "@aws-sdk/client-bedrock-runtime"],
+  ] as const)("flags %s importing %s", async (file, specifier) => {
+    const messages = await lint(
+      file,
+      `import { BedrockRuntimeClient } from "${specifier}";\nexport const x = BedrockRuntimeClient;\n`,
+    );
+    expect(flaggedByNoRestrictedImports(messages)).toBe(true);
+  });
+
+  it.each([
+    ["apps/web/lib/server/model/embeddings.ts", "./bedrock"],
+    ["apps/web/lib/server/model/bedrock.ts", "@aws-sdk/client-bedrock-runtime"],
+    ["apps/web/lib/server/ingest/run.ts", "@/lib/server/model/embeddings"],
+  ] as const)("does not flag %s importing %s", async (file, specifier) => {
+    const messages = await lint(file, `import { x } from "${specifier}";\nexport const y = x;\n`);
+    expect(flaggedByNoRestrictedImports(messages)).toBe(false);
+  });
+});

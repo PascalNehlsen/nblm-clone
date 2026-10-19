@@ -33,3 +33,45 @@ export const CATEGORY_LABELS: Record<ModelErrorCategory, string> = {
   message_link_failed: "Nachricht konnte nicht verknüpft werden",
   settle_failed: "Verbrauch konnte nicht abgerechnet werden",
 };
+
+// Fixed categories for ingestion failures, stored in sources.error_category next to the
+// model categories above (an embedding refusal keeps its model category).
+export const INGEST_ERROR_CATEGORIES = [
+  "unsupported_type",
+  "file_too_large",
+  "upload_missing",
+  "pdf_encrypted",
+  "pdf_unreadable",
+  "no_text",
+  "too_many_chunks",
+  "notebook_chunk_limit",
+  "storage_failed",
+  "db_failed",
+] as const;
+
+export type IngestErrorCategory = (typeof INGEST_ERROR_CATEGORIES)[number];
+
+export const INGEST_CATEGORY_LABELS: Record<IngestErrorCategory, string> = {
+  unsupported_type: "Dateityp nicht unterstützt",
+  file_too_large: "Datei zu groß",
+  upload_missing: "Hochgeladene Datei fehlt",
+  pdf_encrypted: "PDF ist verschlüsselt",
+  pdf_unreadable: "PDF nicht lesbar",
+  no_text: "Kein Text gefunden",
+  too_many_chunks: "Quelle zu lang",
+  notebook_chunk_limit: "Notizbuch ist voll",
+  storage_failed: "Speicher nicht erreichbar",
+  db_failed: "Datenbankfehler",
+};
+
+function hasLabel<K extends string>(labels: Record<K, string>, key: string): key is K {
+  return Object.hasOwn(labels, key);
+}
+
+// Label for sources.error_category, which holds an ingest or a model category.
+export function sourceErrorLabel(category: string | null): string {
+  if (category === null) return "Unbekannter Fehler";
+  if (hasLabel(INGEST_CATEGORY_LABELS, category)) return INGEST_CATEGORY_LABELS[category];
+  if (hasLabel(CATEGORY_LABELS, category)) return CATEGORY_LABELS[category];
+  return "Unbekannter Fehler";
+}

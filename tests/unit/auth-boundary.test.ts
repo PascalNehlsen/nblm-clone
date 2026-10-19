@@ -279,6 +279,117 @@ describe("the model call wrapper's server-only modules are marked server-only", 
   });
 });
 
+// C1 ingestion (plan approved by Pascal, 2026-10-19). See .git/C1-API-SPEC.md: the
+// ingest pipeline and its real wiring are server-only (they read the objects
+// directly and call the model), while the two lib/sources/ modules must NOT be
+// server-only, since the RLS tests and the client-side upload form import them.
+// The placeholder provider (lib/server/model/providers/unavailable.ts) is gone,
+// replaced by lib/server/model/embeddings.ts, which wires the real Bedrock
+// provider through createModelCaller (so the budget check always runs).
+describe("C1 ingestion: server-only ingest modules exist and are marked server-only", () => {
+  const ingestFiles = [
+    "lib/server/ingest/magic.ts",
+    "lib/server/ingest/normalize.ts",
+    "lib/server/ingest/chunk.ts",
+    "lib/server/ingest/pdf.ts",
+    "lib/server/ingest/pipeline.ts",
+    "lib/server/ingest/run.ts",
+    "lib/server/model/embeddings.ts",
+  ].map((relative) => path.join(webDir, relative));
+
+  it("all seven files exist", () => {
+    for (const file of ingestFiles) {
+      expect(fs.existsSync(file), `${path.relative(webDir, file)} is missing`).toBe(true);
+    }
+  });
+
+  it("all seven begin with `import \"server-only\"` as their first line", () => {
+    for (const file of ingestFiles) {
+      const firstLine = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n")[0]?.trim() : undefined;
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+});
+
+// C1 ingestion (plan approved by Pascal, 2026-10-19): the Bedrock provider and the
+// AWS Bedrock SDK must only ever be reached through lib/server/model/ (bedrock.ts
+// itself and embeddings.ts, which wires it behind createModelCaller), so every
+// model call still passes the budget check. ESLint's no-restricted-imports (tested
+// in eslint-imports.test.ts) only sees static import specifiers; this is the same
+// source-text backstop used for the admin module, call-core and testing.ts, for a
+// dynamic import(), a require() call or a plain .js/.mjs/.cjs file.
+const BEDROCK_REFERENCE_SUBSTRINGS = ["model/bedrock", "client-bedrock-runtime"];
+const ALLOWED_BEDROCK_REFERENCE_PREFIX = "lib/server/model/";
+
+function collectBedrockOffenders(files: Array<{ relativePath: string; content: string }>): string[] {
+  const offenders: string[] = [];
+  for (const file of files) {
+    if (file.relativePath.startsWith(ALLOWED_BEDROCK_REFERENCE_PREFIX)) continue;
+    for (const needle of BEDROCK_REFERENCE_SUBSTRINGS) {
+      if (file.content.includes(needle)) {
+        offenders.push(`${file.relativePath}: contains "${needle}"`);
+      }
+    }
+  }
+  return offenders;
+}
+
+describe("boundary scan: only lib/server/model/ may reference the Bedrock provider or SDK", () => {
+  it("a dynamic import of the Bedrock provider in app/actions.ts is caught", () => {
+    const files = [{ relativePath: "app/actions.ts", content: 'await import("@/lib/server/model/bedrock");' }];
+    const offenders = collectBedrockOffenders(files);
+    expect(offenders.length).toBeGreaterThan(0);
+    expect(offenders.every((offender) => offender.startsWith("app/actions.ts:"))).toBe(true);
+  });
+
+  it("a require() of the Bedrock SDK in lib/x.cjs is caught", () => {
+    const files = [{ relativePath: "lib/x.cjs", content: 'const { BedrockRuntimeClient } = require("@aws-sdk/client-bedrock-runtime");' }];
+    const offenders = collectBedrockOffenders(files);
+    expect(offenders.length).toBeGreaterThan(0);
+    expect(offenders.every((offender) => offender.startsWith("lib/x.cjs:"))).toBe(true);
+  });
+
+  it("the same text in lib/server/model/embeddings.ts is not caught", () => {
+    const files = [
+      {
+        relativePath: "lib/server/model/embeddings.ts",
+        content: 'import { bedrockEmbeddings } from "./bedrock";\nconst x = "@aws-sdk/client-bedrock-runtime";',
+      },
+    ];
+    expect(collectBedrockOffenders(files)).toEqual([]);
+  });
+
+  it("the real tree has no reference to the Bedrock provider or SDK outside lib/server/model/", () => {
+    const files = collectSourceFiles(webDir).map((file) => ({
+      relativePath: path.relative(webDir, file).split(path.sep).join("/"),
+      content: fs.readFileSync(file, "utf8"),
+    }));
+    expect(collectBedrockOffenders(files)).toEqual([]);
+  });
+});
+
+describe("C1 ingestion: lib/sources/ modules exist and are NOT server-only", () => {
+  const sourcesFiles = ["lib/sources/sources.ts", "lib/sources/limits.ts"].map((relative) =>
+    path.join(webDir, relative),
+  );
+
+  it("both files exist", () => {
+    for (const file of sourcesFiles) {
+      expect(fs.existsSync(file), `${path.relative(webDir, file)} is missing`).toBe(true);
+    }
+  });
+
+  it('neither imports "server-only" anywhere (the RLS tests and the client form import these)', () => {
+    for (const file of sourcesFiles) {
+      const content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+      expect(content, `${path.relative(webDir, file)} is missing`).not.toBe("");
+      expect(content.includes('"server-only"')).toBe(false);
+    }
+  });
+});
+
 describe("no \"use client\" file imports a server-only module", () => {
   const forbiddenImportTargets = ["lib/supabase/server", "lib/supabase/proxy", "lib/server/"];
 
