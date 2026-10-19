@@ -114,6 +114,8 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
     env:
       VERCEL_TELEMETRY_DISABLED: "1"
       VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
@@ -166,3 +168,31 @@ jobs:
 
       - name: Smoke test (live)
         run: node scripts/smoke.mjs live | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Live eval (ADR 0017): every case of tests/eval/cases.json against the real model on the
+  # deployment just promoted. Red on any security failure or a quality score below the
+  # minimum; a red develop run also stops a release tag on this commit (release.yml).
+  eval:
+    name: eval (develop)
+    needs: deploy
+    runs-on: ubuntu-24.04
+    environment: develop
+    permissions:
+      contents: read
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Eval
+        env:
+          EVAL_BASE_URL: ${{ needs.deploy.outputs.url }}
+          EVAL_SECRET: ${{ secrets.EVAL_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: node scripts/eval.mjs | tee -a "$GITHUB_STEP_SUMMARY"

@@ -210,8 +210,8 @@ describe("develop.yml: concurrency", () => {
 });
 
 describe("develop.yml: jobs", () => {
-  it("has the jobs migrate and deploy", () => {
-    assert.deepEqual(Object.keys(jobs(need())).sort(), ["deploy", "migrate"]);
+  it("has the jobs migrate, deploy and eval", () => {
+    assert.deepEqual(Object.keys(jobs(need())).sort(), ["deploy", "eval", "migrate"]);
   });
 
   it("deploy needs migrate", () => {
@@ -512,5 +512,90 @@ describe("develop.yml: deploy job", () => {
     assert.notEqual(promote, -1, "no vercel promote");
     assert.notEqual(live, -1, "no smoke.mjs live");
     assert.ok(deploy < staged && staged < promote && promote < live, "wrong order");
+  });
+});
+
+describe("develop.yml: deploy outputs the URL for the eval job", () => {
+  it("declares outputs: url: ${{ steps.deploy.outputs.url }} at job level", () => {
+    const body = jobs(need()).deploy ?? [];
+    const start = body.findIndex((l) => /^ {4}outputs:\s*(#.*)?$/.test(l));
+    assert.notEqual(start, -1, "deploy has no outputs: block");
+    const entries = [];
+    for (let i = start + 1; i < body.length; i++) {
+      if (!isBlank(body[i]) && indentOf(body[i]) <= 4) break;
+      if (!isBlank(body[i]) && !isComment(body[i])) entries.push(body[i].trim().replace(/\s*#.*$/, ""));
+    }
+    assert.deepEqual(entries, ["url: ${{ steps.deploy.outputs.url }}"]);
+  });
+});
+
+describe("develop.yml: eval job", () => {
+  const evalJob = () => {
+    const body = jobs(need()).eval;
+    assert.ok(body, "no eval job");
+    return body;
+  };
+  const jobKey = (key) => code(evalJob()).find((l) => new RegExp(`^ {4}${key}:`).test(l));
+  const evalStep = () => {
+    const found = steps(evalJob()).find((s) => stepName(s) === "Eval");
+    assert.ok(found, "no step named Eval");
+    return found;
+  };
+
+  it("is named eval (develop)", () => {
+    assert.match(jobKey("name") ?? "", /name:\s*["']?eval \(develop\)["']?\s*(#.*)?$/);
+  });
+
+  it("needs exactly deploy", () => {
+    const needs = jobKey("needs");
+    assert.ok(needs, "eval has no needs:");
+    assert.match(needs, /needs:\s*(deploy|\[\s*deploy\s*\])\s*(#.*)?$/);
+  });
+
+  // 12 minutes: a timed-out first attempt (310 s) plus the retry needs up to 625 s.
+  it("runs on ubuntu-24.04 in environment develop with a 12 minute timeout", () => {
+    assert.match(jobKey("runs-on") ?? "", /runs-on:\s*ubuntu-24\.04\s*(#.*)?$/);
+    assert.match(jobKey("environment") ?? "", /environment:\s*develop\s*(#.*)?$/);
+    assert.match(jobKey("timeout-minutes") ?? "", /timeout-minutes:\s*12\s*(#.*)?$/);
+  });
+
+  it("has no job-level env, so no secret can reach other steps", () => {
+    assert.equal(jobKey("env"), undefined, "eval must set env per step only");
+  });
+
+  it("checks out with persist-credentials: false and sets up node, without installing packages", () => {
+    const text = evalJob().join("\n");
+    assert.match(text, /uses:\s*actions\/checkout@[0-9a-f]{40}/);
+    assert.match(text, /uses:\s*actions\/setup-node@[0-9a-f]{40}/);
+    assert.match(text, /node-version:\s*24\b/);
+    assert.doesNotMatch(commands(evalJob()).join("\n"), /\b(pnpm|npm|yarn)\s+(install|i|ci)\b/);
+    assert.doesNotMatch(text, /pnpm\/action-setup/);
+  });
+
+  it("the Eval step runs node scripts/eval.mjs piped into tee -a $GITHUB_STEP_SUMMARY", () => {
+    const c = commands(evalStep());
+    assert.deepEqual(c, ['node scripts/eval.mjs | tee -a "$GITHUB_STEP_SUMMARY"']);
+  });
+
+  it("the Eval step env has the URL from the deploy output and both secrets", () => {
+    const text = evalStep().join("\n");
+    assert.match(text, /^\s+EVAL_BASE_URL:\s*\$\{\{\s*needs\.deploy\.outputs\.url\s*\}\}\s*$/m);
+    assert.match(text, /^\s+EVAL_SECRET:\s*\$\{\{\s*secrets\.EVAL_SECRET\s*\}\}\s*$/m);
+    assert.match(
+      text,
+      /^\s+VERCEL_AUTOMATION_BYPASS_SECRET:\s*\$\{\{\s*secrets\.VERCEL_AUTOMATION_BYPASS_SECRET\s*\}\}\s*$/m,
+    );
+  });
+
+  it("secrets appear only inside the Eval step", () => {
+    const body = evalJob();
+    const evalText = evalStep().join("\n");
+    const secretLines = body.filter((l) => !isComment(l) && /\$\{\{\s*secrets\./.test(l));
+    assert.ok(secretLines.length >= 2, "expected the two secrets");
+    for (const l of secretLines) assert.ok(evalText.includes(l), `secret outside the Eval step: ${l.trim()}`);
+  });
+
+  it("does not run when the deploy failed or was skipped, and has no if: that bypasses needs", () => {
+    assert.doesNotMatch(code(evalJob()).join("\n"), /^\s*if:\s*.*(always\(\)|failure\(\)|cancelled\(\))/m);
   });
 });
