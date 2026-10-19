@@ -328,6 +328,121 @@ describe("develop.yml: migrate job", () => {
   });
 });
 
+/** Steps of a job as arrays of raw lines (steps are `- ` items at indent 6). */
+function steps(jobLines) {
+  const out = [];
+  let cur = null;
+  for (const l of jobLines) {
+    if (/^ {6}- /.test(l)) {
+      cur = [l];
+      out.push(cur);
+    } else if (cur && (isBlank(l) || indentOf(l) > 6)) {
+      cur.push(l);
+    } else if (!isBlank(l) && indentOf(l) <= 4) {
+      cur = null;
+    }
+  }
+  return out;
+}
+
+const stepName = (s) => (s.join("\n").match(/^\s*(?:- )?name:\s*["']?(.*?)["']?\s*$/m) ?? [])[1];
+const usesDbUrlEnv = (s) => /^\s+SUPABASE_DB_URL:/m.test(s.join("\n"));
+
+describe("develop.yml: database URL check (incident: psql echoed a malformed URL with the password)", () => {
+  const POOLER_RE =
+    "^postgresql://[^:/@]+:[^@]+@[a-z0-9.-]+\\.pooler\\.supabase\\.com:5432/postgres\\?sslmode=require$"
+      .replace("[^@]+", "[A-Za-z0-9]+");
+
+  const checkStep = () => {
+    const all = steps(jobs(need()).migrate ?? []);
+    const first = all.find(usesDbUrlEnv);
+    assert.ok(first, "no migrate step has SUPABASE_DB_URL in its env");
+    return first;
+  };
+  const checkCmds = () => commands(checkStep());
+  const checkText = () => runBlocks(checkStep()).map((b) => b.join("\n")).join("\n");
+  const isMask = (c) => c.includes("::add-mask::");
+  const isAssignment = (c) => /^(export\s+|local\s+|readonly\s+)?[A-Za-z_]\w*=/.test(c);
+
+  it("the first migrate step with SUPABASE_DB_URL in its env is named Check database URL", () => {
+    assert.equal(stepName(checkStep()), "Check database URL");
+  });
+
+  it("no step before it references SUPABASE_DB_URL at all", () => {
+    const all = steps(jobs(need()).migrate ?? []);
+    const idx = all.findIndex(usesDbUrlEnv);
+    assert.notEqual(idx, -1);
+    for (const s of all.slice(0, idx)) {
+      assert.doesNotMatch(s.join("\n"), /SUPABASE_DB_URL/);
+    }
+  });
+
+  it("registers at least two masks (password and URL)", () => {
+    const masks = checkCmds().filter(isMask);
+    assert.ok(masks.length >= 2, `expected >= 2 ::add-mask:: commands, got ${masks.length}`);
+  });
+
+  it("registers the masks before any other command that uses the URL", () => {
+    const c = checkCmds();
+    const maskIdx = c.map((x, i) => (isMask(x) ? i : -1)).filter((i) => i !== -1);
+    assert.ok(maskIdx.length >= 2, "fewer than two masks");
+    const second = maskIdx[1];
+    c.forEach((cmd, i) => {
+      if (i < second && /SUPABASE_DB_URL/.test(cmd)) {
+        assert.ok(
+          isMask(cmd) || isAssignment(cmd),
+          `command uses SUPABASE_DB_URL before both masks are set: ${cmd}`,
+        );
+      }
+    });
+    const test = firstIdx(c, /=~/);
+    assert.notEqual(test, -1, "no =~ test");
+    assert.ok(second < test, "the regex test must come after both masks");
+  });
+
+  it("checks the URL with =~ against the literal session-pooler pattern", () => {
+    const text = checkText();
+    assert.match(text, /\[\[[^\n]*=~/, "no [[ ... =~ ... ]] test");
+    assert.ok(text.includes(POOLER_RE), `pattern missing: ${POOLER_RE}`);
+  });
+
+  it("exits 1 on mismatch with a fixed message", () => {
+    assert.match(checkText(), /exit\s+1/);
+  });
+
+  it("never prints the URL except inside an ::add-mask:: line", () => {
+    for (const c of checkCmds()) {
+      if (isMask(c)) continue;
+      if (/\b(echo|printf|cat|tee)\b/.test(c)) {
+        assert.doesNotMatch(c, /\$\{?SUPABASE_DB_URL\b/, `prints the URL: ${c}`);
+      }
+      assert.doesNotMatch(
+        c,
+        /^\s*(?:[A-Za-z_]\w*=)?(?:"?\$\(\s*)?(?:psql|supabase|pnpm\s+exec\s+supabase|npx\s+supabase)\b/,
+        `check step must not call a client: ${c}`,
+      );
+    }
+  });
+
+  it("every later step that uses SUPABASE_DB_URL comes after the check step", () => {
+    const all = steps(jobs(need()).migrate ?? []);
+    const idx = all.findIndex(usesDbUrlEnv);
+    const refs = all
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => /SUPABASE_DB_URL/.test(s.join("\n")));
+    assert.ok(refs.length > 1, "no later step uses SUPABASE_DB_URL");
+    assert.equal(refs[0].i, idx, "check step must be the first step that references the URL");
+    for (const { s, i } of refs.slice(1)) {
+      assert.ok(i > idx, `step ${stepName(s)} references SUPABASE_DB_URL before the check`);
+    }
+    assert.doesNotMatch(
+      (jobs(need()).deploy ?? []).join("\n"),
+      /SUPABASE_DB_URL/,
+      "the deploy job must not reference SUPABASE_DB_URL",
+    );
+  });
+});
+
 describe("develop.yml: shell and pipefail", () => {
   it("has top-level defaults: run: shell: bash", () => {
     const d = topBlock(need(), "defaults");

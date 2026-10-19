@@ -48,6 +48,23 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # First, before anything reads the URL: register the URL and its password as masks.
+      # GitHub masks only the exact secret value, so a tool that prints a changed form of it
+      # (psql did, on a malformed URL) would leak the password. Then check the session-pooler
+      # form without ever printing the value.
+      - name: Check database URL
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          credentials="${SUPABASE_DB_URL%%@*}"
+          password="${credentials##*:}"
+          if [ -n "$password" ]; then echo "::add-mask::$password"; fi
+          echo "::add-mask::$SUPABASE_DB_URL"
+          if ! [[ "$SUPABASE_DB_URL" =~ ^postgresql://[^:/@]+:[A-Za-z0-9]+@[a-z0-9.-]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
+            echo "SUPABASE_DB_URL is not a session pooler URL of the form postgresql://postgres.<ref>:<letters-and-digits password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require" >&2
+            exit 1
+          fi
+
       # Read-only: the versions already applied on develop (none on a fresh project).
       - name: Read applied migrations
         env:
