@@ -1,6 +1,6 @@
 # Runbook: release to production
 
-- Last rehearsed: never; the first `v*` tag after the production setup below is the first run
+- Last rehearsed: 2026-10-19, v1.0.0 (run 39296468707): the first run applied 8 migrations and stopped at the staged smoke test (anonymous sign-ins off) as planned; after model features and anonymous sign-ins were turned on, the rerun went through smoke test, canary (4 of 4), promote and live check. A signed annotated tag gives the commit SHA, so both gates work with `git tag -s`
 - Who: the human creates the tag and approves the `production` environment; CI does the rest (`.github/workflows/release.yml`, ADR 0015; canary ADR 0014). Nobody deploys or migrates production locally
 - What: tag on main, green on develop, then migrations, a deployment without the domain, smoke test and canary against exactly that deployment, promote to `app.sec-nblm.dev`, live smoke test, automatic promote of the previous deployment if the live check fails
 
@@ -42,6 +42,7 @@ A fresh project has no schema, so the model settings cannot be changed before th
 - One human tags and approves (`production` has one reviewer, the admin who may create `v*` tags).
 - Vercel tokens are team tokens: the develop token (environment `develop`, no reviewer) can also deploy and promote `nblm-web`, and the production token reaches `nblm-web-develop`. Accepted in ADR 0010; the `production` approval gates this workflow, not every holder of a team token.
 - Git auto-deploys must stay off for `nblm-web` (`apps/web/vercel.json`).
+- The captcha check only proves Supabase demands a captcha token. A deleted or wrong Turnstile widget (wrong site key in Vercel, wrong secret in Supabase) still passes it while the demo button fails; test "Demo starten" by hand after any Turnstile change.
 
 ## Secrets inventory and rotation
 
