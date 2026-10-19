@@ -2,6 +2,7 @@
 // so the cases use plain fakes. The fake chat caller imitates the model wrapper: it streams the
 // answer, then runs linkMessage and maps a throw to message_link_failed (same as turn.test.ts).
 import { describe, expect, it, vi } from "vitest";
+import { validateCitations } from "@/lib/rag/citations";
 import { isCanaryCitation, runCanary, type CanaryDeps } from "@/lib/server/canary/canary";
 import { CANARY_CHUNKS, CANARY_QUESTION } from "@/lib/server/canary/fixture";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
@@ -143,6 +144,36 @@ describe("runCanary: happy path", () => {
     expect(linked).toBeNull();
     expect(r.checks.citationValid).toBe(false);
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("runCanary: folded quote", () => {
+  // The fixture text has no sharp s and no typographic quotes, so the variation is whitespace:
+  // the model quotes with a doubled space, the stored span is the verbatim fixture text.
+  const content = CANARY_CHUNKS[0]?.content ?? "";
+  const spaced = content.split(" ").slice(0, 6).join("  ");
+  const verbatim = content.split(" ").slice(0, 6).join(" ");
+
+  it("the fixture really differs from the model's spelling", () => {
+    expect(spaced).not.toBe(verbatim);
+    expect(content.includes(spaced)).toBe(false);
+    expect(content.includes(verbatim)).toBe(true);
+  });
+
+  it("a reply quoting the passage with different whitespace passes citationValid", async () => {
+    const h = harness({ chat: { kind: "ok", text: `${ANSWER_SENTINEL} laut Quelle [1: "${spaced}"].` } });
+    const r = await runCanary(h.deps);
+    expect(r).toEqual({
+      ok: true,
+      checks: { embedding: true, answered: true, citationValid: true, notAbstained: true },
+    });
+  });
+
+  it("isCanaryCitation is true for the stored span of such a citation", () => {
+    const checked = validateCitations(`Text [1: "${spaced}"].`, CANARY_CHUNKS);
+    expect(checked.citations).toHaveLength(1);
+    expect(checked.citations[0]?.quote).toBe(verbatim);
+    expect(isCanaryCitation(CANARY_CHUNKS, checked.citations[0]!)).toBe(true);
   });
 });
 

@@ -157,7 +157,14 @@ describe("validateCitations", () => {
 
   it("text without markers is returned trimmed with no citations", () => {
     const r = validateCitations("  Nur Text.  ", CHUNKS);
-    expect(r).toEqual({ text: "Nur Text.", citations: [], dropped: 0 });
+    // Extended for the fold fix: the result now also carries droppedBy and folded (all zero here).
+    expect(r).toEqual({
+      text: "Nur Text.",
+      citations: [],
+      dropped: 0,
+      droppedBy: { unknown_chunk: 0, not_in_chunk: 0, malformed: 0, over_limit: 0 },
+      folded: 0,
+    });
   });
 
   it("allows at most 8 whitespace characters between n: and the quote", () => {

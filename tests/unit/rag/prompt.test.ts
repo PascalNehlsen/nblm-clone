@@ -51,6 +51,24 @@ describe("buildChatInput: system prompt", () => {
     expect(system).toContain("300");
   });
 
+  it("asks for a character-for-character quote that keeps the old spelling and the guillemets", () => {
+    expect(system).toContain("Zeichen für Zeichen");
+    expect(system).toContain(`da${String.fromCodePoint(0xdf)}`);
+    expect(system).toContain(String.fromCodePoint(0xbb));
+  });
+
+  it("forbids the straight double quote inside the quote and omissions", () => {
+    // A rule line that names the straight quote character and says it is never used.
+    const rule = system.split("\n").find((l) => l.includes('"') && /\b(nie|niemals|kein|keine|nicht)\b/i.test(l) && /Zitat/.test(l));
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/\bnie(mals)?\b/i);
+    expect(system).toMatch(/Auslassung/);
+  });
+
+  it("no longer says the quote must be without quotation marks", () => {
+    expect(system).not.toContain("ohne Anführungszeichen");
+  });
+
   it("mentions the tag name with the nonce", () => {
     expect(system).toContain(`quelle-${NONCE}`);
   });
