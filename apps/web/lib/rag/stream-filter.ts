@@ -5,16 +5,17 @@ import "server-only";
 // "[" is held back until it is clearly a marker (dropped) or clearly not (emitted). One pass
 // with a cursor, so the time is linear in the input (the held text is at most MAX_HELD).
 
-// Marker-shaped text as citations.ts removes it: 1 to 6 digits (only 1 to 2 can be valid),
-// at most 8 whitespace characters after "n:", so a marker never outgrows the held-text limit.
-const FULL_MARKER = /^\[\d{1,6}:\s{0,8}"[^"\]]{1,2000}"\]$/;
+// Marker-shaped text as citations.ts removes it: any number of digits (only 1 to 2 can be
+// valid), at most 8 whitespace characters after "n:". Held text is capped at MAX_HELD, so
+// each check below runs on at most that many characters.
+const FULL_MARKER = /^\[\d+:\s{0,8}"[^"\]]{1,2000}"\]$/;
 const MARKER_PREFIX = [
-  /^\[\d{0,6}$/,
-  /^\[\d{1,6}:\s{0,8}$/,
-  /^\[\d{1,6}:\s{0,8}"[^"\]]{0,2000}$/,
-  /^\[\d{1,6}:\s{0,8}"[^"\]]{1,2000}"$/,
+  /^\[\d*$/,
+  /^\[\d+:\s{0,8}$/,
+  /^\[\d+:\s{0,8}"[^"\]]{0,2000}$/,
+  /^\[\d+:\s{0,8}"[^"\]]{1,2000}"$/,
 ];
-const STARTED_MARKER = /^\[\d{1,6}:/;
+const STARTED_MARKER = /^\[\d+:/;
 const MAX_HELD = 2100;
 
 function couldBeMarker(held: string): boolean {

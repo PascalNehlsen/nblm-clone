@@ -205,6 +205,26 @@ describe("runTurn: model call", () => {
   });
 });
 
+describe("runTurn: question normalization", () => {
+  const DIRTY = "\u0000Wo sitzt\u0007 die Firma?\r\n";
+  const CLEAN = "Wo sitzt die Firma?";
+
+  it("zero-chunk path saves the normalized question", async () => {
+    const h = harness({ retrieval: { ok: true, chunks: [], usageId: "u-r" } });
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: DIRTY });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ question: CLEAN }));
+  });
+
+  it("model path sends the normalized question to the model and saves it", async () => {
+    const h = harness();
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: DIRTY });
+    const content = h.requests[0]?.input.messages[0]?.content ?? "";
+    expect(content).toContain(`<frage-0123456789abcdef>\n${CLEAN}\n</frage-0123456789abcdef>`);
+    expect(content).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ question: CLEAN }));
+  });
+});
+
 describe("runTurn: logs", () => {
   it("contain counts only, never question, chunk or answer text", async () => {
     const scenarios: Harness[] = [

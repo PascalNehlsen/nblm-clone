@@ -104,6 +104,33 @@ describe("createMarkerFilter", () => {
     }
   });
 
+  it("a seven-digit marker split into single chars never reaches emit", () => {
+    const text = 'Text [1234567: "Bonn"] Ende';
+    const { out, emits } = run(text.split(""));
+    expect(out).toBe("Text  Ende");
+    for (const e of emits) {
+      expect(e).not.toContain("[1");
+      expect(e).not.toContain("Bonn");
+    }
+  });
+
+  it("[ followed by 50 digits and ] (no colon) is emitted unchanged", () => {
+    const text = `Siehe [${"7".repeat(50)}] ok`;
+    expect(run([text]).out).toBe(text);
+    expect(run(text.split("")).out).toBe(text);
+  });
+
+  it("[ followed by 5,000 digits in one push takes under 500 ms and passes unchanged", () => {
+    const input = "[" + "1".repeat(5000);
+    const emits: string[] = [];
+    const f = createMarkerFilter((t) => emits.push(t));
+    const start = performance.now();
+    f.push(input);
+    f.end();
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(emits.join("")).toBe(input);
+  });
+
   it("200,000 plain characters in one push take under 500 ms and pass unchanged", () => {
     const input = "a".repeat(200_000);
     const emits: string[] = [];

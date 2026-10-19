@@ -4,6 +4,7 @@ import { validateCitations, type ValidCitation } from "@/lib/rag/citations";
 import { ABSTENTION, buildChatInput } from "@/lib/rag/prompt";
 import type { RetrievalResult } from "@/lib/rag/retrieve";
 import { createMarkerFilter } from "@/lib/rag/stream-filter";
+import { normalizeText } from "@/lib/server/ingest/normalize";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
 
 // One chat turn (block D, ADR 0011): retrieve, ask the model with the sources as delimited
@@ -77,7 +78,9 @@ export async function runTurn(
   if (!retrieval.ok) return finish({ ok: false, reason: retrieval.reason });
   const { chunks } = retrieval;
   stats.chunks = chunks.length;
-  const question = args.question.trim();
+  // The same normalized text retrieval checked: no NUL or control characters reach the model
+  // or Postgres.
+  const question = normalizeText(args.question).trim();
 
   // Nothing retrieved: the sources cannot answer, so no model call (and no cost).
   if (chunks.length === 0) {
