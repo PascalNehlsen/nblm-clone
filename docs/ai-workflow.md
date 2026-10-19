@@ -4,7 +4,9 @@ Claude Code writes most of the code here, and Codex reviews every PR. This page 
 
 ## The idea in one paragraph
 
-Agent rules are written as instructions, and instructions fail ([background](https://pascal-nehlsen.de/blog/agent-gate-it-cannot-open)). So every limit that matters sits outside the agent. The sandbox has no cloud credentials, so the builder cannot deploy or apply. The host session, which approves plans and pushes from the host, is the exception: it runs outside the sandbox with the human's credentials, so for it only the permission rules and the instructions apply (see the table in AGENTS.md). Branch rulesets stop it from merging. The production environment needs a human. Inside those walls, the subagent roles and the permission rules catch the common mistakes early and cheaply.
+Agent rules are written as instructions, and instructions fail ([background](https://pascal-nehlsen.de/blog/agent-gate-it-cannot-open)). So every limit that matters sits outside the builder. The sandbox has no cloud credentials, so the builder cannot deploy or apply. Branch rulesets stop it from merging. The production environment needs a human. Inside those walls, the subagent roles and the permission rules catch the common mistakes early and cheaply.
+
+The host session is the exception. It approves plans, runs Codex by hand and commits and pushes from the host, outside the sandbox, with the human's credentials (a `gh` token that could change the rulesets, AWS SSO profiles). None of the walls above bind it; only the permission rules and the instructions do (see the table in AGENTS.md).
 
 ## Layers
 
@@ -48,7 +50,9 @@ The `sbx` network policy is global per machine, so the effective allowlist is th
 sbx policy ls --json | python3 -m sbx_audit -
 ```
 
-The sandbox signs commits with its own SSH key "nblm sandbox agent" (`SHA256:sJXVDJI4LgEiazQtG4Wm2mzHFY4/Y5zzMCtAxiZakU8`), set through `GIT_CONFIG_*` env vars in the sandbox shell so the shared `.git/config` keeps the host key. The signature proves a commit came from the sandbox, not that a human reviewed it; the human merge is the review. Revoke the key on GitHub after the challenge. The sandbox token has no Administration and no Workflows permission, so workflow changes are pushed from the host.
+Until 2026-10-18 the sandbox signed commits with its own SSH key "nblm sandbox agent" (`SHA256:sJXVDJI4LgEiazQtG4Wm2mzHFY4/Y5zzMCtAxiZakU8`), set through `GIT_CONFIG_*` env vars in the sandbox shell so the shared `.git/config` keeps the host key. The signature proved a commit came from the sandbox, not that a human reviewed it; the human merge is the review. Revoke the key on GitHub after the challenge. The sandbox token has no Administration and no Workflows permission, so workflow changes are pushed from the host.
+
+Since 2026-10-19 the builder stages and the host session commits: the shared pre-commit hook (gitleaks and the other checks) needs the `pre-commit` install on the host, and installing it in the sandbox would need a new egress rule. The host session reads the staged diff, commits with the hooks and pushes. Those commits carry the human's host signature, so the signature no longer shows which side wrote the change; the PR says it. `--no-verify` is not used.
 
 ## Flow per change
 
@@ -70,7 +74,7 @@ Since 2026-10-18 (approved by Pascal) the loop is shorter, inside the same gates
 
 - **Plan approval.** The host session (a separate Claude Code session on the host, outside the sandbox, never the one that implements the plan) may approve a planner plan only if it touches nothing under `infra/`, no rule file (a new ADR is fine), no security control config, no `security definer` allowlist, no data processor, secret, egress rule or cost limit, does nothing irreversible and has no open questions. The full list is in AGENTS.md. Everything else goes to the human. This is an instruction, not an enforced limit, and a plan approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
 - **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Also mandatory for `lib/rag/` and `prompts/` until the Codex review job and the eval run in CI as required checks; only a PR that updates AGENTS.md makes it optional there.
-- **Codex review.** Once per PR, on the final head. A rerun follows any later commit outside `docs/` and `README.md` and any change to a rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, this file, `docs/adr/`, `.claude/`, `.github/`); other docs and the PR body do not trigger one. Until the Codex CI job exists, the host session runs it by hand.
+- **Codex review.** Once per PR, on the final head. A rerun follows any later commit outside `docs/` and `README.md` and any change to a rule file (the rule files defined in AGENTS.md); other docs and the PR body do not trigger one. Until the Codex CI job exists, the host session runs it by hand.
 - **PR size.** One PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. "Small" means one concern, not one file.
 
 Dependabot PRs touch `.github/workflows/` and stay labelled high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.

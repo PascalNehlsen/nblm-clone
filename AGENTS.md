@@ -22,7 +22,7 @@ Instructions in this file are context, not enforcement. What actually holds:
 | Limit | Enforced by |
 |---|---|
 | No cloud or deploy credentials reachable by the builder and its subagents | They run in a Docker sandbox (`sbx`) with an egress allowlist; apply, deploy and migrations only run in CI via OIDC |
-| Host session (outside the sandbox) | **Not enforced.** It can reach the human's host credentials: the `gh` token with scope `repo` (admin on this repo, so it could change the ruleset) and the AWS SSO profiles, including management admin, while an SSO session is active. Only `.claude/settings.json` (a speed bump) and these instructions bound it. Rows 2 and 3 hold against it only as long as it follows them |
+| Host session (outside the sandbox) | **Not enforced.** It can reach the human's host credentials: the `gh` token with scope `repo` (admin on this repo, so it could change the ruleset) and the AWS SSO profiles, including management admin, while an SSO session is active. Only `.claude/settings.json` (a speed bump) and these instructions bound it. The `main` ruleset and `production` environment rows hold against it only as long as it follows them; the speed bump applies only when it runs in this repo with the project settings loaded |
 | Nothing reaches `main` without checks | GitHub rulesets: PR required, required status checks, linear history, no bypass |
 | Nothing reaches production without a human | GitHub Environment `production` with required reviewer |
 | Subagent roles (planner, test-author, reviewer) | Tool lists in `.claude/agents/` + `.claude/hooks/agent-guard.mjs` |
