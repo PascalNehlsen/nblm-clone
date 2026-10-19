@@ -89,3 +89,12 @@ Update "Last rehearsed" above with the date, the run link and what was deployed.
 - **Bypass secret mismatch** shows as a staged smoke test with `302` and no app redirect on every page (Vercel's protection page).
 - **Supabase Auth URL configuration** is not set by `db push`. With the default Site URL (`http://localhost:3000`) the GitHub login lands on localhost. Set Site URL `https://nblm-web-develop.vercel.app` and the redirect URL for `/auth/callback`.
 - **Rerun without a new merge:** `gh run rerun <id>` (all jobs) or `gh run rerun <id> --failed` (only the failed job, e.g. deploy after a fixed bypass secret).
+
+## Demo login (block F2)
+
+Order matters: the staged smoke test requires anonymous sign-in **on** and the captcha **enforced** from F2 on (before F2 it required anonymous sign-in off).
+1. Cloudflare, Turnstile, Add widget: name `nblm develop`, hostname `nblm-web-develop.vercel.app`, mode Managed. Keep the site key (public) and the secret key.
+2. Supabase develop, Authentication, Attack Protection: captcha on, provider Turnstile, the secret key. The GitHub login is not affected (OAuth needs no captcha).
+3. Vercel `nblm-web-develop`, Production: `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = the site key.
+4. Register the demo template ([runbook](demo-template.md)).
+5. Right before merging F2: Supabase, Authentication, Sign In / Providers, Anonymous sign-ins on.

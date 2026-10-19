@@ -25,6 +25,26 @@ describe("loginErrorMessage: known codes", () => {
   });
 });
 
+describe("loginErrorMessage: demo login codes (F2)", () => {
+  const expected: [string, string][] = [
+    ["demo_nicht_verfuegbar", "Die Demo ist gerade nicht verfügbar."],
+    ["demo_voll", "Die Demo ist gerade ausgelastet. Bitte versuche es später noch einmal."],
+    ["sicherheitspruefung", "Die Sicherheitsprüfung ist fehlgeschlagen. Bitte versuche es noch einmal."],
+  ];
+
+  for (const [code, text] of expected) {
+    it(`"${code}" maps to its fixed German message`, () => {
+      expect(loginErrorMessage(code)).toBe(text);
+    });
+  }
+
+  it("the three messages are distinct and contain no em dash", () => {
+    const messages = expected.map(([code]) => loginErrorMessage(code));
+    expect(new Set(messages).size).toBe(3);
+    for (const message of messages) expect(message).not.toContain("—");
+  });
+});
+
 describe("loginErrorMessage: unknown input gives null, never an echo", () => {
   const unknown: unknown[] = [
     "<script>alert(1)</script>",
