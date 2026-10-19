@@ -370,6 +370,97 @@ describe("boundary scan: only lib/server/model/ may reference the Bedrock provid
   });
 });
 
+// C2 URL import (plan approved by Pascal, 2026-10-19): the SSRF guard and the URL
+// text pipeline are server-only, and the node network modules (http, https, dns,
+// net, with or without the node: prefix, also dns/promises) may only be reached
+// from lib/server/fetch/. ESLint is not changed for this (security config); this
+// source-text backstop also sees import(), require() and plain .js/.mjs/.cjs files.
+describe("C2 URL import: fetch modules exist and are marked server-only", () => {
+  const fetchFiles = [
+    "lib/server/fetch/address.ts",
+    "lib/server/fetch/url.ts",
+    "lib/server/fetch/guarded-fetch.ts",
+    "lib/server/fetch/node-transport.ts",
+    "lib/server/ingest/html.ts",
+    "lib/server/ingest/url-source.ts",
+  ].map((relative) => path.join(webDir, relative));
+
+  it("all six files exist", () => {
+    for (const file of fetchFiles) {
+      expect(fs.existsSync(file), `${path.relative(webDir, file)} is missing`).toBe(true);
+    }
+  });
+
+  it("all six begin with `import \"server-only\"` as their first line", () => {
+    for (const file of fetchFiles) {
+      const firstLine = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n")[0]?.trim() : undefined;
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+
+  it("every file in lib/server/fetch/ begins with `import \"server-only\"`", () => {
+    const files = collectSourceFiles(path.join(webDir, "lib/server/fetch"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const firstLine = fs.readFileSync(file, "utf8").split("\n")[0]?.trim();
+      expect(firstLine, `${path.relative(webDir, file)} must start with import "server-only"`).toBe(
+        'import "server-only";',
+      );
+    }
+  });
+});
+
+const NODE_NET_MODULE = /["'](?:node:)?(?:http|https|http2|dns|net|tls)(?:\/promises)?["']/;
+const NODE_NET_USAGE = new RegExp(
+  `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|\\bimport\\s+)${NODE_NET_MODULE.source}`,
+);
+const ALLOWED_NODE_NET_PREFIX = "lib/server/fetch/";
+
+function collectNodeNetOffenders(files: Array<{ relativePath: string; content: string }>): string[] {
+  return files
+    .filter((file) => !file.relativePath.startsWith(ALLOWED_NODE_NET_PREFIX))
+    .filter((file) => NODE_NET_USAGE.test(file.content))
+    .map((file) => `${file.relativePath}: imports a node network module`);
+}
+
+describe("boundary scan: only lib/server/fetch/ may import node http, https, dns or net", () => {
+  it("catches static imports, import(), require() and the node: prefix outside lib/server/fetch/", () => {
+    const samples = [
+      'import * as http from "node:http";',
+      "import https from 'https';",
+      'import { lookup } from "node:dns";',
+      'import { lookup } from "dns/promises";',
+      'import { isIP } from "net";',
+      'const dns = await import("node:dns/promises");',
+      'const net = require("node:net");',
+      'import "node:http";',
+    ];
+    for (const content of samples) {
+      const offenders = collectNodeNetOffenders([{ relativePath: "app/x/route.ts", content }]);
+      expect(offenders, content).toEqual(["app/x/route.ts: imports a node network module"]);
+    }
+  });
+
+  it("allows the same imports inside lib/server/fetch/ and ignores unrelated imports elsewhere", () => {
+    expect(
+      collectNodeNetOffenders([
+        { relativePath: "lib/server/fetch/node-transport.ts", content: 'import * as http from "node:http";' },
+        { relativePath: "lib/server/ingest/x.ts", content: 'import { x } from "./http-helpers"; import fs from "node:fs";' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("the real tree imports no node network module outside lib/server/fetch/", () => {
+    const files = collectSourceFiles(webDir).map((file) => ({
+      relativePath: path.relative(webDir, file).split(path.sep).join("/"),
+      content: fs.readFileSync(file, "utf8"),
+    }));
+    expect(collectNodeNetOffenders(files)).toEqual([]);
+  });
+});
+
 describe("C1 ingestion: lib/sources/ modules exist and are NOT server-only", () => {
   const sourcesFiles = ["lib/sources/sources.ts", "lib/sources/limits.ts"].map((relative) =>
     path.join(webDir, relative),

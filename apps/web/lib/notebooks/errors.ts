@@ -14,6 +14,7 @@ const MESSAGES: Record<string, string> = {
   typ: "Bitte wähle eine PDF-Datei.",
   dateien_uebrig: "Die Datei der Quelle konnte nicht entfernt werden.",
   loeschen: "Die Quelle konnte nicht gelöscht werden.",
+  url: "Bitte gib eine http- oder https-Adresse ohne Zugangsdaten und ohne Port an.",
 };
 
 const GENERIC = "Das hat nicht geklappt. Bitte versuche es noch einmal.";

@@ -115,12 +115,21 @@ describe("sourceStore: claim", () => {
 
   it("returns the claimed row's fields when exactly one row matches", async () => {
     const { client } = createFakeClient({
-      updateResult: { data: [{ id: "src-3", notebook_id: "nb-1", kind: "pdf", storage_path: "nb-1/src-3" }], error: null },
+      updateResult: {
+        data: [{ id: "src-3", notebook_id: "nb-1", kind: "pdf", storage_path: "nb-1/src-3", source_url: "https://example.com/a" }],
+        error: null,
+      },
     });
 
     const result = await sourceStore(client as never).claim("src-3");
 
-    expect(result).toEqual({ id: "src-3", notebookId: "nb-1", kind: "pdf", storagePath: "nb-1/src-3" });
+    expect(result).toEqual({
+      id: "src-3",
+      notebookId: "nb-1",
+      kind: "pdf",
+      storagePath: "nb-1/src-3",
+      sourceUrl: "https://example.com/a",
+    });
   });
 
   // Best-effort: the exact filter *shape* (or()/in()/lt(), a single combined string filter,

@@ -2,11 +2,12 @@ import "server-only";
 
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
 import { CHUNK_INSERT_BATCH, EMBEDDING_DIMENSIONS, MAX_CHUNKS_PER_SOURCE } from "@/lib/sources/limits";
-import type { ChunkRow, ObjectStore, SourceKind, SourceStore } from "@/lib/sources/sources";
+import type { ChunkRow, ClaimedSource, ObjectStore, SourceKind, SourceStore } from "@/lib/sources/sources";
 import { chunkPages, type PageText } from "./chunk";
 import { checkContent } from "./magic";
 import { normalizeText } from "./normalize";
 import type { PdfResult } from "./pdf";
+import type { UrlTextResult } from "./url-source";
 
 // One source from its stored object to embedded chunks (ADR 0007): claim, check the
 // bytes, extract, chunk, one budgeted embedding call, insert, mark ready. Every failure
@@ -29,6 +30,7 @@ export interface IngestDeps {
   sources: SourceStore;
   objects: ObjectStore;
   extractPdf: (bytes: Uint8Array) => Promise<PdfResult>;
+  fetchUrl: (url: string) => Promise<UrlTextResult>;
   callModel: (req: ModelCallRequest<"embedding">) => Promise<ModelCallResult<"embedding">>;
   log: (e: IngestLogEvent) => void;
   now: () => number;
@@ -50,6 +52,18 @@ function validVectors(vectors: unknown, count: number): vectors is number[][] {
       (v) => Array.isArray(v) && v.length === EMBEDDING_DIMENSIONS && v.every((x) => Number.isFinite(x)),
     )
   );
+}
+
+async function fetchAndStore(deps: IngestDeps, claimed: ClaimedSource): Promise<Uint8Array> {
+  if (!claimed.sourceUrl) throw new IngestFailure("url_invalid");
+  const fetched = await deps.fetchUrl(claimed.sourceUrl);
+  if (!fetched.ok) throw new IngestFailure(fetched.category);
+  try {
+    await deps.objects.uploadText(claimed.storagePath, fetched.text);
+  } catch {
+    throw new IngestFailure("storage_failed");
+  }
+  return new TextEncoder().encode(fetched.text);
 }
 
 export async function ingestSource(deps: IngestDeps, sourceId: string): Promise<IngestOutcome> {
@@ -79,11 +93,12 @@ export async function ingestSource(deps: IngestDeps, sourceId: string): Promise<
     } catch {
       throw new IngestFailure("storage_failed");
     }
+    // A url source fetches its page once and stores it as text; a retry reuses that text.
+    if (!bytes && claimed.kind === "url") bytes = await fetchAndStore(deps, claimed);
     if (!bytes) throw new IngestFailure("upload_missing");
     stats.bytes = bytes.length;
 
-    if (claimed.kind === "url") throw new IngestFailure("unsupported_type"); // C2
-    const check = checkContent(claimed.kind, bytes);
+    const check = checkContent(claimed.kind === "pdf" ? "pdf" : "text", bytes);
     if (!check.ok) {
       await deps.objects.remove(claimed.storagePath).catch(() => undefined);
       throw new IngestFailure(check.category);

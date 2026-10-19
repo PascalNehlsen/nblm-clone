@@ -4,9 +4,16 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getNotebook } from "@/lib/notebooks/notebooks";
 import { isUuid, validateTitle } from "@/lib/notebooks/roles";
+import { parseImportUrl } from "@/lib/server/fetch/url";
 import { runIngestion } from "@/lib/server/ingest/run";
 import { MAX_TEXT_CHARS, MAX_UPLOAD_BYTES } from "@/lib/sources/limits";
-import { createSignedUpload, createSource, deleteSource, uploadTextObject } from "@/lib/sources/sources";
+import {
+  createSignedUpload,
+  createSource,
+  createUrlSource,
+  deleteSource,
+  uploadTextObject,
+} from "@/lib/sources/sources";
 import { createClient } from "@/lib/supabase/server";
 
 // Every action checks the session with getUser() itself (ADR 0005). Writes go through
@@ -107,6 +114,29 @@ export async function addTextSourceAction(formData: FormData): Promise<void> {
     redirect(notebookPath(notebookId, errorCode(error) === "notebook_source_limit" ? "limit" : "fehler"));
   }
   // Ingestion failures show on the source in the list, not as a page error.
+  await runIngestion(supabase, source.id);
+  redirect(notebookPath(notebookId));
+}
+
+// A web page as source (C2). The URL rules run here before any insert, so a refused URL
+// leaves no row; the fetch itself runs through the SSRF guard during ingestion.
+export async function addUrlSourceAction(formData: FormData): Promise<void> {
+  const { supabase, user } = await signedInClient();
+  const notebookId = formData.get("notebookId");
+  if (!isUuid(notebookId)) redirect("/");
+  if (!(await canAddSources(supabase, user, notebookId))) redirect(notebookPath(notebookId, "nicht_erlaubt"));
+  const title = validateTitle(formData.get("title"));
+  if (!title) redirect(notebookPath(notebookId, "titel"));
+  const raw = formData.get("url");
+  const parsed = parseImportUrl(typeof raw === "string" ? raw.trim() : "");
+  if (!parsed.ok) redirect(notebookPath(notebookId, "url"));
+
+  let source: { id: string; storagePath: string };
+  try {
+    source = await createUrlSource(supabase, notebookId, title, parsed.url.href);
+  } catch (error) {
+    redirect(notebookPath(notebookId, errorCode(error) === "notebook_source_limit" ? "limit" : "fehler"));
+  }
   await runIngestion(supabase, source.id);
   redirect(notebookPath(notebookId));
 }
