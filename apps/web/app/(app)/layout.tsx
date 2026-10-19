@@ -22,8 +22,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <form action={signOut}>
-        <button type="submit">Abmelden</button>
+      <form action={signOut} className="signout">
+        <button type="submit" className="quiet">
+          Abmelden
+        </button>
       </form>
       {children}
     </>

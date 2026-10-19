@@ -23,7 +23,7 @@ export function MemberList({
   const canShare = manage && !isAnonymous;
 
   return (
-    <section>
+    <section className="panel members">
       <h2>Mitglieder</h2>
       <ul>
         {members.map((member) => {

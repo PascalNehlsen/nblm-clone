@@ -43,6 +43,7 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
 
   return (
     <form onSubmit={onSubmit}>
+      <p className="kind">PDF</p>
       <label>
         PDF-Datei <input type="file" name="file" accept="application/pdf" required />
       </label>{" "}
@@ -59,9 +60,11 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
 
 export function AddSource({ notebookId }: { notebookId: string }) {
   return (
-    <>
+    <div className="add-source">
+      <h3>Quelle hinzufügen</h3>
       <PdfUploadForm notebookId={notebookId} />
       <form action={addTextSourceAction}>
+        <p className="kind">Text</p>
         <input type="hidden" name="notebookId" value={notebookId} />
         <label>
           Titel <input type="text" name="title" required maxLength={200} />
@@ -72,6 +75,7 @@ export function AddSource({ notebookId }: { notebookId: string }) {
         <button type="submit">Text hinzufügen</button>
       </form>
       <form action={addUrlSourceAction}>
+        <p className="kind">Webseite</p>
         <input type="hidden" name="notebookId" value={notebookId} />
         <label>
           Titel <input type="text" name="title" required maxLength={200} />
@@ -81,6 +85,6 @@ export function AddSource({ notebookId }: { notebookId: string }) {
         </label>{" "}
         <button type="submit">Seite hinzufügen</button>
       </form>
-    </>
+    </div>
   );
 }

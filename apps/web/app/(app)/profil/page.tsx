@@ -13,14 +13,15 @@ export default async function ProfilePage() {
   if (!data.user) redirect("/login");
 
   return (
-    <main>
+    <main id="inhalt" className="page">
+      <p className="eyebrow">Konto</p>
       <h1>Profil</h1>
       {data.user.is_anonymous ? (
         <p>Im Demo-Zugang kannst du keine Notizbücher geteilt bekommen.</p>
       ) : (
         <>
           <p>Deine Nutzer-ID zum Teilen:</p>
-          <p>
+          <p className="id-card">
             <code data-testid="nutzer-id">{data.user.id}</code> <CopyIdButton value={data.user.id} />
           </p>
         </>
