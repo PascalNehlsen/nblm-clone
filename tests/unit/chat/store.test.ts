@@ -19,9 +19,11 @@ interface Op {
 
 type Failing = "messages-1" | "messages-2" | "message_citations" | null;
 
-function fake(failing: Failing = null) {
+// failingDeletes: 1-based positions of the delete calls that return an error.
+function fake(failing: Failing = null, failingDeletes: number[] = []) {
   const ops: Op[] = [];
   let messageInserts = 0;
+  let deleteCalls = 0;
 
   function chain(op: Op, result: () => { data: unknown; error: unknown }): unknown {
     const proxy: unknown = new Proxy(
@@ -61,7 +63,9 @@ function fake(failing: Failing = null) {
         delete() {
           const op: Op = { kind: "delete", table, rows: [], args: [] };
           ops.push(op);
-          return chain(op, () => ({ data: null, error: null }));
+          deleteCalls += 1;
+          const fails = failingDeletes.includes(deleteCalls);
+          return chain(op, () => ({ data: null, error: fails ? { message: "delete failed" } : null }));
         },
       };
     },
@@ -128,6 +132,27 @@ describe("messageStore.saveTurn", () => {
     const lastInsert = ops.map((o) => o.kind).lastIndexOf("insert");
     const firstDelete = ops.map((o) => o.kind).indexOf("delete");
     expect(firstDelete).toBeGreaterThan(lastInsert);
+  });
+
+  it("a failed answer delete after a citation failure still deletes the question and throws a cleanup error", async () => {
+    const { client, ops } = fake("message_citations", [1]);
+    await expect(save(client)).rejects.toThrow(/cleanup/);
+    expect(ops.filter((o) => o.kind === "delete")).toHaveLength(2);
+  });
+
+  it("a failed question delete after a citation failure throws a cleanup error", async () => {
+    const { client } = fake("message_citations", [2]);
+    await expect(save(client)).rejects.toThrow(/cleanup/);
+  });
+
+  it("a failed question delete after an answer insert error throws a cleanup error", async () => {
+    const { client } = fake("messages-2", [1]);
+    await expect(save(client)).rejects.toThrow(/cleanup/);
+  });
+
+  it("when cleanup succeeds the thrown error does not mention cleanup", async () => {
+    const { client } = fake("message_citations");
+    await expect(save(client)).rejects.toThrow(/^(?!.*cleanup)/s);
   });
 
   it("a question insert error throws and nothing else is inserted", async () => {

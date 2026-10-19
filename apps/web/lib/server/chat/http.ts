@@ -93,12 +93,13 @@ export async function handleChatRequest(request: Request, notebookId: string, de
   if (!type.toLowerCase().startsWith("application/json")) return status(415);
   const length = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(length) && length > MAX_BODY_BYTES) return status(413);
+  // The session first: an anonymous client never makes the server read or parse a body.
+  if (!(await deps.getUserId())) return status(401);
   const body = await readBody(request);
   if (body === null) return status(413);
   const question = questionOf(body);
   if (question === null) return status(400);
   if (!isUuid(notebookId)) return status(404);
-  if (!(await deps.getUserId())) return status(401);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({

@@ -251,6 +251,59 @@ describe("body, notebook id, user", () => {
     expect(runTurn).not.toHaveBeenCalled();
   });
 
+  function watchedBody() {
+    const state = { reads: 0 };
+    const text = JSON.stringify({ question: "Wo?" });
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          state.reads += 1;
+          controller.enqueue(new TextEncoder().encode(text));
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const request = new Request(URL_, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    return { state, request };
+  }
+
+  it("401 without a user, and the request body stream is never read", async () => {
+    const { d, runTurn } = deps({ getUserId: async () => null });
+    const { state, request } = watchedBody();
+    const res = await handleChatRequest(request, NOTEBOOK_ID, d);
+    expect(res.status).toBe(401);
+    expect(state.reads).toBe(0);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("with a user the body stream is read", async () => {
+    const { d } = deps();
+    const { state, request } = watchedBody();
+    const res = await handleChatRequest(request, NOTEBOOK_ID, d);
+    await res.text();
+    expect(state.reads).toBeGreaterThan(0);
+  });
+
+  it("401 without a user also for an invalid JSON body", async () => {
+    const { d } = deps({ getUserId: async () => null });
+    const res = await handleChatRequest(req({ body: "{nope" }), NOTEBOOK_ID, d);
+    expect(res.status).toBe(401);
+  });
+
+  it("the content-length check still comes before the user lookup (413, getUserId not called)", async () => {
+    const getUserId = vi.fn(async () => null);
+    const { d } = deps({ getUserId });
+    const res = await handleChatRequest(req({ headers: { "content-length": String(MAX_BODY_BYTES + 1) } }), NOTEBOOK_ID, d);
+    expect(res.status).toBe(413);
+    expect(getUserId).not.toHaveBeenCalled();
+  });
+
   it("ignores every body field except question: runTurn gets only notebookId, question and onDelta", async () => {
     const { d, runTurn } = deps();
     const body = JSON.stringify({
