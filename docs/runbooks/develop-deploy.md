@@ -1,6 +1,6 @@
 # Runbook: deploy main to develop
 
-- Last rehearsed: never; the first run is the first push to `main` after the PR that adds `develop.yml`
+- Last rehearsed: 2026-10-19, first runs after #38, #39 and #40 (see "Lessons from the first run" below)
 - Who: CI only (`.github/workflows/develop.yml`, environment `develop`). The human sets up the projects, secrets and environment below. Nobody migrates or deploys locally ([ADR 0010](../adr/0010-develop-deploy-from-ci.md))
 - What: on every push to `main`: migration guard, `supabase db push` to `nblm-develop`, remote build of `nblm-web-develop`, smoke test on the new deployment, promote to `nblm-web-develop.vercel.app`
 
@@ -81,3 +81,11 @@ On a leak: revoke first (delete the token, reset the password, regenerate the by
 ## After a rehearsal
 
 Update "Last rehearsed" above with the date, the run link and what was deployed.
+
+## Lessons from the first run (2026-10-19)
+
+- **A malformed `SUPABASE_DB_URL` leaked the password once.** psql printed the mangled URL in its error, and GitHub masks only the exact secret value. Since #39 the first migrate step masks the password and the URL and checks the session-pooler form silently; since #40 it lists which part is wrong. If it happened again: rotate the database password, delete the run (`gh run delete <id>`), set the secret again.
+- **Set secrets only from a checked value.** Pasting into `gh secret set` twice stored something that was not a URL (whitespace, no scheme). Use `.scratch/check-db-url.sh` (local, git-excluded): it reads the URL hidden, checks every part and sets the secret from exactly that value. The same idea for the bypass secret: `.scratch/set-bypass.sh` checks it against a protected deployment (200) before setting it.
+- **Bypass secret mismatch** shows as a staged smoke test with `302` and no app redirect on every page (Vercel's protection page).
+- **Supabase Auth URL configuration** is not set by `db push`. With the default Site URL (`http://localhost:3000`) the GitHub login lands on localhost. Set Site URL `https://nblm-web-develop.vercel.app` and the redirect URL for `/auth/callback`.
+- **Rerun without a new merge:** `gh run rerun <id>` (all jobs) or `gh run rerun <id> --failed` (only the failed job, e.g. deploy after a fixed bypass secret).
