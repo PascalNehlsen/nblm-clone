@@ -7,8 +7,9 @@ Personal data the app stores, where it lives, and how long. Every new data proce
 | Processor | Region | Data |
 |---|---|---|
 | Supabase (Postgres, Auth, Storage) | Frankfurt | Accounts, notebooks, memberships, membership audit, sources, chunks with embeddings, chat messages, model usage |
+| AWS Bedrock (Titan Text Embeddings V2) | EU only: before every call the code checks `BEDROCK_REGION` against an EU allowlist (eu-central-1, eu-north-1, eu-west-1, eu-west-3, eu-south-1, eu-south-2); configured as eu-central-1 with the on-demand model id, no inference profile (configuration, not checked in code). The region SCP blocks Bedrock outside these regions | Source chunk text, sent to compute embeddings. Bedrock does not store or log inputs and outputs and does not use them for training ([Bedrock data protection](https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html)). Bedrock model invocation logging must stay off; no stack configures it (`infra/aws` from PR #29 does not), not verified in the account from the sandbox. The app logs no source text (AGENTS.md) |
 
-Further processors (Vercel `fra1`, AWS Bedrock EU, Sentry EU) are added with the PRs that introduce them.
+Further processors (Vercel `fra1`, Bedrock chat models, Sentry EU) are added with the PRs that introduce them.
 
 ## Data
 

@@ -61,6 +61,14 @@ describe("modelConfig", () => {
     const config = modelConfig("embedding");
     expect(config?.timeoutMs).toBeGreaterThan(0);
   });
+
+  // PR B (block C decision): batching embeddings over many chunks takes longer than a
+  // chat reply, so the embedding timeout is 120s, not the original 15s placeholder.
+  it("embedding: timeoutMs is 120_000 (block C: 120s, was 15s)", () => {
+    vi.stubEnv("BEDROCK_EMBEDDING_MODEL_ID", "test-embedding-model-id");
+    const config = modelConfig("embedding");
+    expect(config?.timeoutMs).toBe(120_000);
+  });
 });
 
 describe("config.ts never hardcodes a Bedrock model id (AGENTS.md: model ids only from env vars)", () => {
