@@ -78,7 +78,8 @@ function offenders(
 const SINGULAR = /\bcreateCanaryCaller\b/;
 const PLURAL = /\bcreateCanaryCallers\b|model\/canary-callers/;
 const SINGULAR_ALLOWED = ["lib/server/model/call.ts", "lib/server/model/canary-callers.ts"];
-const PLURAL_ALLOWED = ["app/api/canary/route.ts", "lib/server/model/canary-callers.ts"];
+// The live eval route (EVAL-SPEC) reaches the same budgeted callers; it is the one addition.
+const PLURAL_ALLOWED = ["app/api/canary/route.ts", "app/api/eval/route.ts", "lib/server/model/canary-callers.ts"];
 
 describe("boundary scan: who may reach the canary caller", () => {
   it("the detectors flag other files and allow the named ones", () => {

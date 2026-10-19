@@ -57,7 +57,8 @@ gh variable list --env develop -R PascalNehlsen/nblm-clone                  # th
 
 1. `migrate`: the run summary shows the pending migrations and the guard result. Then `db push --dry-run` and `db push`.
 2. `deploy`: the summary shows the staged deployment URL and the smoke table (path, status, redirect path, pass). Then promote and one check of `https://nblm-web-develop.vercel.app/login`.
-3. After the first green run: open the demo, sign in with GitHub, create a notebook. Record the date and run link under "Last rehearsed".
+3. `eval`: the live eval (ADR 0017) against the deployment just promoted; the summary shows every case as pass or fail, then `security x/9, quality x/6, errored n`. Red on any security failure or fewer than 5 quality passes. A red eval makes the develop run red, so a release tag on that commit is refused. A quality failure may be the model's variance: `gh run rerun <id> --failed` reruns only the eval (about 0.03 USD). A security failure: read which case failed before anything else; never rerun until green. `errored` above 0 means model calls failed (kill switch, budget of the eval account, provider): check the kill switch and the account's usage first.
+4. After the first green run: open the demo, sign in with GitHub, create a notebook. Record the date and run link under "Last rehearsed".
 
 ## Rollback
 
@@ -75,6 +76,7 @@ gh variable list --env develop -R PascalNehlsen/nblm-clone                  # th
 | `SUPABASE_DB_URL` | env `develop` | no expiry; rotate every 90 days | Supabase, Database settings, reset password; update the secret; rerun the workflow by hand |
 | `VERCEL_TOKEN` | env `develop` | 90 days after creation (fill in the date) | create a new token, update the secret, delete the old token |
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | env `develop` | no expiry | regenerate in Deployment Protection, update the secret |
+| `EVAL_SECRET` | env `develop` and Vercel `nblm-web-develop` (Production, sensitive) | no expiry | new value in both: `openssl rand -hex 24`, paste into Vercel, then `gh secret set EVAL_SECRET --env develop` from stdin; never set on `nblm-web` |
 
 On a leak: revoke first (delete the token, reset the password, regenerate the bypass), then update the secrets.
 
@@ -89,6 +91,10 @@ Update "Last rehearsed" above with the date, the run link and what was deployed.
 - **Bypass secret mismatch** shows as a staged smoke test with `302` and no app redirect on every page (Vercel's protection page).
 - **Supabase Auth URL configuration** is not set by `db push`. With the default Site URL (`http://localhost:3000`) the GitHub login lands on localhost. Set Site URL `https://nblm-web-develop.vercel.app` and the redirect URL for `/auth/callback`.
 - **Rerun without a new merge:** `gh run rerun <id>` (all jobs) or `gh run rerun <id> --failed` (only the failed job, e.g. deploy after a fixed bypass secret).
+
+## Live eval setup (once)
+
+Develop Supabase: Authentication, Users, Add user `eval@sec-nblm.dev` (auto confirm, no password kept); its id is `CANARY_USER_ID` in Vercel `nblm-web-develop` (Production, sensitive). `EVAL_SECRET` as in the inventory. Without either the route answers 404 and the eval job fails. The account's daily budget (0.50 USD) allows about 15 runs a day.
 
 ## Demo login (block F2)
 

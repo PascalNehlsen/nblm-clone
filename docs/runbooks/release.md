@@ -26,7 +26,7 @@ A fresh project has no schema, so the model settings cannot be changed before th
 
 ## Release
 
-1. The commit to release has a **successful develop run** (a queued develop run that GitHub replaced does not count; tag a commit develop actually ran).
+1. The commit to release has a **successful develop run**, live eval included (ADR 0017) (a queued develop run that GitHub replaced does not count; tag a commit develop actually ran).
 2. `git tag -s v1.0.0 <sha> -m "v1.0.0"` and `git push origin v1.0.0` (only the admin may create `v*`).
 3. Approve `production` in the run. Read the job summary: migration guard, dry run, staged smoke, canary (four checks), live smoke.
 
