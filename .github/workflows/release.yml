@@ -1,0 +1,218 @@
+name: release
+
+# Releases a tag to production (ADR 0015, canary ADR 0014; runbook docs/runbooks/release.md). A human approves
+# the `production` environment (tags v* only). Then: the tag must be on main and green on
+# develop, migrations first, a deployment without the domain, smoke test and canary against
+# exactly that deployment, promote, live smoke, and a promote of the previous deployment if
+# the live check fails. No id-token: the job never gets an AWS role.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+# Explicit bash: pipefail, so a gate piped into tee still fails its step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release (production)
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 30
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      SUPABASE_NO_UPDATE_NOTIFIER: "1"
+      VERCEL_TELEMETRY_DISABLED: "1"
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A release is a commit that is already on main.
+      - name: Tag is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "The tag is not on main." >&2; exit 1; }
+
+      # And one that develop already ran green: promote what develop deployed.
+      - name: Tag passed develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          count="$(gh api "repos/$REPO/actions/workflows/develop.yml/runs?head_sha=$SHA&status=success" --jq '.total_count')"
+          if ! [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            echo "This commit has no successful develop run." >&2
+            exit 1
+          fi
+
+      # Installs the pnpm version pinned in package.json (packageManager).
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      # No package cache in a release: a poisoned cache must not reach production.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # First, before anything reads the URL: register the URL and its password as masks.
+      # GitHub masks only the exact secret value, so a tool that prints a changed form of it
+      # (psql did, on a malformed URL) would leak the password. Then check the session-pooler
+      # form without ever printing the value.
+      - name: Check database URL
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          credentials="${SUPABASE_DB_URL%%@*}"
+          password="${credentials##*:}"
+          if [ -n "$password" ]; then echo "::add-mask::$password"; fi
+          echo "::add-mask::$SUPABASE_DB_URL"
+          if ! [[ "$SUPABASE_DB_URL" =~ ^postgresql://[^:/@]+:[A-Za-z0-9]+@[a-z0-9.-]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
+            echo "SUPABASE_DB_URL is not a session pooler URL of the form postgresql://postgres.<ref>:<letters-and-digits password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require" >&2
+            # Which part is wrong, as ok/wrong only: never the value or any piece of it.
+            rest="${SUPABASE_DB_URL#postgresql://}"
+            user="${credentials#postgresql://}"
+            user="${user%%:*}"
+            hostpart="${rest#*@}"
+            check() { if [ "$2" = 0 ]; then echo "  $1: ok" >&2; else echo "  $1: wrong" >&2; fi; }
+            [[ "$SUPABASE_DB_URL" == postgresql://* ]] && r=0 || r=1; check "scheme postgresql://" "$r"
+            [[ "$user" =~ ^postgres\.[a-z0-9]+$ ]] && r=0 || r=1; check "user postgres.<ref>" "$r"
+            [[ "$password" =~ ^[A-Za-z0-9]+$ ]] && r=0 || r=1; check "password letters and digits" "$r"
+            [[ "$hostpart" =~ ^[a-z0-9.-]+\.pooler\.supabase\.com: ]] && r=0 || r=1; check "host *.pooler.supabase.com" "$r"
+            [[ "$hostpart" == *:5432/* ]] && r=0 || r=1; check "port 5432" "$r"
+            [[ "$hostpart" == */postgres\?* ]] && r=0 || r=1; check "database /postgres" "$r"
+            [[ "$SUPABASE_DB_URL" == *"?sslmode=require" ]] && r=0 || r=1; check "ends with ?sslmode=require" "$r"
+            [[ "$SUPABASE_DB_URL" != *[[:space:]]* ]] && r=0 || r=1; check "no whitespace" "$r"
+            [[ "$SUPABASE_DB_URL" != *[[:cntrl:]]* ]] && r=0 || r=1; check "no control characters" "$r"
+            exit 1
+          fi
+
+      # Read-only: the versions already applied in production (none on a fresh project).
+      - name: Read applied migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          exists="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -c "select to_regclass('supabase_migrations.schema_migrations') is not null")"
+          if [ "$exists" = "t" ]; then
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -c "select version from supabase_migrations.schema_migrations order by version" > "$RUNNER_TEMP/applied.txt"
+          else
+            : > "$RUNNER_TEMP/applied.txt"
+          fi
+          echo "Applied migrations: $(wc -l < "$RUNNER_TEMP/applied.txt")"
+
+      - name: Migration guard
+        run: node scripts/migration-guard.mjs supabase/migrations < "$RUNNER_TEMP/applied.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Push migrations (dry run)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
+
+      - name: Push migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
+
+      # The deployment the domain points to now, so a failed live check can go back to it.
+      # Empty on the first release (the API answers 404).
+      - name: Record the live deployment
+        id: previous
+        env:
+          SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          host="${SITE_URL#https://}"
+          code="$(curl -s --max-time 30 -o "$RUNNER_TEMP/live.json" -w '%{http_code}' -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v13/deployments/$host?teamId=$VERCEL_ORG_ID")"
+          id=""
+          if [ "$code" = "200" ]; then
+            # Only a production deployment of this very project counts as "previous".
+            id="$(PROJECT="$VERCEL_PROJECT_ID" node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const ok=/^dpl_[A-Za-z0-9]+$/.test(d.id||"") && d.projectId===process.env.PROJECT && d.target==="production"; process.stdout.write(ok?d.id:"")' "$RUNNER_TEMP/live.json")"
+            if [ -z "$id" ]; then
+              echo "The live host does not point to a production deployment of this project." >&2
+              exit 1
+            fi
+          elif [ "$code" != "404" ]; then
+            echo "Vercel API answered $code" >&2
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/live.json"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Live deployment before release: ${id:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Builds on Vercel, so the project's env vars never reach this runner. --skip-domain:
+      # the new deployment gets no traffic until smoke test and canary pass.
+      - name: Deploy (staged)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          url="$(pnpm exec vercel deploy --prod --skip-domain --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID")"
+          if ! [[ "$url" =~ ^https://[a-z0-9-]+\.vercel\.app$ ]]; then
+            echo "unexpected deploy output" >&2
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployment: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test (staged)
+        env:
+          SMOKE_BASE_URL: ${{ steps.deploy.outputs.url }}
+          SMOKE_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+          SMOKE_SUPABASE_URL: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          SMOKE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: node scripts/smoke.mjs staged | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # One real question against exactly this deployment (ADR 0014).
+      - name: Canary
+        env:
+          CANARY_BASE_URL: ${{ steps.deploy.outputs.url }}
+          CANARY_SECRET: ${{ secrets.CANARY_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: node scripts/canary.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm exec vercel promote "$DEPLOY_URL" --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID"
+
+      - name: Smoke test (live)
+        id: live
+        env:
+          SMOKE_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+        run: node scripts/smoke.mjs live | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Automatic rollback: only when the live check failed after promote. The release fails
+      # either way, so a human looks at it.
+      - name: Roll back
+        if: failure() && steps.live.outcome == 'failure'
+        env:
+          PREVIOUS_ID: ${{ steps.previous.outputs.id }}
+          SMOKE_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [[ -n "$PREVIOUS_ID" ]]; then
+            pnpm exec vercel promote "$PREVIOUS_ID" --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID"
+            echo "Rolled back to $PREVIOUS_ID." | tee -a "$GITHUB_STEP_SUMMARY"
+            node scripts/smoke.mjs live | tee -a "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No previous deployment to roll back to (first release)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 1
