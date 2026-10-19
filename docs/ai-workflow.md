@@ -53,7 +53,7 @@ The sandbox signs commits with its own SSH key "nblm sandbox agent" (`SHA256:sJX
 ## Flow per change
 
 ```text
-high risk:   planner -> plan approved (host Claude session, or human for escalations)
+high risk:   planner -> plan approved (host session within its limits, else human)
              -> test-author (red) -> builder (green)
              -> reviewer (mandatory for supabase/, auth, .github/workflows/, infra/, .claude/;
                 lib/rag/, prompts/ until Codex + eval are required) -> PR -> CI + Codex (once, final head) + eval
@@ -68,9 +68,9 @@ Risk class **high** means the change touches `supabase/`, `infra/`, auth, prompt
 
 Since 2026-10-18 (approved by Pascal) the loop is shorter, inside the same gates:
 
-- **Plan approval.** The host Claude session may approve a planner plan that stays inside the existing rules. It escalates to the human for new secrets or credentials, ADR changes, allowlist or egress changes, cost limits, gate changes (rulesets, environments, required checks, `.claude/`, `release.yml`, `infra/github/`) and anything irreversible. This is an instruction, not an enforced limit, and a Claude approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
-- **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Also mandatory for `lib/rag/` and `prompts/` until the Codex review job and the eval run in CI as required checks; only then optional there.
-- **Codex review.** Once per PR, on the final head. A rerun follows code changes and any change to the rules themselves (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, this file, `docs/adr/`, `.claude/`); other docs and gate-log commits do not trigger one.
+- **Plan approval.** The host session (a separate Claude Code session on the host, outside the sandbox, never the one that implements the plan) may approve a planner plan only if it touches nothing under `.github/` or `infra/`, no scanner config, no rule file, no `security definer` allowlist, no data processor, secret, egress rule or cost limit, does nothing irreversible and has no open questions. The full list is in AGENTS.md. Everything else goes to the human. This is an instruction, not an enforced limit, and a plan approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
+- **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Also mandatory for `lib/rag/` and `prompts/` until the Codex review job and the eval run in CI as required checks; only a PR that updates AGENTS.md makes it optional there.
+- **Codex review.** Once per PR, on the final head. A rerun follows any later commit outside `docs/` and `README.md` and any change to a rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, this file, `docs/adr/`, `.claude/`, `.github/`); other docs and the PR body do not trigger one. Until the Codex CI job exists, the host session runs it by hand.
 - **PR size.** One PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. "Small" means one concern, not one file.
 
 Dependabot PRs touch `.github/workflows/` and stay labelled high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.

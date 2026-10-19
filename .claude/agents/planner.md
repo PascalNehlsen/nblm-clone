@@ -19,7 +19,7 @@ DATA AND RLS: tables, policies, functions touched; which roles of the RLS matrix
 TESTS FIRST: the failing tests test-author should write, one line each
 RISKS: security, cost, migration (expand-contract?), rollback path
 GATES: which CI checks and eval runs must pass
-OPEN QUESTIONS: decisions the human must make
+OPEN QUESTIONS: decisions the human must make (a plan with open questions goes to the human, not to the host session)
 ```
 
 Keep it readable in two minutes. If the task is too big for one PR, split it and say so. Do not add scope the roadmap does not ask for; propose it under OPEN QUESTIONS instead.

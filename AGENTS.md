@@ -31,21 +31,22 @@ Never describe an instruction-level limit as enforced. If a task seems to need a
 
 ## Roles and flow
 
-The main session is the **builder**. Subagents: `planner` (read-only), `test-author` (writes only tests), `reviewer` (read-only, includes the security checklist). Codex reviews every PR in CI as the independent review.
+The main session is the **builder**; it runs in the sandbox. The **host session** is a separate Claude Code session that Pascal runs on the host, outside the sandbox: it approves plans (see below), runs Codex by hand and pushes what the sandbox token cannot push. It never implements a plan it approved. Subagents: `planner` (read-only), `test-author` (writes only tests), `reviewer` (read-only, includes the security checklist). Codex reviews every PR as the independent review; until the Codex CI job exists, the host session runs it by hand.
 
 **Risk class** (CI computes it from changed paths):
 - **high:** `supabase/`, `infra/`, auth, prompts or retrieval (`lib/rag/`, `prompts/`), `.github/workflows/`, `.claude/`
 - **normal:** everything else
 
-Flow for **high**: planner → plan approved (host Claude session or human, see below) → test-author (red) → builder (green) → reviewer (where mandatory) → PR with evidence → CI incl. Codex review and eval → human merges.
+Flow for **high**: planner → plan approved (host session or human, see below) → test-author (red) → builder (green) → reviewer (where mandatory) → PR with evidence → CI incl. Codex review and eval → human merges.
 
-**Plan approval** (high risk): the host Claude session may approve a planner plan when the plan stays inside the existing rules. It must escalate to the human for new secrets or credentials, ADR changes, allowlist or egress changes, cost limits, gate changes (rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml`, `infra/github/`) and anything irreversible. When unsure, escalate. This is an instruction-level rule, not enforced: nothing technical stops the session from approving a plan it should have escalated. A Claude approval is not an independent review; it is the same model family as the builder and the planner. The PR records who approved the plan. The human still merges every PR.
+**Plan approval** (high risk): the host session may approve a planner plan only if all of these hold: the plan changes nothing under `.github/` (workflows, CODEOWNERS, PR template, Dependabot) or `infra/`; it changes no scanner config or exception (`.gitleaks.toml`, `scripts/gitleaks.sh`, zizmor flags); it changes no rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`); it adds no `security definer` function and no entry to the pgTAP allowlist (ADR 0001); it adds no data processor (`docs/privacy.md`), secret, credential, allowlist or egress rule; it changes no cost limit; it does nothing irreversible; and it has no open questions. Everything else, and anything the host session is unsure about, goes to the human. This is an instruction-level rule, not enforced: nothing technical stops the session from approving a plan it should have escalated. A plan approval is not a review and not independent; the host session is the same model family as the builder and the planner. The PR records who approved the plan. The human still merges every PR.
 
-**Reviewer subagent** (high risk): mandatory for changes under `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. For the other high-risk paths (`lib/rag/`, `prompts/`) it becomes optional only once the Codex review job and the eval run in CI as required checks; until then it is mandatory there too.
+**Reviewer subagent** (high risk): mandatory for changes under `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. For the other high-risk paths (`lib/rag/`, `prompts/`) it becomes optional only once the Codex review job and the eval run in CI as required checks, and only through a PR that updates this sentence; until then it is mandatory there too.
 
-**Codex review**: runs once per PR, on the final head. Rerun it if code changed after that run, or if a later commit touches the rules themselves (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`). Other docs and gate-log commits do not trigger a rerun.
+**Codex review**: runs once per PR, on the final head. Rerun it after any later commit that touches a file outside `docs/` and `README.md`, or a rule file (`AGENTS.md`, `CLAUDE.md`, `SECURITY.md`, `docs/ai-workflow.md`, `docs/adr/`, `.claude/`, `.github/`). Other docs and gate-log commits (the PR body) do not trigger a rerun. The PR records the head SHA Codex reviewed.
 
 Flow for **normal**: builder → PR with evidence → CI incl. Codex review → human merges.
+
 Flow for **Dependabot**: applies only while every commit on the branch is from `dependabot[bot]` and the diff only changes pinned versions (`uses:` SHAs, `rev:` lines, version comments). No planner, test-author or red tests; a version bump is not a bug fix in the sense of rule 3. The human reads the changelog and diff, CI passes, the human merges. The reviewer subagent runs for a major bump and for any bump in a gate workflow (`release.yml`, or any workflow with `id-token: write`, an environment or secrets); for a major the changelog review is the plan. Once anyone else pushes to the branch, the risk class from the paths applies again. CI still labels these PRs high; the exception is an instruction, not enforced.
 
 ## How to work
@@ -54,8 +55,8 @@ Flow for **Dependabot**: applies only while every commit on the branch is from `
 2. **Conventional Commits**, imperative, say why. The PR title becomes the squash commit, so it must be a valid Conventional Commit.
 3. **Tests first** for high-risk changes and for every bug fix.
 4. **Run locally before saying "done":** `pnpm lint && pnpm typecheck && pnpm test && pnpm test:rls`. Paste the actual output. Never claim a check passed without running it.
-5. **Review is not yours to give.** Never approve your own work, never write a review verdict yourself.
-6. **Gates are not yours to open.** Do not modify rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml` or `infra/github/` unless the task is explicitly about them and the plan was approved.
+5. **Review is not yours to give.** Never approve your own work, never write a review verdict yourself. The one bounded exception is plan approval by the host session as described above; it is not a review and does not replace one.
+6. **Gates are not yours to open.** Do not modify rulesets, environments, required checks, `.claude/`, `.github/workflows/release.yml` or `infra/github/` unless the task is explicitly about them and the human approved the plan.
 7. **Gate log.** In the PR template, record what review or CI caught. The label `caught-by-gate` is only for a gate that stopped something which, without the gate, would have reached `main` or production wrong or unsafe. A gate that only blocked work is "friction": record it in the gate log, without the label. When unsure, leave the label off; an inflated count is worse than a low one.
 8. **Say what you did not do.** End every task with: what changed, what was tested (with output), what is still open.
 
@@ -111,10 +112,10 @@ Mapped to the OWASP Top 10 for LLM Applications in `SECURITY.md`.
 
 ## Definition of done
 
-- [ ] Plan approved (high risk; by the host Claude session or, for the escalation cases, by the human)
+- [ ] Plan approved (high risk; by the host session within its limits, otherwise by the human), approver named in the PR
 - [ ] Tests were red first and are green locally (output in the PR)
 - [ ] RLS matrix cases for every new table or policy
 - [ ] Eval run if retrieval or a prompt changed (score in the PR)
 - [ ] Docs updated (README, ADR, runbook if operations changed)
-- [ ] Reviewer subagent run (mandatory for `supabase/`, auth, `.github/workflows/`, `infra/`, `.claude/`, and for `lib/rag/` and `prompts/` until Codex and the eval are required checks), Codex review on the final head read
+- [ ] Reviewer subagent run (mandatory for `supabase/`, auth, `.github/workflows/`, `infra/`, `.claude/`, and for `lib/rag/` and `prompts/` until Codex and the eval are required checks), Codex review on the final head read (head SHA in the PR)
 - [ ] Gate log filled, known gaps listed in the PR
