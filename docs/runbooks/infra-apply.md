@@ -36,7 +36,9 @@ Set in the Vercel dashboard for the `Production` environment of each project onl
 | `AWS_ROLE_ARN` | output `develop_role_arn` | output `production_role_arn` |
 | `BEDROCK_REGION` | `eu-central-1` | `eu-central-1` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | `amazon.titan-embed-text-v2:0` | `amazon.titan-embed-text-v2:0` |
-| `SUPABASE_SECRET_KEY` | develop Supabase project | production Supabase project |
+| `SUPABASE_SECRET_KEY` | develop Supabase project, only once a route calls the model | production Supabase project |
+
+The Supabase and site variables (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SITE_URL`) for develop are in [develop-deploy.md](develop-deploy.md).
 
 The role ARNs are in the `apply` job log (`Outputs:`). OIDC federation must be on in each project (Settings, Security, Secure backend access with OIDC federation, team issuer mode). On the first real call, check the subject: decode the OIDC claims and look at `sub` and `aud` only; never log or paste the full value. A wrong subject fails with `AccessDenied` on `AssumeRoleWithWebIdentity`, which is the safe direction.
 

@@ -1,0 +1,136 @@
+name: develop
+
+# Deploys main to develop (ADR 0010): migrations first, then a remote build of the Vercel
+# project nblm-web-develop, a smoke test on the new deployment, and only then the domain.
+# Credentials live in the GitHub environment "develop" (main only) and reach only the step
+# that uses them. No id-token: this workflow never gets an AWS role.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+# Explicit bash: Actions then runs "bash --noprofile --norc -eo pipefail", so a gate piped
+# into tee (guard, smoke tests) still fails its step. The implicit default has no pipefail.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: develop
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: migrate (develop)
+    runs-on: ubuntu-24.04
+    environment: develop
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      SUPABASE_NO_UPDATE_NOTIFIER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installs the pnpm version pinned in package.json (packageManager).
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Read-only: the versions already applied on develop (none on a fresh project).
+      - name: Read applied migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          exists="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -c "select to_regclass('supabase_migrations.schema_migrations') is not null")"
+          if [ "$exists" = "t" ]; then
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -c "select version from supabase_migrations.schema_migrations order by version" > "$RUNNER_TEMP/applied.txt"
+          else
+            : > "$RUNNER_TEMP/applied.txt"
+          fi
+          echo "Applied migrations: $(wc -l < "$RUNNER_TEMP/applied.txt")"
+
+      - name: Migration guard
+        run: node scripts/migration-guard.mjs supabase/migrations < "$RUNNER_TEMP/applied.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Push migrations (dry run)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
+
+      - name: Push migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
+
+  deploy:
+    name: deploy (develop)
+    needs: migrate
+    runs-on: ubuntu-24.04
+    environment: develop
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    env:
+      VERCEL_TELEMETRY_DISABLED: "1"
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      SMOKE_SITE_URL: ${{ vars.DEVELOP_SITE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Builds on Vercel, so the project's env vars never reach this runner. --skip-domain:
+      # the new deployment gets no traffic until the smoke test passes.
+      - name: Deploy (staged)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          url="$(pnpm exec vercel deploy --prod --skip-domain --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID")"
+          if ! [[ "$url" =~ ^https://[a-z0-9-]+\.vercel\.app$ ]]; then
+            echo "unexpected deploy output" >&2
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployment: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test (staged)
+        env:
+          SMOKE_BASE_URL: ${{ steps.deploy.outputs.url }}
+          # Public values (URL and publishable key): the auth-settings check (email and
+          # anonymous sign-in off). Skipped while the variables are not set.
+          SMOKE_SUPABASE_URL: ${{ vars.DEVELOP_SUPABASE_URL }}
+          SMOKE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.DEVELOP_SUPABASE_PUBLISHABLE_KEY }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: node scripts/smoke.mjs staged | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm exec vercel promote "$DEPLOY_URL" --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID"
+
+      - name: Smoke test (live)
+        run: node scripts/smoke.mjs live | tee -a "$GITHUB_STEP_SUMMARY"

@@ -6,3 +6,7 @@ allowBuilds:
   # napi-postinstall only fetches a native binding when the matching optional
   # package is missing; pnpm installs that package, so the script is not needed.
   unrs-resolver: false
+  # esbuild (via the vercel CLI's builders) only checks for its platform binary in
+  # postinstall; pnpm installs that binary as an optional package. `vercel deploy` builds
+  # remotely and does not run esbuild on the runner.
+  esbuild: false
