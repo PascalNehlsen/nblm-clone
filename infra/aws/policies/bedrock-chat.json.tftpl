@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeChatProfile",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "${profile_arn}"
+    },
+    {
+      "Sid": "InvokeChatModelThroughProfile",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": ${jsonencode(model_arns)},
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "${profile_arn}"
+        }
+      }
+    }
+  ]
+}

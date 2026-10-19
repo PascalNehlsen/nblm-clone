@@ -179,6 +179,197 @@ describe("infra/aws outputs", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// D-infra: chat model permissions for the web roles (spec: bedrock-chat inline
+// policy next to bedrock-embeddings). Static only: the template is rendered in
+// TypeScript from the arguments of the templatefile() call in vercel.tf, using
+// the literal locals of that file. Supported template forms: `${name}` and
+// `${jsonencode(name)}`. Nothing is executed and no network is used.
+// ---------------------------------------------------------------------------
+
+const PROFILE_ARN = "arn:aws:bedrock:eu-central-1:278311879197:inference-profile/eu.amazon.nova-2-lite-v1:0";
+const EU_REGIONS = ["eu-central-1", "eu-west-1", "eu-west-3", "eu-north-1", "eu-south-1", "eu-south-2"];
+const EXPECTED_MODEL_ARNS = EU_REGIONS.map((r) => `arn:aws:bedrock:${r}::foundation-model/amazon.nova-2-lite-v1:0`);
+const CHAT_ACTIONS = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"];
+
+type TplValue = string | string[];
+
+function vercelSource(): string {
+  return stripHclComments(readFileFrom(awsDir, "vercel.tf"));
+}
+
+/** Evaluates the literal locals the chat policy needs: strings, string lists and one-level `for` lists. */
+function evaluateLocals(source: string): Record<string, TplValue> {
+  const result: Record<string, TplValue> = {};
+  const blocks = extractBlocks(source, /locals\s*(?=\{)/);
+  const body = blocks.map((b) => b.body).join("\n");
+
+  for (const m of body.matchAll(/^\s*([a-z0-9_]+)\s*=\s*"([^"\n]*)"\s*$/gm)) {
+    if (m[1] && m[2] !== undefined) result[m[1]] = m[2];
+  }
+  for (const m of body.matchAll(/^\s*([a-z0-9_]+)\s*=\s*\[\s*("[^\]\[]*")\s*\]\s*$/gm)) {
+    if (m[1] && m[2]) result[m[1]] = [...m[2].matchAll(/"([^"]*)"/g)].map((x) => x[1] ?? "");
+  }
+  for (const m of body.matchAll(/^\s*([a-z0-9_]+)\s*=\s*\[\s*for\s+(\w+)\s+in\s+local\.([a-z0-9_]+)\s*:\s*"([^"\n]*)"\s*\]\s*$/gm)) {
+    const [, name, iter, listName, tpl] = m;
+    const list = listName ? result[listName] : undefined;
+    if (name && iter && tpl !== undefined && Array.isArray(list)) {
+      result[name] = list.map((item) => tpl.split("${" + iter + "}").join(item));
+    }
+  }
+  return result;
+}
+
+function templateArgs(resourceBody: string, locals: Record<string, TplValue>): Record<string, TplValue> {
+  const call = resourceBody.match(/templatefile\([^,]+,\s*\{([\s\S]*?)\}\s*\)/);
+  if (!call?.[1]) throw new Error("no templatefile(..., { ... }) call found");
+  const args: Record<string, TplValue> = {};
+  for (const line of call[1].split("\n")) {
+    const lit = line.match(/^\s*([a-z0-9_]+)\s*=\s*"([^"]*)"\s*$/);
+    const ref = line.match(/^\s*([a-z0-9_]+)\s*=\s*local\.([a-z0-9_]+)\s*$/);
+    if (lit?.[1] && lit[2] !== undefined) args[lit[1]] = lit[2];
+    else if (ref?.[1] && ref[2]) {
+      const v = locals[ref[2]];
+      if (v === undefined) throw new Error(`local.${ref[2]} is not a literal in vercel.tf`);
+      args[ref[1]] = v;
+    }
+  }
+  return args;
+}
+
+function renderTemplate(template: string, args: Record<string, TplValue>): unknown {
+  const rendered = template.replace(/\$\{\s*(jsonencode\(\s*)?([a-z0-9_]+)\s*\)?\s*\}/g, (_all, enc: string | undefined, name: string) => {
+    const v = args[name];
+    if (v === undefined) throw new Error(`template variable ${name} is not passed by templatefile()`);
+    return enc ? JSON.stringify(v) : String(v);
+  });
+  if (/\$\{|%\{/.test(rendered)) throw new Error("template uses a construct this test cannot render");
+  return JSON.parse(rendered);
+}
+
+function renderPolicy(resourceName: string, templateFile: string): { Statement: Record<string, unknown>[] } & Record<string, unknown> {
+  const source = vercelSource();
+  const resource = extractBlock(source, new RegExp(`resource\\s+"aws_iam_role_policy"\\s+"${resourceName}"\\s*(?=\\{)`));
+  expect(resource, `expected resource aws_iam_role_policy.${resourceName} in vercel.tf`).toBeDefined();
+  expect(resource?.body).toContain(`policies/${templateFile}`);
+  const args = templateArgs(resource?.body ?? "", evaluateLocals(source));
+  const template = readFileFrom(awsDir, `policies/${templateFile}`);
+  return renderTemplate(template, args) as { Statement: Record<string, unknown>[] } & Record<string, unknown>;
+}
+
+function asArray(v: unknown): string[] {
+  return Array.isArray(v) ? (v as string[]) : [v as string];
+}
+
+describe("infra/aws web roles: inline policies", () => {
+  it("every web role has exactly the inline policies bedrock-embeddings and bedrock-chat, each for_each over local.web_roles", () => {
+    const source = vercelSource();
+    const policies = extractBlocks(source, /resource\s+"aws_iam_role_policy"\s+"[a-z0-9_]+"\s*(?=\{)/);
+    const names = policies.map((p) => p.body.match(/\bname\s*=\s*"([^"]+)"/)?.[1]).sort();
+    expect(names).toEqual(["bedrock-chat", "bedrock-embeddings"]);
+    for (const policy of policies) {
+      expect(policy.body).toMatch(/for_each\s*=\s*local\.web_roles/);
+      expect(policy.body).toMatch(/role\s*=\s*aws_iam_role\.web\[each\.key\]\.name/);
+    }
+    const chat = policies.find((p) => /name\s*=\s*"bedrock-chat"/.test(p.body));
+    expect(chat?.header).toMatch(/"web_bedrock_chat"/);
+    expect(chat?.body).toContain("policies/bedrock-chat.json.tftpl");
+  });
+
+  it("no other attachment mechanism grants the web roles anything (no managed or extra inline policies)", () => {
+    const source = vercelSource();
+    expect(source).not.toMatch(/aws_iam_role_policy_attachment/);
+    expect(source).not.toMatch(/aws_iam_role_policies_exclusive/);
+    expect(source).not.toMatch(/managed_policy_arns/);
+  });
+});
+
+describe("infra/aws policies/bedrock-chat.json.tftpl", () => {
+  it("exists", () => {
+    expect(fs.existsSync(path.join(awsDir, "policies/bedrock-chat.json.tftpl")), "expected policies/bedrock-chat.json.tftpl").toBe(true);
+  });
+
+  it("vercel.tf defines the profile ARN, the region list and the model ARNs as literals", () => {
+    const locals = evaluateLocals(vercelSource());
+    expect(locals.chat_profile_arn).toBe(PROFILE_ARN);
+    expect(locals.chat_model_regions).toEqual(EU_REGIONS);
+    expect(locals.chat_model_arns).toEqual(EXPECTED_MODEL_ARNS);
+  });
+
+  it("renders to exactly two statements with exactly the two invoke actions", () => {
+    const policy = renderPolicy("web_bedrock_chat", "bedrock-chat.json.tftpl");
+    expect(policy.Version).toBe("2012-10-17");
+    expect(policy.Statement).toHaveLength(2);
+    for (const stmt of policy.Statement) {
+      expect(stmt.Effect).toBe("Allow");
+      expect(asArray(stmt.Action).slice().sort()).toEqual([...CHAT_ACTIONS].sort());
+      expect(stmt).not.toHaveProperty("NotAction");
+      expect(stmt).not.toHaveProperty("NotResource");
+      expect(stmt).not.toHaveProperty("Principal");
+    }
+    expect(policy.Statement.map((s) => s.Sid)).toEqual(["InvokeChatProfile", "InvokeChatModelThroughProfile"]);
+  });
+
+  it("has no * in any action or resource", () => {
+    const policy = renderPolicy("web_bedrock_chat", "bedrock-chat.json.tftpl");
+    for (const stmt of policy.Statement) {
+      for (const value of [...asArray(stmt.Action), ...asArray(stmt.Resource)]) {
+        expect(value, "wildcard in action or resource").not.toContain("*");
+      }
+    }
+  });
+
+  it("profile statement has only the profile ARN and no condition", () => {
+    const policy = renderPolicy("web_bedrock_chat", "bedrock-chat.json.tftpl");
+    const stmt = policy.Statement.find((s) => s.Sid === "InvokeChatProfile");
+    expect(stmt).toBeDefined();
+    expect(asArray(stmt?.Resource)).toEqual([PROFILE_ARN]);
+    expect(stmt).not.toHaveProperty("Condition");
+  });
+
+  it("model statement has exactly the six EU foundation-model ARNs and is bound to the profile by a StringEquals condition", () => {
+    const policy = renderPolicy("web_bedrock_chat", "bedrock-chat.json.tftpl");
+    const stmt = policy.Statement.find((s) => s.Sid === "InvokeChatModelThroughProfile");
+    expect(stmt).toBeDefined();
+    expect(asArray(stmt?.Resource).slice().sort()).toEqual([...EXPECTED_MODEL_ARNS].sort());
+    expect(stmt?.Condition).toEqual({ StringEquals: { "bedrock:InferenceProfileArn": PROFILE_ARN } });
+  });
+
+  it("every region in the policy ARNs is one of the six EU regions", () => {
+    const policy = renderPolicy("web_bedrock_chat", "bedrock-chat.json.tftpl");
+    const arns = policy.Statement.flatMap((s) => asArray(s.Resource));
+    expect(arns.length).toBe(1 + EU_REGIONS.length);
+    for (const arn of arns) {
+      const parts = arn.split(":");
+      expect(parts[0]).toBe("arn");
+      expect(parts[2]).toBe("bedrock");
+      expect(EU_REGIONS, `region of ${arn}`).toContain(parts[3]);
+    }
+    const modelRegions = policy.Statement.flatMap((s) => asArray(s.Resource))
+      .filter((a) => a.includes(":foundation-model/"))
+      .map((a) => a.split(":")[3])
+      .sort();
+    expect(modelRegions).toEqual([...EU_REGIONS].sort());
+  });
+});
+
+describe("infra/aws policies/bedrock-embeddings.json.tftpl (unchanged)", () => {
+  it("still renders to the single InvokeModel statement on the Titan v2 model in eu-central-1", () => {
+    const policy = renderPolicy("web_bedrock_embeddings", "bedrock-embeddings.json.tftpl");
+    expect(policy).toEqual({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "InvokeEmbeddingModel",
+          Effect: "Allow",
+          Action: "bedrock:InvokeModel",
+          Resource: "arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0",
+        },
+      ],
+    });
+  });
+});
+
 // Note: the existing "no access_key, secret_key or token anywhere under
 // infra/" guard in bootstrap-hcl.test.ts already scans the whole of infraDir
 // (tests/unit/infra/hcl.ts's walkFiles(infraDir)), so it covers infra/aws too

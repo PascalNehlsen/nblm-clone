@@ -14,7 +14,7 @@ Native tests with mock providers: `tests/infra/aws/`. Static checks: `tests/unit
 
 Known gaps:
 
-- Bedrock access is embeddings only (Titan Text Embeddings V2). Chat model permissions come with block D.
+- Bedrock access: embeddings with Titan Text Embeddings V2 (direct, eu-central-1), and chat with Amazon Nova 2 Lite only through the EU system inference profile `eu.amazon.nova-2-lite-v1:0` (invoke and stream; the foundation-model ARNs in its six EU regions are allowed only with the `bedrock:InferenceProfileArn` condition). Adding the chat policy plans as 2 to add, 0 to change, 0 to destroy.
 - No AWS Budgets alarm yet; the app's per-user budget and kill switch (ADR 0006) are the cost control.
 - The plan role (SecurityAudit) may lack reads for some resource types; expect AccessDenied when a new type is added and add targeted reads in a bootstrap PR.
 - The plan guard blocks every delete and replace without an override.
