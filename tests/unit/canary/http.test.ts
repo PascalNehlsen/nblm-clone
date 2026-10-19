@@ -125,6 +125,19 @@ describe("canary http: success", () => {
     expect(await res.json()).toEqual(BAD);
   });
 
+  it("a rejecting run gives 200 with ok false and all four checks false (no 500, so no retry)", async () => {
+    const { d } = deps({ run: () => Promise.reject(new Error("boom SENTINEL_ERR")) });
+    const res = await handleCanaryRequest(req(), d);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const text = await res.text();
+    expect(text).not.toContain("SENTINEL_ERR");
+    expect(JSON.parse(text)).toEqual({
+      ok: false,
+      checks: { embedding: false, answered: false, citationValid: false, notAbstained: false },
+    });
+  });
+
   it("returns only ok and the four booleans, even if run returns more", async () => {
     const extra = { ...GOOD, answer: "ANSWER_DO_NOT_LEAK", usageId: "u-1" } as unknown as CanaryResult;
     const { d } = deps({ run: async () => extra });

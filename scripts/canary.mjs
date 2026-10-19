@@ -9,7 +9,8 @@
 
 
 const DEPLOYMENT_URL = /^https:\/\/[a-z0-9-]+\.vercel\.app$/;
-const TIMEOUT_MS = 150_000;
+// Above the route's maxDuration (180 s): a client timeout means the server gave up too.
+export const TIMEOUT_MS = 190_000;
 const RETRY_DELAY_MS = 5_000;
 const CHECKS = ["embedding", "answered", "citationValid", "notAbstained"];
 
@@ -64,7 +65,11 @@ export function summary(result) {
   return lines.join("\n") + "\n";
 }
 
-if (import.meta.main) {
+// Node before 24.2 has no import.meta.main: fail closed instead of passing silently.
+if (import.meta.main === undefined) {
+  process.stderr.write("canary: this Node version has no import.meta.main\n");
+  process.exitCode = 1;
+} else if (import.meta.main) {
   const env = process.env;
   const result = await runCanaryCheck({
     baseUrl: env.CANARY_BASE_URL,

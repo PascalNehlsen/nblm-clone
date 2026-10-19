@@ -26,6 +26,12 @@ export async function handleCanaryRequest(
   if (!sameSecret(request.headers.get("x-canary-secret") ?? "", secret)) return empty(401);
   const running = deps.run();
   if (running === null) return empty(404);
-  const result = await running;
+  let result: CanaryResult;
+  try {
+    result = await running;
+  } catch {
+    // A deterministic failure must not look like a server error the script would retry.
+    result = { ok: false, checks: { embedding: false, answered: false, citationValid: false, notAbstained: false } };
+  }
   return Response.json({ ok: result.ok, checks: result.checks }, { status: 200, headers: { "cache-control": "no-store" } });
 }

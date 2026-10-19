@@ -48,6 +48,72 @@ describe("canary modules are server-only", () => {
   });
 });
 
+// The canary's budget subject comes from the environment, so the wiring may be reached from
+// exactly these files (same source-text backstop as the admin and Bedrock scans in
+// auth-boundary.test.ts, which also sees import(), require() and plain .js/.mjs files).
+const skippedDirNames = new Set(["node_modules", ".next"]);
+const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+
+function collectSourceFiles(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!skippedDirNames.has(entry.name)) files.push(...collectSourceFiles(path.join(dir, entry.name)));
+    } else if (sourceExtensions.has(path.extname(entry.name))) {
+      files.push(path.join(dir, entry.name));
+    }
+  }
+  return files;
+}
+
+function offenders(
+  files: Array<{ relativePath: string; content: string }>,
+  pattern: RegExp,
+  allowed: string[],
+): string[] {
+  return files.filter((f) => !allowed.includes(f.relativePath) && pattern.test(f.content)).map((f) => f.relativePath);
+}
+
+const SINGULAR = /\bcreateCanaryCaller\b/;
+const PLURAL = /\bcreateCanaryCallers\b|model\/canary-callers/;
+const SINGULAR_ALLOWED = ["lib/server/model/call.ts", "lib/server/model/canary-callers.ts"];
+const PLURAL_ALLOWED = ["app/api/canary/route.ts", "lib/server/model/canary-callers.ts"];
+
+describe("boundary scan: who may reach the canary caller", () => {
+  it("the detectors flag other files and allow the named ones", () => {
+    const bad = [{ relativePath: "app/actions.ts", content: 'const m = await import("@/lib/server/model/call"); m.createCanaryCaller;' }];
+    expect(offenders(bad, SINGULAR, SINGULAR_ALLOWED)).toEqual(["app/actions.ts"]);
+    const bad2 = [{ relativePath: "lib/x.cjs", content: 'require("../server/model/canary-callers")' }];
+    expect(offenders(bad2, PLURAL, PLURAL_ALLOWED)).toEqual(["lib/x.cjs"]);
+    const ok = [
+      { relativePath: "lib/server/model/call.ts", content: "export function createCanaryCaller() {}" },
+      { relativePath: "app/api/canary/route.ts", content: 'import { createCanaryCallers } from "@/lib/server/model/canary-callers";' },
+    ];
+    expect(offenders(ok, SINGULAR, SINGULAR_ALLOWED)).toEqual([]);
+    expect(offenders(ok, PLURAL, PLURAL_ALLOWED)).toEqual([]);
+  });
+
+  const files = () =>
+    collectSourceFiles(webDir).map((file) => ({
+      relativePath: path.relative(webDir, file).split(path.sep).join("/"),
+      content: fs.readFileSync(file, "utf8"),
+    }));
+
+  it("createCanaryCaller appears only in model/call.ts and model/canary-callers.ts", () => {
+    expect(offenders(files(), SINGULAR, SINGULAR_ALLOWED)).toEqual([]);
+  });
+
+  it("createCanaryCallers and model/canary-callers appear only in the canary route and the defining file", () => {
+    expect(offenders(files(), PLURAL, PLURAL_ALLOWED)).toEqual([]);
+  });
+
+  it("the defining files exist, so the scans above are not vacuous", () => {
+    expect(fs.existsSync(path.join(webDir, "lib/server/model/canary-callers.ts"))).toBe(true);
+    expect(SINGULAR.test(fs.readFileSync(path.join(webDir, "lib/server/model/call.ts"), "utf8"))).toBe(true);
+  });
+});
+
 describe("canary route", () => {
   const route = path.join(webDir, "app/api/canary/route.ts");
 

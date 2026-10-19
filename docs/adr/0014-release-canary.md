@@ -18,7 +18,8 @@ The release workflow (R3) deploys a new production build without a domain, check
 
 - A release proves the model path of the exact build before users see it; about 0.1 cent per release, counted against the canary account's budget, the global budget and the kill switch (the kill switch off fails the canary, so a release cannot ship while model features are off by accident).
 - Retrieval and database writes are not canaried; CI's full stack and develop cover them.
-- A leaked `CANARY_SECRET` lets someone spend the canary account's daily budget; rotate it in Vercel and GitHub.
+- A leaked `CANARY_SECRET` lets someone spend the canary account's daily budget, which also blocks releases until the secret is rotated (Vercel and GitHub) or the day rolls over.
+- The usage rows are booked without a notebook and without a message (`private.usage` has foreign keys on both), and the canary account must exist in `auth.users` of the production project (the user id has a foreign key too): the release runbook creates it first.
 
 ## Alternatives considered
 

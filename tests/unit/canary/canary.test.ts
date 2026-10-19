@@ -2,7 +2,7 @@
 // so the cases use plain fakes. The fake chat caller imitates the model wrapper: it streams the
 // answer, then runs linkMessage and maps a throw to message_link_failed (same as turn.test.ts).
 import { describe, expect, it, vi } from "vitest";
-import { runCanary, type CanaryDeps } from "@/lib/server/canary/canary";
+import { isCanaryCitation, runCanary, type CanaryDeps } from "@/lib/server/canary/canary";
 import { CANARY_CHUNKS, CANARY_QUESTION } from "@/lib/server/canary/fixture";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
 
@@ -97,10 +97,79 @@ describe("runCanary: happy path", () => {
     expect(h.callChat).toHaveBeenCalledTimes(1);
     const req = h.callChat.mock.calls[0]?.[0];
     expect(req?.kind).toBe("chat");
-    expect(req?.notebookId).toBe("00000000-0000-0000-0000-000000000000");
+    // Changed (R2 bug fix): usage.notebook_id has a foreign key, so the canary sends null,
+    // not the former all-zero UUID.
+    expect(req?.notebookId).toBeNull();
     const content = req?.input.messages[0]?.content ?? "";
     expect(content).toContain(CANARY_QUESTION);
     expect(content).toContain(CANARY_CHUNKS[0]?.content ?? "missing");
+  });
+
+  it("its linkMessage runs the citation check but resolves to null (usage.message_id has a foreign key)", async () => {
+    const h = harness();
+    let linked: string | null | undefined = "unset";
+    h.callChat.mockImplementationOnce(async (req) => {
+      const text = `${ANSWER_SENTINEL} laut Quelle [1: "${quoteOfChunk1()}"].`;
+      linked = await req.linkMessage?.({ text });
+      return {
+        ok: true,
+        output: { text },
+        usageId: "u-c",
+        inputTokens: 1,
+        outputTokens: 1,
+        costUsd: 0,
+        latencyMs: 1,
+        settled: true,
+      };
+    });
+    const r = await runCanary(h.deps);
+    expect(linked).toBeNull();
+    // The turn's own linkMessage still ran: the citation was checked and counted.
+    expect(r).toEqual({
+      ok: true,
+      checks: { embedding: true, answered: true, citationValid: true, notAbstained: true },
+    });
+  });
+
+  it("linkMessage still drops a forged quote while resolving to null", async () => {
+    const h = harness();
+    let linked: string | null | undefined = "unset";
+    h.callChat.mockImplementationOnce(async (req) => {
+      const text = 'Erfunden [1: "dieser Satz steht nirgends in der Quelle"].';
+      linked = await req.linkMessage?.({ text });
+      return { ok: true, output: { text }, usageId: "u", inputTokens: 1, outputTokens: 1, costUsd: 0, latencyMs: 1, settled: true };
+    });
+    const r = await runCanary(h.deps);
+    expect(linked).toBeNull();
+    expect(r.checks.citationValid).toBe(false);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("isCanaryCitation: NFC-normalized comparison", () => {
+  // Built from escapes and normalize(), so no editor or formatter can merge the two forms.
+  const nfc = "Die Fiktiva GmbH in Zürich baut Käse.".normalize("NFC");
+  const nfd = nfc.normalize("NFD");
+  const chunk = { id: "canary-1", sourceId: "s", ordinal: 0, page: null, content: nfd, score: 1 };
+
+  it("the two forms really differ", () => {
+    expect(nfd).not.toBe(nfc);
+    expect(nfd.normalize("NFC")).toBe(nfc);
+  });
+
+  it("an NFC quote counts as valid against NFD chunk content", () => {
+    const quote = "in Zürich baut".normalize("NFC");
+    expect(isCanaryCitation([chunk], { ordinal: 1, chunkId: "canary-1", quote })).toBe(true);
+  });
+
+  it("an NFD quote counts as valid against NFC chunk content", () => {
+    const quote = "Zürich".normalize("NFD");
+    expect(isCanaryCitation([{ ...chunk, content: nfc }], { ordinal: 1, chunkId: "canary-1", quote })).toBe(true);
+  });
+
+  it("a quote that is not in the chunk, or a chunk id that is unknown, is not valid", () => {
+    expect(isCanaryCitation([chunk], { ordinal: 1, chunkId: "canary-1", quote: "Bern" })).toBe(false);
+    expect(isCanaryCitation([chunk], { ordinal: 1, chunkId: "canary-9", quote: "Fiktiva" })).toBe(false);
   });
 });
 
