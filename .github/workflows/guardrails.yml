@@ -2,7 +2,9 @@ name: guardrails
 
 # The checks that exist before any app code does: no secrets in history, workflows
 # without known injection or permission problems, and agent-guard behaving as tested.
-# They are the first required status checks of the main ruleset.
+# secrets, workflows and agent-guard are the first required status checks of the main
+# ruleset; risk class joins them (added by the human after the PR that introduced it). It
+# reports the class and never fails because of it.
 
 on:
   pull_request:
@@ -67,3 +69,73 @@ jobs:
 
       - name: Run hook tests
         run: node --test .claude/hooks/agent-guard.test.mjs
+
+  # Reports the risk class of a pull request (AGENTS.md "Roles and flow") in the run summary.
+  # A required status check (added to the main ruleset by the human after the PR that
+  # introduced it): being required proves only that it ran; it never fails because of the
+  # class. No label, no write token, no PR data in an expression.
+  # The checkout is the merge commit, so HEAD^1 is the base and the diff is the PR's change.
+  # The rules come from the base branch, so a PR cannot change its own class by editing the
+  # classifier, and no file from the PR runs in this job.
+  risk-class:
+    name: risk class
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # No package-manager cache: it would key on the PR's package.json.
+          package-manager-cache: false
+
+      # shell: bash adds pipefail, so a failed git diff fails the step instead of reaching
+      # the classifier as an empty list; the classifier also refuses an empty list.
+      # Bootstrap: a PR whose base branch has no classifier (on main, only the PR that adds
+      # it) runs the PR's copy instead, and says so in the summary and as a warning.
+      - name: Classify the changed paths with the base branch rules
+        shell: bash
+        run: |
+          git rev-parse --verify --quiet HEAD^1 > /dev/null
+          classifier="$RUNNER_TEMP/risk-class.mjs"
+          # ls-tree fails (and so fails the step) if the base tree is unreadable; only an
+          # empty listing, i.e. a base without the file, leads to the bootstrap fallback.
+          base_entry=$(git ls-tree HEAD^1 -- .github/scripts/risk-class.mjs)
+          if [ -n "$base_entry" ]; then
+            git show HEAD^1:.github/scripts/risk-class.mjs > "$classifier"
+          else
+            cp .github/scripts/risk-class.mjs "$classifier"
+            echo "::warning title=Risk class::bootstrap run: the base branch has no classifier yet, so this run uses the PR's copy"
+            printf '%s\n\n' "> **Bootstrap run:** the base branch has no classifier yet, so this one run uses the PR's own copy. Read this PR as high by hand." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          git diff --name-only --no-renames -z HEAD^1 HEAD | node "$classifier"
+
+  # The classifier's tests run from the PR in their own job, so a test file from the PR
+  # cannot write to the risk class job's summary or output.
+  risk-class-tests:
+    name: risk class tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # No package-manager cache: it would key on the PR's package.json.
+          package-manager-cache: false
+
+      - name: Test the classifier
+        run: node --test 'tests/ci/*.test.mjs'

@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Turns a task into a short written plan before any code is written. Use first for every high-risk change (supabase/, infra/, auth, prompts, .github/workflows/, .claude/) and for anything larger than one small PR. Read-only.
+description: Turns a task into a short written plan before any code is written. Use first for every high-risk change (supabase/, infra/, .github/, .claude/, scripts/, tests/rls/, tests/ci/, prompts, retrieval, apps/web/lib/server/, auth, rule files, security config; full list in AGENTS.md) and for anything larger than one small PR. Read-only.
 tools: Read, Grep, Glob
 model: opus
 ---

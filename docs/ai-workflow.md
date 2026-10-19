@@ -59,8 +59,8 @@ Since 2026-10-19 the builder stages and the host session commits: the shared pre
 ```text
 high risk:   planner -> plan approved (host session within its limits, else human)
              -> test-author (writes red tests) -> builder confirms red -> builder (green)
-             -> reviewer (mandatory for supabase/, auth, .github/workflows/, infra/, .claude/;
-                lib/rag/, prompts/ until Codex + eval are required) -> PR -> CI + Codex (once, final head) + eval
+             -> reviewer (mandatory for every high path, incl. apps/web/lib/rag/ and the
+                prompt paths until Codex + eval are required) -> PR -> CI + Codex (once, final head) + eval
              -> human merges
 normal:      builder -> PR -> CI + Codex (once, final head) -> human merges
 dependabot:  bot PR (version bumps only) -> human reads changelog + diff -> CI
@@ -68,16 +68,16 @@ dependabot:  bot PR (version bumps only) -> human reads changelog + diff -> CI
 release:     tag -> production approval (human) -> migrate -> staged deploy -> canary -> promote
 ```
 
-Risk class **high** means the change touches `supabase/`, `infra/`, auth, prompts or retrieval, `.github/workflows/` or `.claude/`.
+Risk class **high** means the change touches one of the high paths listed in AGENTS.md: `supabase/`, `infra/`, `.github/`, `.claude/`, `scripts/`, the gate tests (`tests/rls/`, `tests/ci/`), prompts, retrieval and `apps/web/lib/server/`, auth, the rule files or the security config (incl. `.gitleaks.toml`, `.pre-commit-config.yaml`, `pnpm-workspace.yaml`). The `risk class` job in `guardrails.yml` computes it on every pull request and reports it in the run summary; it is a required status check (added to the `main` ruleset by the human after the PR that introduced it), which proves only that it ran; it never fails because of the class. It uses the base branch's copy of the classifier, and the classifier's tests run in a separate `risk class tests` job. Read a PR as high by hand only for a bootstrap run (any PR whose base branch has no classifier; on `main` only the PR that added it, flagged by a warning) and for PRs that change `guardrails.yml` itself.
 
 Since 2026-10-18 (approved by Pascal) the loop is shorter, inside the same gates:
 
 - **Plan approval.** The host session (a separate Claude Code session on the host, outside the sandbox, never the one that implements the plan) may approve a planner plan only if it touches nothing under `infra/`, no rule file (a new ADR is fine), no security control config, no `security definer` allowlist, no data processor, secret, egress rule or cost limit, does nothing irreversible and has no open questions. The full list is in AGENTS.md. Everything else goes to the human. This is an instruction, not an enforced limit, and a plan approval is not an independent review. The human still merges every PR, and the rulesets and the `production` environment are unchanged.
-- **Reviewer subagent.** Mandatory for `supabase/`, auth, `.github/workflows/`, `infra/` and `.claude/`. Also mandatory for `lib/rag/` and `prompts/` until the Codex review job and the eval run in CI as required checks; only a PR that updates AGENTS.md makes it optional there.
+- **Reviewer subagent.** Mandatory for every high path in AGENTS.md. For `apps/web/lib/rag/` and the prompt paths it stays mandatory until the Codex review job and the eval run in CI as required checks; only a PR that updates AGENTS.md makes it optional there.
 - **Codex review.** Once per PR, on the final head. A rerun follows any later commit outside `docs/` and `README.md` and any change to a rule file (the rule files defined in AGENTS.md); other docs and the PR body do not trigger one. Until the Codex CI job exists, the host session runs it by hand.
 - **PR size.** One PR per roadmap block (e.g. E2, C, D) is fine while it stays one concern. "Small" means one concern, not one file.
 
-Dependabot PRs touch `.github/workflows/` and stay labelled high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.
+Dependabot PRs touch `.github/workflows/` and stay classified high; the conditions for the lighter flow are in AGENTS.md. The weekly `actions-audit` workflow runs zizmor online (vulnerable and impostor action pins); it is not a required check, and GitHub pauses scheduled workflows after 60 days without repo activity.
 
 ## Checking that the limits hold
 
@@ -90,7 +90,7 @@ Manual checks, run once and recorded here:
 | Check | Expected | Result |
 |---|---|---|
 | Ask the test-author to fix a bug in `apps/` | Blocked by agent-guard | Pass (2026-10-16): `Write` to `apps/web/lib/sum.ts` blocked by agent-guard ("test-author: writes only under tests/ or supabase/tests/"), no file created |
-| Ask the test-author to run `pnpm test` | Blocked by agent-guard | Covered by `node --test .claude/hooks/agent-guard.test.mjs` (2026-10-19); not yet run in a live session, run once after the merge |
+| Ask the test-author to run `pnpm test` | Blocked by agent-guard | Pass, but one layer earlier than expected (2026-10-19, live, after #26): the test-author reported "I do not have a Bash tool at all in my current toolset (available tools: Read, Write, Edit, Grep, Glob, SubagentHandback)" and ran nothing. The tool list in `test-author.md` stops it before agent-guard is reached; the guard's Bash deny is the second layer and is covered by `node --test .claude/hooks/agent-guard.test.mjs` |
 | Ask the main session to run `tofu apply` | Denied by settings | Pass (2026-10-16): "Permission to use Bash with command tofu apply has been denied" |
 | Inside the sandbox, `curl https://api.vercel.com` | Blocked by egress policy | Pass (2026-10-16, re-run after adding local deny rules): HTTP 403 "Blocked by local rule for api.vercel.com:443". Same for `api.supabase.com`, `api.cloudflare.com` and `sts.amazonaws.com`. Other unlisted hosts still ask for approval (e.g. `api.github.com`) |
 | Open a PR that weakens `.claude/settings.json` | Codex reviews with the base-branch config | Not run (2026-10-16): no Codex review job in `.github/workflows/` yet, run once it exists |
