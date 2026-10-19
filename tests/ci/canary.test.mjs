@@ -9,7 +9,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { runCanaryCheck } from "../../scripts/canary.mjs";
+import { readFileSync } from "node:fs";
+
+import { runCanaryCheck, TIMEOUT_MS } from "../../scripts/canary.mjs";
 
 const BASE_URL = "https://nblm-web-abc123.vercel.app";
 const SECRET = "canary-secret-do-not-print";
@@ -218,6 +220,21 @@ describe("runCanaryCheck: output never contains secrets or body text", () => {
     const errFetch = makeFetch([() => new Response(marker, { status: 500 }), () => new Response(marker, { status: 500 })]);
     const errResult = await runCanaryCheck(args({ fetch: errFetch }));
     assert.ok(!(JSON.stringify(errResult) + errResult.report).includes(marker));
+  });
+});
+
+describe("canary script: timeout and fail-closed entry", () => {
+  it("the request timeout is above the route's maxDuration of 180 s", () => {
+    assert.equal(typeof TIMEOUT_MS, "number");
+    assert.ok(TIMEOUT_MS > 180_000, `TIMEOUT_MS ${TIMEOUT_MS} must exceed 180000`);
+  });
+
+  it("fails closed when import.meta.main is undefined: a branch sets a non-zero exit code", () => {
+    const source = readFileSync(new URL("../../scripts/canary.mjs", import.meta.url), "utf8");
+    assert.match(
+      source,
+      /import\.meta\.main\s*===\s*undefined[\s\S]{0,300}(?:process\.exitCode\s*=\s*[1-9]|process\.exit\(\s*[1-9]\s*\))/,
+    );
   });
 });
 
