@@ -236,7 +236,8 @@ describe("validateCitations: folded match, still dropped", () => {
 });
 
 describe("validateCitations: folded matching runs in linear time", () => {
-  const limit = 500;
+  // Catches super-linear growth by a wide margin (quadratic takes many seconds on 200 KB) and tolerates runner load.
+  const limit = 2000;
 
   it("a 200 KB chunk of whitespace with a long folded quote", () => {
     const text = "a" + " \n".repeat(100_000) + "b";
