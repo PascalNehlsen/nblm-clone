@@ -5,8 +5,9 @@ import { describe, expect, it } from "vitest";
 import { isPublicPath, PUBLIC_PATHS } from "../../../apps/web/lib/auth/paths";
 
 describe("PUBLIC_PATHS", () => {
-  it("is exactly /login and /auth/callback", () => {
-    expect(PUBLIC_PATHS).toEqual(["/login", "/auth/callback"]);
+  it("is exactly /login, /auth/callback and /api/canary", () => {
+    // /api/canary is the release canary entry (ADR 0014, R2); its secret header protects it.
+    expect(PUBLIC_PATHS).toEqual(["/login", "/auth/callback", "/api/canary"]);
   });
 });
 

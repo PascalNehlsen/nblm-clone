@@ -73,9 +73,10 @@ afterEach(() => {
 });
 
 describe("createModelCaller (production): runtime surface", () => {
-  it("exports exactly createModelCaller", async () => {
+  it("exports exactly createCanaryCaller and createModelCaller", async () => {
     const mod = await import("@/lib/server/model/call");
-    expect(Object.keys(mod)).toEqual(["createModelCaller"]);
+    // createCanaryCaller is the release canary entry (ADR 0014, R2): same binding, fixed user from env.
+    expect(Object.keys(mod).sort()).toEqual(["createCanaryCaller", "createModelCaller"]);
   });
 });
 
