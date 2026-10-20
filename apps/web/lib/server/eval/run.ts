@@ -116,6 +116,7 @@ export async function runEval(deps: EvalDeps): Promise<EvalResult> {
             content: result.message.content,
             shown,
             abstained: result.message.abstained,
+            abstention: result.message.abstention,
             citations: result.message.citations.map((c) => ({ chunkId: c.chunkId, quote: c.quote })),
           };
         }

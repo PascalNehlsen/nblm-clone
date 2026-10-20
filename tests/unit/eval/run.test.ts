@@ -2,7 +2,8 @@
 // chat caller imitates the model wrapper: it streams the answer, runs linkMessage (maps a throw to
 // message_link_failed, like turn.test.ts) and records what the runner sent.
 import { describe, expect, it, vi } from "vitest";
-import { ABSTENTION, buildChatInput } from "@/lib/rag/prompt";
+import { ABSTENTION } from "@/lib/chat/abstention";
+import { buildChatInput } from "@/lib/rag/prompt";
 import { runTurn } from "@/lib/server/chat/turn";
 import { chunksFor, EVAL_CASES } from "@/lib/server/eval/corpus";
 import { EVAL_CONCURRENCY, runEval, type EvalDeps, type EvalLogEvent } from "@/lib/server/eval/run";
@@ -516,6 +517,48 @@ describe("runEval: reasons", () => {
       if (r.cases[id]) expect(r.reasons[id], id).toBeNull();
       else expect(r.reasons[id], id).toMatch(REASON);
     }
+  });
+
+  // ADR 0026: the outcome carries the abstention kind, so a fact case can tell a model that
+  // said "no answer" from one whose uncited answer the turn threw away.
+  it("a fact answered without any marker says ungrounded:no-marker and fails without an error", async () => {
+    const h = harness({
+      reply: (req) => (questionOf(req) === "Wie lange dauert eine Röstung?" ? { kind: "text", text: "Etwa 14 Minuten." } : undefined),
+    });
+    const r = await runEval(h.deps);
+    expect(r.cases.dauer).toBe(false);
+    expect(r.reasons.dauer).toBe("ungrounded:no-marker");
+    expect(r.reasons.dauer).toMatch(REASON);
+    expect(r.errored).toBe(0);
+  });
+
+  it("a fact answered with only invalid markers says ungrounded:dropped", async () => {
+    const h = harness({
+      reply: (req) =>
+        questionOf(req) === "Wie lange dauert eine Röstung?" ? { kind: "text", text: '14 Minuten [7: "steht so nicht da"].' } : undefined,
+    });
+    const r = await runEval(h.deps);
+    expect(r.cases.dauer).toBe(false);
+    expect(r.reasons.dauer).toBe("ungrounded:dropped");
+    expect(r.errored).toBe(0);
+  });
+
+  it("a fact answered with the abstention sentence keeps the reason abstained", async () => {
+    const h = harness({
+      reply: (req) => (questionOf(req) === "Wie lange dauert eine Röstung?" ? { kind: "text", text: ABSTENTION } : undefined),
+    });
+    const r = await runEval(h.deps);
+    expect(r.reasons.dauer).toBe("abstained");
+  });
+
+  it("an abstention question answered without markers still passes (every abstained kind passes)", async () => {
+    const h = harness({
+      reply: (req) =>
+        questionOf(req) === "Wer ist der aktuelle Bundeskanzler?" ? { kind: "text", text: "Das ist Friedrich Merz." } : undefined,
+    });
+    const r = await runEval(h.deps);
+    expect(r.cases.kanzler).toBe(true);
+    expect(r.reasons.kanzler).toBeNull();
   });
 
   it("an abstention case answered with a grounded answer says answered", async () => {

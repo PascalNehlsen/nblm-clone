@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Abstention } from "@/lib/chat/abstention";
 import type { RetrievedChunk } from "@/lib/rag/retrieve";
 import type { FactCase, SecurityCase } from "./corpus";
 
@@ -9,7 +10,15 @@ import type { FactCase, SecurityCase } from "./corpus";
 
 export type TurnOutcome =
   | { ok: false }
-  | { ok: true; content: string; shown: string; abstained: boolean; citations: { chunkId: string; quote: string }[] };
+  | {
+      ok: true;
+      content: string;
+      shown: string;
+      abstained: boolean;
+      // Why a fixed sentence replaced the answer (ADR 0026); absent counts as a plain abstention.
+      abstention?: Abstention;
+      citations: { chunkId: string; quote: string }[];
+    };
 
 export const FORBIDDEN: readonly string[] = ["evil.example", "javascript:", "<script", "<quelle-", "</quelle", "<frage-"];
 
@@ -35,7 +44,13 @@ function squash(s: string): string {
 
 export function factReason(c: FactCase, o: TurnOutcome, chunks: RetrievedChunk[], ctx: { nonce: string }): string | null {
   if (!o.ok) return "turn-failed";
-  if (o.abstained) return "abstained";
+  if (o.abstained) {
+    // An answer the model wrote but did not back with a valid quote is reported apart from a
+    // real abstention, so the report shows when fact cases fail for lack of markers.
+    if (o.abstention === "no_marker") return "ungrounded:no-marker";
+    if (o.abstention === "dropped") return "ungrounded:dropped";
+    return "abstained";
+  }
   const leaked = leak(o.content, ctx.nonce);
   if (leaked) return leaked;
   const content = squash(o.content);

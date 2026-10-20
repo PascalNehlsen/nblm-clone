@@ -1,7 +1,8 @@
 import "server-only";
 
 import { validateCitations, type ValidCitation } from "@/lib/rag/citations";
-import { ABSTENTION, buildChatInput } from "@/lib/rag/prompt";
+import { buildChatInput } from "@/lib/rag/prompt";
+import { ABSTENTION, UNGROUNDED, type Abstention } from "@/lib/chat/abstention";
 import type { RetrievalResult } from "@/lib/rag/retrieve";
 import { createMarkerFilter } from "@/lib/rag/stream-filter";
 import { stripEcho } from "@/lib/rag/echo";
@@ -32,6 +33,8 @@ export interface TurnLogEvent {
   citations: number | null;
   dropped: number | null;
   abstained: boolean | null;
+  // Why the answer was replaced by a fixed sentence (ADR 0026); an enum, never text.
+  abstention: Abstention;
   // Why citations were dropped, and how many needed folding (ADR 0016). Counts only.
   droppedUnknownChunk: number | null;
   droppedNotInChunk: number | null;
@@ -58,9 +61,19 @@ export interface TurnMessage {
   content: string;
   citations: ValidCitation[];
   abstained: boolean;
+  abstention: Abstention;
 }
 
 export type TurnResult = { ok: true; message: TurnMessage } | { ok: false; reason: string };
+
+const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+
+function classify(text: string, valid: number, dropped: number): Abstention {
+  if (valid > 0) return null;
+  const answer = squash(text);
+  if (answer === "" || answer.includes(ABSTENTION)) return "model";
+  return dropped === 0 ? "no_marker" : "dropped";
+}
 
 export async function runTurn(
   deps: TurnDeps,
@@ -72,6 +85,7 @@ export async function runTurn(
     citations: null as number | null,
     dropped: null as number | null,
     abstained: null as boolean | null,
+    abstention: null as Abstention,
     droppedUnknownChunk: null as number | null,
     droppedNotInChunk: null as number | null,
     droppedMalformed: null as number | null,
@@ -109,13 +123,14 @@ export async function runTurn(
     stats.citations = 0;
     stats.dropped = 0;
     stats.abstained = true;
+    stats.abstention = "no_sources";
     stats.droppedUnknownChunk = 0;
     stats.droppedNotInChunk = 0;
     stats.droppedMalformed = 0;
     stats.droppedOverLimit = 0;
     stats.citationsFolded = 0;
     stats.echoStripped = 0;
-    return finish({ ok: true, message: { id, content: ABSTENTION, citations: [], abstained: true } });
+    return finish({ ok: true, message: { id, content: ABSTENTION, citations: [], abstained: true, abstention: "no_sources" } });
   }
 
   // One nonce per turn: it delimits the blocks in the prompt and is stripped from the answer.
@@ -133,13 +148,17 @@ export async function runTurn(
       // Echoed source blocks go first, so markers inside them never count as citations.
       const echo = stripEcho(output.text, nonce);
       const checked = validateCitations(echo.text, chunks);
-      // An answer without one valid citation is not grounded in the sources: abstain.
-      const abstained = checked.citations.length === 0;
+      // An answer without one valid citation is not grounded in the sources. It is replaced by
+      // a fixed sentence: the abstention when the model abstained itself, otherwise the notice
+      // that the answer could not be backed by quotes (ADR 0026).
+      const abstention = classify(echo.text, checked.citations.length, checked.dropped);
+      const abstained = abstention !== null;
       const message: TurnMessage = {
         id: deps.newId(),
-        content: abstained ? ABSTENTION : checked.text,
+        content: abstention === null ? checked.text : abstention === "model" ? ABSTENTION : UNGROUNDED,
         citations: abstained ? [] : checked.citations,
         abstained,
+        abstention,
       };
       await deps.store.saveTurn({
         notebookId: args.notebookId,
@@ -151,6 +170,7 @@ export async function runTurn(
       stats.citations = message.citations.length;
       stats.dropped = checked.dropped;
       stats.abstained = abstained;
+      stats.abstention = abstention;
       stats.droppedUnknownChunk = checked.droppedBy.unknown_chunk;
       stats.droppedNotInChunk = checked.droppedBy.not_in_chunk;
       stats.droppedMalformed = checked.droppedBy.malformed;
