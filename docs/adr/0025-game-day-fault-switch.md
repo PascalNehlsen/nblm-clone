@@ -9,7 +9,7 @@ The release pipeline promotes a deployment, smokes the live domain and promotes 
 
 ## Decision
 
-- **Behaviour:** `lib/server/game-day.ts` and the first lines of `proxy.ts` answer `GET /login` with 500 (fixed German text, `no-store`) and log the fixed line `game day fault: live-login`. They do this only when all three hold:
+- **Behaviour:** `lib/server/game-day.ts` and the first lines of `proxy.ts` answer every request to `/login` (any method) with 500 (fixed German text, `no-store`) and log the fixed line `game day fault: live-login`. They do this only when all three hold:
   - the deployment's env has `GAME_DAY_FAULT=live-login`;
   - the request host is the site's own domain (`NEXT_PUBLIC_SITE_URL`);
   - the path is exactly `/login`.
