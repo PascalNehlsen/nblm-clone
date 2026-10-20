@@ -9,8 +9,8 @@ import { deleteNotebookAction } from "../actions";
 export function DeleteNotebook({ notebookId, title }: { notebookId: string; title: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   return (
-    <div className="panel danger-zone">
-      <button type="button" className="danger" onClick={() => dialog.current?.showModal()}>
+    <>
+      <button type="button" className="quiet danger small" onClick={() => dialog.current?.showModal()}>
         Notizbuch löschen
       </button>
       <dialog ref={dialog} className="confirm" aria-labelledby="loeschen-titel" aria-describedby="loeschen-text">
@@ -32,6 +32,6 @@ export function DeleteNotebook({ notebookId, title }: { notebookId: string; titl
           </div>
         </form>
       </dialog>
-    </div>
+    </>
   );
 }

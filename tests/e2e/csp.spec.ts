@@ -14,6 +14,8 @@
 // server round trips worked under the policy.
 import { expect, test, type Page } from "@playwright/test";
 import { seedLocalSession } from "./helpers/session";
+// The add-source forms sit in the dialog behind "Quelle hinzufügen"; the helper opens it first.
+import { openSourceForm } from "./helpers/dialogs";
 
 interface Violation {
   effectiveDirective: string;
@@ -88,17 +90,6 @@ function sourcesSection(page: Page) {
   return page.locator("section").filter({ has: page.getByRole("heading", { name: "Quellen" }) });
 }
 
-async function openSourceForm(page: Page, tabName: "Text" | "PDF") {
-  const tab = sourcesSection(page)
-    .getByRole("tablist", { name: "Art der Quelle" })
-    .getByRole("tab", { name: tabName, exact: true });
-  await tab.click();
-  await expect(tab).toHaveAttribute("aria-selected", "true");
-  const form = sourcesSection(page).getByRole("tabpanel").locator("form");
-  await expect(form).toHaveCount(1);
-  return form;
-}
-
 function chatSection(page: Page) {
   return page.locator("section").filter({ has: page.getByRole("heading", { name: "Fragen", exact: true }) });
 }
@@ -152,6 +143,7 @@ test.describe("Content-Security-Policy", () => {
     await text.getByRole("button", { name: "Text hinzufügen" }).click();
     const textRow = sourcesSection(page).getByRole("listitem").filter({ hasText: textTitle });
     await expect(textRow).toContainText("Fehlgeschlagen: Modell nicht konfiguriert", { timeout: 45_000 });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // A PDF through the real form: the browser PUTs to a Supabase signed upload URL, which
     // connect-src and the policy must allow. Reaching the failed-at-model state shows the

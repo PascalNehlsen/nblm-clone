@@ -62,7 +62,12 @@ export default async function NotebookPage({
         <Link href="/" className="back">
           Alle Notizbücher
         </Link>
-        <h1>{notebook.title}</h1>
+        <div className="nb-title">
+          <h1>{notebook.title}</h1>
+          {notebook.role === "owner" && !user.is_anonymous ? (
+            <DeleteNotebook notebookId={notebook.id} title={notebook.title} />
+          ) : null}
+        </div>
         {sources.length > 0 ? (
           <div className="spectrum" aria-hidden="true">
             {sources.map((source) => (
@@ -74,9 +79,13 @@ export default async function NotebookPage({
       </div>
       <aside className="nb-rail" aria-label="Quellen und Mitglieder">
         <section className="panel sources">
-          <h2>Quellen</h2>
-          <SourceList sources={sources} notebookId={notebook.id} canEdit={canEditSources} hues={hues} />
-          {canEditSources ? <AddSource notebookId={notebook.id} /> : null}
+          <div className="panel-head">
+            <h2>Quellen</h2>
+            {canEditSources ? <AddSource notebookId={notebook.id} /> : null}
+          </div>
+          <div className="list">
+            <SourceList sources={sources} notebookId={notebook.id} canEdit={canEditSources} hues={hues} />
+          </div>
         </section>
         <MemberList
           members={members}
@@ -85,9 +94,6 @@ export default async function NotebookPage({
           notebookId={notebook.id}
           isAnonymous={user.is_anonymous ?? false}
         />
-        {notebook.role === "owner" && !user.is_anonymous ? (
-          <DeleteNotebook notebookId={notebook.id} title={notebook.title} />
-        ) : null}
       </aside>
       <Chat
         notebookId={notebook.id}

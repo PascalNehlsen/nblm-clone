@@ -2,6 +2,7 @@
 // not-found page with a way home. Real local sessions only (helpers/session.ts).
 import { expect, test, type Page } from "@playwright/test";
 import { seedLocalSession } from "./helpers/session";
+import { shareViaDialog } from "./helpers/dialogs";
 
 async function createNotebookViaUi(page: Page, title: string): Promise<void> {
   await page.goto("/");
@@ -76,10 +77,7 @@ test.describe("empty states", () => {
 
     await createNotebookViaUi(ownerPage, `Leer geteilt ${Date.now()}`);
     const notebookUrl = ownerPage.url();
-    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
-    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await ownerPage.getByRole("button", { name: "Teilen" }).click();
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await shareViaDialog(ownerPage, viewerId, "Betrachter");
 
     await viewerPage.goto(notebookUrl);
     const fragen = viewerPage

@@ -33,6 +33,13 @@
 // owner replay in "a viewer cannot write", which submits a checked form.
 import { expect, test, type APIResponse, type Browser, type Page } from "@playwright/test";
 import { seedLocalSession, seedLocalSessionWithClient } from "./helpers/session";
+import {
+  closeDialogWithEscape,
+  confirmDialog,
+  openMembersDialog,
+  shareViaDialog,
+  visibleText,
+} from "./helpers/dialogs";
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -164,12 +171,12 @@ test.describe("sharing a notebook", () => {
     const viewerId = extractUuid(await viewerPage.getByTestId("nutzer-id").innerText());
 
     const notebookUrl = await createNotebookViaUi(ownerPage, `Teilen-Test ${Date.now()}`);
-    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
-    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await ownerPage.getByRole("button", { name: "Teilen" }).click();
+    // Sharing happens in the members dialog behind "Verwalten"; the share form is not on the page.
+    await expect(ownerPage.getByLabel("Nutzer-ID")).toBeHidden();
+    await shareViaDialog(ownerPage, viewerId, "Betrachter");
 
-    // A shortened form of the viewer's id, per the member-list contract.
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    // A shortened form of the viewer's id, per the member-list contract, in the compact list.
+    await expect(visibleText(ownerPage, viewerId.slice(0, 8))).toBeVisible();
 
     // The viewer themselves now also sees the notebook and its member list --
     // but *their own* row reads "Du" (unit-tested in
@@ -201,10 +208,7 @@ test.describe("a viewer cannot write", () => {
 
     const title = `Schreibschutz ${Date.now()}`;
     const notebookUrl = await createNotebookViaUi(ownerPage, title);
-    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
-    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await ownerPage.getByRole("button", { name: "Teilen" }).click();
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await shareViaDialog(ownerPage, viewerId, "Betrachter");
 
     return { ownerContext, viewerContext, ownerPage, viewerPage, notebookUrl, title };
   }
@@ -216,6 +220,8 @@ test.describe("a viewer cannot write", () => {
     await expect(viewerPage.getByText(title)).toBeVisible();
 
     await viewerPage.goto(notebookUrl);
+    await expect(viewerPage.getByRole("button", { name: "Verwalten" })).toHaveCount(0);
+    await expect(viewerPage.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);
     await expect(viewerPage.getByRole("button", { name: "Teilen" })).toHaveCount(0);
     await expect(viewerPage.getByRole("button", { name: "Entfernen" })).toHaveCount(0);
     await expect(viewerPage.getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
@@ -371,24 +377,30 @@ test.describe("removing a member requires explicit confirmation", () => {
     const viewerId = extractUuid(await viewerPage.getByTestId("nutzer-id").innerText());
 
     const notebookUrl = await createNotebookViaUi(ownerPage, `Mitglied-Test ${Date.now()}`);
-    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
-    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await ownerPage.getByRole("button", { name: "Teilen" }).click();
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await shareViaDialog(ownerPage, viewerId, "Betrachter");
 
-    const memberRow = ownerPage.getByRole("listitem").filter({ hasText: viewerId.slice(0, 8) });
-    return { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow };
+    return { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl };
+  }
+
+  /** Opens the members dialog and returns it with the removal confirmation dialog on top
+   * of it: the confirmation is a second, nested <dialog>. */
+  async function openRemoveConfirmation(page: Page, viewerId: string) {
+    const members = await openMembersDialog(page);
+    const memberRow = members.getByRole("listitem").filter({ hasText: viewerId.slice(0, 8) });
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    const confirm = confirmDialog(page, "Mitglied entfernen?");
+    await expect(confirm).toBeVisible();
+    return { members, confirm };
   }
 
   test("Entfernen only opens a dialog, and Abbrechen keeps the member", async ({ browser }) => {
-    const { ownerContext, viewerContext, ownerPage, viewerId, memberRow } = await shareWithViewer(
+    const { ownerContext, viewerContext, ownerPage, viewerId } = await shareWithViewer(
       browser,
       "notebooks-e2e-member-cancel",
     );
     await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
 
-    await memberRow.getByRole("button", { name: "Entfernen" }).click();
-    const dialog = ownerPage.getByRole("dialog");
+    const { confirm: dialog } = await openRemoveConfirmation(ownerPage, viewerId);
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Mitglied entfernen?" })).toBeVisible();
     await expect(dialog).toHaveAccessibleDescription(/Zugriff/);
@@ -396,10 +408,13 @@ test.describe("removing a member requires explicit confirmation", () => {
     await expect(dialog.getByRole("button", { name: "Endgültig entfernen" })).toBeVisible();
 
     await dialog.getByRole("button", { name: "Abbrechen" }).click();
-    await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
+    await expect(dialog).toHaveCount(0);
+    // Only the confirmation closed; the members dialog is still open.
+    await expect(ownerPage.getByRole("dialog")).toHaveCount(1);
+    await closeDialogWithEscape(ownerPage);
 
     await ownerPage.reload();
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await expect(visibleText(ownerPage, viewerId.slice(0, 8))).toBeVisible();
 
     await ownerContext.close();
     await viewerContext.close();
@@ -408,15 +423,14 @@ test.describe("removing a member requires explicit confirmation", () => {
   test("the server rejects a member removal whose hidden confirmation input was removed (fehler=bestaetigung_mitglied), the member stays", async ({
     browser,
   }) => {
-    const { ownerContext, viewerContext, ownerPage, viewerId, notebookUrl, memberRow } = await shareWithViewer(
+    const { ownerContext, viewerContext, ownerPage, viewerId, notebookUrl } = await shareWithViewer(
       browser,
       "notebooks-e2e-member-guard",
     );
 
-    await memberRow.getByRole("button", { name: "Entfernen" }).click();
-    const dialog = ownerPage.getByRole("dialog");
+    const { confirm: dialog } = await openRemoveConfirmation(ownerPage, viewerId);
     await expect(dialog).toBeVisible();
-    const hidden = ownerPage.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    const hidden = dialog.locator("form input[type=hidden][value=on]");
     await expect(hidden).toHaveCount(1);
     await hidden.evaluate((input) => input.remove());
 
@@ -427,20 +441,27 @@ test.describe("removing a member requires explicit confirmation", () => {
     expect(new URL(ownerPage.url()).searchParams.get("fehler")).toBe("bestaetigung_mitglied");
 
     await ownerPage.goto(notebookUrl);
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await expect(visibleText(ownerPage, viewerId.slice(0, 8))).toBeVisible();
 
     await ownerContext.close();
     await viewerContext.close();
   });
 
-  test("Endgültig entfernen removes the member, who then loses access", async ({ browser }) => {
-    const { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow } =
+  test("Endgültig entfernen removes the member, who then loses access; the members dialog stays open without them", async ({
+    browser,
+  }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl } =
       await shareWithViewer(browser, "notebooks-e2e-member-remove");
 
-    await memberRow.getByRole("button", { name: "Entfernen" }).click();
-    await ownerPage.getByRole("dialog").getByRole("button", { name: "Endgültig entfernen" }).click();
+    const { members, confirm } = await openRemoveConfirmation(ownerPage, viewerId);
+    await confirm.getByRole("button", { name: "Endgültig entfernen" }).click();
 
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toHaveCount(0);
+    // The confirmation closes, the members dialog stays open and shows the updated list.
+    await expect(confirm).toHaveCount(0);
+    await expect(members).toBeVisible();
+    await expect(members.getByText(viewerId.slice(0, 8)).filter({ visible: true })).toHaveCount(0);
+    await closeDialogWithEscape(ownerPage);
+    await expect(visibleText(ownerPage, viewerId.slice(0, 8))).toHaveCount(0);
     const response = await viewerPage.goto(notebookUrl);
     expect(response?.status()).toBe(404);
 

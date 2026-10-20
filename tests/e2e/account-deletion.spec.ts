@@ -18,6 +18,7 @@
 //   missing confirmation    redirect to /profil?fehler=bestaetigung, nothing deleted
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { seedLocalSession } from "./helpers/session";
+import { shareViaDialog } from "./helpers/dialogs";
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -90,10 +91,7 @@ test.describe("the danger zone on /profil", () => {
 
     await createNotebookViaUi(ownerPage, `Konto-Privat ${Date.now()}`);
     await createNotebookViaUi(ownerPage, `Konto-Geteilt ${Date.now()}`);
-    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
-    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await ownerPage.getByRole("button", { name: "Teilen" }).click();
-    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await shareViaDialog(ownerPage, viewerId, "Betrachter");
 
     await ownerPage.goto("/profil");
     await ownerPage.getByRole("button", { name: "Konto löschen" }).click();

@@ -32,6 +32,7 @@
 // "Quellen" heading), never the bare page.
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { seedLocalSession, seedLocalSessionWithClient } from "./helpers/session";
+import { openAddSourceDialog, openSourceForm, shareViaDialog } from "./helpers/dialogs";
 import { createSource, setSourceStatus } from "../rls/helpers/sources";
 
 /** A hand-written, minimal but valid single-page PDF containing the text
@@ -93,21 +94,11 @@ function sourcesSection(page: Page) {
   return page.locator("section").filter({ has: page.getByRole("heading", { name: "Quellen" }) });
 }
 
-/** The add-source area is a tab switcher: tablist "Art der Quelle" with the tabs
- * "Text", "PDF" and "Webseite", each controlling one tabpanel with its form. Only
- * the selected panel is visible (the others carry `hidden`), so these helpers click
- * the tab first and return the form inside the one visible panel. Playwright's
- * getByRole skips hidden elements, which keeps "Titel" unambiguous. */
-async function openSourceForm(page: Page, tabName: "Text" | "PDF" | "Webseite") {
-  const tab = sourcesSection(page)
-    .getByRole("tablist", { name: "Art der Quelle" })
-    .getByRole("tab", { name: tabName, exact: true });
-  await tab.click();
-  await expect(tab).toHaveAttribute("aria-selected", "true");
-  const form = sourcesSection(page).getByRole("tabpanel").locator("form");
-  await expect(form).toHaveCount(1);
-  return form;
-}
+/** The add-source area is a modal dialog opened by the button "Quelle hinzufügen". Inside it
+ * is a tab switcher: tablist "Art der Quelle" with the tabs "Text", "PDF" and "Webseite",
+ * each controlling one tabpanel with its form. Only the selected panel is visible (the
+ * others carry `hidden`), so `openSourceForm` (helpers/dialogs.ts) opens the dialog, clicks
+ * the tab and returns the form inside the one visible panel. */
 
 /** The PDF upload form ("PDF-Datei", "Titel", "Hochladen"). */
 async function pdfForm(page: Page) {
@@ -149,10 +140,7 @@ async function shareWithFreshMember(
   const memberId = extractUuid(await memberPage.getByTestId("nutzer-id").innerText());
 
   const notebookUrl = await createNotebookViaUi(ownerPage, `${label} ${Date.now()}`);
-  await ownerPage.getByLabel("Nutzer-ID").fill(memberId);
-  await ownerPage.getByLabel("Rolle").selectOption({ label: role });
-  await ownerPage.getByRole("button", { name: "Teilen" }).click();
-  await expect(ownerPage.getByText(memberId.slice(0, 8))).toBeVisible();
+  await shareViaDialog(ownerPage, memberId, role);
 
   await memberPage.goto(notebookUrl);
   return { ownerContext, memberContext, memberPage, notebookUrl };
@@ -169,6 +157,11 @@ test.describe("a viewer sees the sources list but no way to add sources", () => 
     );
 
     await expect(sourcesSection(memberPage).getByRole("heading", { name: "Quellen" })).toBeVisible();
+    await expect(memberPage.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+    // No add-source dialog is rendered for a viewer at all, not even a closed one.
+    await expect(memberPage.getByRole("tablist", { name: "Art der Quelle" })).toHaveCount(0);
+    await expect(memberPage.locator("dialog").filter({ has: memberPage.locator('input[type="file"]') })).toHaveCount(0);
     await expect(memberPage.getByLabel("PDF-Datei")).toHaveCount(0);
     await expect(memberPage.getByRole("button", { name: "Text hinzufügen" })).toHaveCount(0);
     await expect(memberPage.getByRole("button", { name: "Hochladen" })).toHaveCount(0);
@@ -187,7 +180,9 @@ test.describe("the add-source area is a tab switcher", () => {
       "sources-e2e-tabs",
       "Bearbeiter",
     );
-    const section = sourcesSection(memberPage);
+    // The tab switcher lives in the dialog behind "Quelle hinzufügen", not on the page.
+    await expect(memberPage.getByRole("tablist", { name: "Art der Quelle" })).toHaveCount(0);
+    const section = await openAddSourceDialog(memberPage);
     const tablist = section.getByRole("tablist", { name: "Art der Quelle" });
     await expect(tablist).toBeVisible();
     await expect(tablist.getByRole("tab")).toHaveCount(3);
@@ -259,6 +254,8 @@ test.describe("an editor uploads a PDF source", () => {
 
     const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
     await expect(row).toContainText("Fehlgeschlagen: Modell nicht konfiguriert", { timeout: 45_000 });
+    // A finished upload closes the dialog.
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
 
     await ownerContext.close();
     await memberContext.close();
@@ -284,6 +281,8 @@ test.describe("an editor adds a text source", () => {
 
     const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
     await expect(row).toContainText("Fehlgeschlagen: Modell nicht konfiguriert", { timeout: 45_000 });
+    // The dialog closes once the action is done.
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
 
     await ownerContext.close();
     await memberContext.close();
@@ -307,6 +306,7 @@ test.describe("a viewer cannot import a URL", () => {
     );
 
     await expect(sourcesSection(memberPage).getByRole("heading", { name: "Quellen" })).toBeVisible();
+    await expect(memberPage.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);
     await expect(memberPage.getByLabel("Webadresse")).toHaveCount(0);
     await expect(memberPage.getByRole("button", { name: "Seite hinzufügen" })).toHaveCount(0);
 
@@ -357,7 +357,11 @@ test.describe("an editor imports an address the guard refuses", () => {
       await form.getByLabel("Webadresse").fill(address);
       await form.getByRole("button", { name: "Seite hinzufügen" }).click();
 
-      await expect(memberPage.getByText(URL_ERROR_TEXT)).toBeVisible({ timeout: 45_000 });
+      // The redirect closes the dialog; the error shows in the notebook header.
+      await expect(memberPage.locator(".nb-head").getByRole("alert")).toHaveText(URL_ERROR_TEXT, {
+        timeout: 45_000,
+      });
+      await expect(memberPage.getByRole("dialog")).toHaveCount(0);
       await expect(memberPage).toHaveURL(/fehler=url/);
       await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
 
@@ -417,7 +421,8 @@ test.describe("source rows and the upload form fit the narrow sources panel", ()
       buffer: buildMinimalPdf(),
     });
 
-    const panelBox = await sourcesSection(page).boundingBox();
+    // The upload form now sits in the add-source dialog, which is the panel it must fit.
+    const panelBox = await page.getByRole("dialog").boundingBox();
     const inputBox = await input.boundingBox();
     expect(panelBox).not.toBeNull();
     expect(inputBox).not.toBeNull();

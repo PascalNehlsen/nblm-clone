@@ -91,9 +91,17 @@ test.describe("demo login", () => {
     await expect(page.getByRole("note")).toHaveCount(0);
     await expect(page.getByText("werden nach 24 Stunden gelöscht")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
+    await expect(page.locator(".nb-head").getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
+    // No member management for a demo user, so no "Verwalten" and no members dialog.
+    await expect(page.getByRole("button", { name: "Verwalten" })).toHaveCount(0);
+    await expect(page.getByLabel("Nutzer-ID")).toHaveCount(0);
 
     await expect(page.getByText("Quelle hinzufügen")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);
+    // Not even a closed add-source dialog is in the DOM.
+    await expect(page.locator("dialog").filter({ has: page.locator('input[type="file"]') })).toHaveCount(0);
+    await expect(page.locator("dialog").filter({ has: page.locator('[role="tablist"]') })).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Art der Quelle" })).toHaveCount(0);
     await expect(page.getByLabel("PDF-Datei")).toHaveCount(0);
     await expect(page.locator('input[type="file"]')).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Hochladen" })).toHaveCount(0);
