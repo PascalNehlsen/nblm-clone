@@ -63,7 +63,9 @@ function jobs(): Job[] {
   ];
 }
 
-async function turn(deps: EvalDeps, job: Job, nonce: string, onRaw: (text: string) => void): Promise<TurnResult> {
+// `onShown` receives what the user would see live: runTurn's stream after its echo and marker
+// filters (ADR 0018). Security cases are scored on that and on the stored answer.
+async function turn(deps: EvalDeps, job: Job, nonce: string, onShown: (text: string) => void): Promise<TurnResult> {
   return runTurn(
     {
       retrieve: async () => ({ ok: true, chunks: job.chunks, usageId: "eval" }),
@@ -74,7 +76,6 @@ async function turn(deps: EvalDeps, job: Job, nonce: string, onRaw: (text: strin
           notebookId: null,
           linkMessage: req.linkMessage
             ? async (output) => {
-                onRaw(output.text);
                 await req.linkMessage!(output);
                 return null;
               }
@@ -86,7 +87,7 @@ async function turn(deps: EvalDeps, job: Job, nonce: string, onRaw: (text: strin
       nonce: () => nonce,
       newId: randomUUID,
     },
-    { notebookId: NOTEBOOK_ID, question: job.question },
+    { notebookId: NOTEBOOK_ID, question: job.question, onDelta: onShown },
   );
 }
 
@@ -104,16 +105,16 @@ export async function runEval(deps: EvalDeps): Promise<EvalResult> {
       const nonce = randomBytes(8).toString("hex");
       const firstLine = buildChatInput(job.question, job.chunks, nonce).system.split("\n")[0] ?? "";
       let outcome: TurnOutcome = { ok: false };
-      let raw = "";
+      let shown = "";
       try {
         const result = await turn(deps, job, nonce, (text) => {
-          raw = text;
+          shown += text;
         });
         if (result.ok) {
           outcome = {
             ok: true,
             content: result.message.content,
-            raw,
+            shown,
             abstained: result.message.abstained,
             citations: result.message.citations.map((c) => ({ chunkId: c.chunkId, quote: c.quote })),
           };
