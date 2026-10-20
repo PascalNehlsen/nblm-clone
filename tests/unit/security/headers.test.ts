@@ -283,6 +283,103 @@ describe("securityHeaders: no Supabase origin (supabaseUrl null, build without e
   });
 });
 
+describe("securityHeaders: Sentry ingest origin in connect-src", () => {
+  const EU_DSN = "https://abc@o123.ingest.de.sentry.io/456";
+  const EU_ORIGIN = "https://o123.ingest.de.sentry.io";
+
+  type BuildWithSentry = (input: {
+    supabaseUrl: string | null;
+    siteUrl: string;
+    isDev: boolean;
+    sentryDsn?: string | null;
+  }) => Header[];
+
+  async function cspWith(sentryDsn: string | null | undefined, supabaseUrl: string | null = SUPABASE) {
+    const build = (await load()) as unknown as BuildWithSentry;
+    const input = { supabaseUrl, siteUrl: SITE_HTTPS, isDev: false };
+    const headers = headerMap(build(sentryDsn === undefined ? input : { ...input, sentryDsn }));
+    return parseCsp(headers.get("content-security-policy")!);
+  }
+
+  it("adds exactly the Sentry ingest origin for an EU DSN", async () => {
+    expect((await cspWith(EU_DSN)).get("connect-src")).toEqual(["'self'", SUPABASE, EU_ORIGIN]);
+  });
+
+  it("adds the Sentry origin without a Supabase origin too", async () => {
+    expect((await cspWith(EU_DSN, null)).get("connect-src")).toEqual(["'self'", EU_ORIGIN]);
+  });
+
+  const unchanged: [string, string | null | undefined][] = [
+    ["no sentryDsn", undefined],
+    ["null", null],
+    ["empty", ""],
+    ["a US DSN", "https://abc@o123.ingest.us.sentry.io/456"],
+    ["a legacy US host", "https://abc@o123.ingest.sentry.io/456"],
+    ["a lookalike host", "https://abc@o1.ingest.de.sentry.io.evil.com/456"],
+    ["http", "http://abc@o123.ingest.de.sentry.io/456"],
+    ["garbage", "not a dsn"],
+    ["a directive smuggling attempt", `${EU_DSN}; script-src *`],
+  ];
+  for (const [name, dsn] of unchanged) {
+    it(`leaves the policy exactly as without Sentry for ${name}`, async () => {
+      const baseline = await cspWith(undefined);
+      const actual = await cspWith(dsn);
+      expect([...actual.entries()]).toEqual([...baseline.entries()]);
+      expect(actual.get("connect-src")).toEqual(["'self'", SUPABASE]);
+    });
+  }
+
+  it("changes no directive other than connect-src", async () => {
+    const baseline = await cspWith(undefined);
+    const withSentry = await cspWith(EU_DSN);
+    expect([...withSentry.keys()]).toEqual([...baseline.keys()]);
+    for (const [name, sources] of baseline) {
+      if (name === "connect-src") continue;
+      expect(withSentry.get(name), name).toEqual(sources);
+    }
+  });
+
+  it("keeps the other headers identical", async () => {
+    const build = (await load()) as unknown as BuildWithSentry;
+    const input = { supabaseUrl: SUPABASE, siteUrl: SITE_HTTPS, isDev: false };
+    const strip = (h: Header[]) => h.filter((x) => x.key !== "Content-Security-Policy");
+    expect(strip(build({ ...input, sentryDsn: EU_DSN }))).toEqual(strip(build(input)));
+  });
+});
+
+describe("next.config headers() picks NEXT_PUBLIC_SENTRY_DSN", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function connectSrc(dsn: string | undefined) {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE);
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE_HTTPS);
+    if (dsn === undefined) delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    else vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", dsn);
+    const mod = (await import(CONFIG_PATH)) as {
+      default: { headers?: () => Promise<{ source: string; headers: Header[] }[]> };
+    };
+    const rules = await mod.default.headers!();
+    return parseCsp(headerMap(rules[0]!.headers).get("content-security-policy")!).get("connect-src");
+  }
+
+  it("adds the EU ingest origin when the env holds an EU DSN", async () => {
+    expect(await connectSrc("https://abc@o123.ingest.de.sentry.io/456")).toEqual([
+      "'self'",
+      SUPABASE,
+      "https://o123.ingest.de.sentry.io",
+    ]);
+  });
+
+  it("adds nothing without the env or with a non-EU DSN", async () => {
+    expect(await connectSrc(undefined)).toEqual(["'self'", SUPABASE]);
+    expect(await connectSrc("https://abc@o123.ingest.us.sentry.io/456")).toEqual(["'self'", SUPABASE]);
+  });
+});
+
 describe("next.config headers() without public env", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
