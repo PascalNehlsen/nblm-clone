@@ -75,12 +75,32 @@ function redirectTarget(response, siteUrl) {
   return { location: url.pathname + url.search };
 }
 
+// The enforced policy must keep img-src at exactly 'self' (rendered model output never loads
+// remote images) and forbid framing (ADR 0020). The value itself is never reported.
+function cspOk(response) {
+  const policy = response.headers.get("content-security-policy");
+  if (!policy) return false;
+  const directives = new Map(
+    policy
+      .split(";")
+      .map((d) => d.trim().split(/\s+/))
+      .filter((tokens) => tokens[0])
+      .map(([name, ...values]) => [name.toLowerCase(), values]),
+  );
+  const exactly = (name, value) => {
+    const values = directives.get(name);
+    return values !== undefined && values.length === 1 && values[0] === value;
+  };
+  return exactly("img-src", "'self'") && exactly("frame-ancestors", "'none'");
+}
+
 async function checkHtml(name, fetch, sleep, origin, path, headers) {
   const response = await fetchWithRetry(fetch, sleep, origin + path, headers);
   if (!response) return result(name, path, null, "no response");
   if (response.status !== 200) return result(name, path, response, "status");
   if (!(response.headers.get("content-type") ?? "").startsWith("text/html")) return result(name, path, response, "content-type");
   if (response.headers.has("x-powered-by")) return result(name, path, response, "x-powered-by");
+  if (!cspOk(response)) return result(name, path, response, "csp");
   return result(name, path, response, null);
 }
 

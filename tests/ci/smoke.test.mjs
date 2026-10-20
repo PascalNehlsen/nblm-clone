@@ -51,10 +51,14 @@ function makeSleep() {
   return sleep;
 }
 
+// The policy the app sends on every page (apps/web/lib/security/headers.ts), shortened.
+const CSP_OK =
+  "default-src 'self'; img-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'";
+
 const htmlOk = () =>
   new Response("<html><body>login</body></html>", {
     status: 200,
-    headers: { "content-type": "text/html; charset=utf-8" },
+    headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": CSP_OK },
   });
 
 const rootRedirectOk = () =>
@@ -287,6 +291,77 @@ describe("runSmoke: individual check failures", () => {
   });
 });
 
+describe("runSmoke: Content-Security-Policy on /login", () => {
+  async function runWithLoginHeaders(extra) {
+    const responses = happyResponses();
+    responses[`${BASE_URL}/login`] = [
+      () =>
+        new Response("<html><body>login</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8", ...extra },
+        }),
+    ];
+    const result = await runSmoke(baseArgs({ fetch: makeFetch(responses), sleep: makeSleep() }));
+    return result;
+  }
+
+  function cspFailure(result) {
+    return result.results.find((r) => r.pass === false && /csp|content-security/i.test(`${r.name} ${r.reason}`));
+  }
+
+  it("passes when /login carries img-src 'self' and frame-ancestors 'none'", async () => {
+    const result = await runWithLoginHeaders({ "content-security-policy": CSP_OK });
+    assert.equal(result.ok, true);
+  });
+
+  it("fails when /login has no Content-Security-Policy header", async () => {
+    const result = await runWithLoginHeaders({});
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result), "expected a failing csp result");
+  });
+
+  it("fails when the policy has no img-src 'self'", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; frame-ancestors 'none'",
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
+  it("fails when img-src is widened beyond 'self'", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; img-src 'self' https:; frame-ancestors 'none'",
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
+  it("fails when the policy has no frame-ancestors 'none'", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; img-src 'self'",
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
+  it("fails when only a report-only policy is present", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy-report-only": CSP_OK,
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
+  it("does not print the policy value in the report", async () => {
+    const marker = "CSP_VALUE_DO_NOT_PRINT";
+    const result = await runWithLoginHeaders({
+      "content-security-policy": `${CSP_OK}; report-uri https://${marker}.example/r`,
+    });
+    assert.ok(!JSON.stringify(result).includes(marker));
+    assert.ok(!formatReport(result).includes(marker));
+  });
+});
+
 describe("runSmoke: request shape", () => {
   it("every request uses redirect: manual and an AbortSignal", async () => {
     const fetch = makeFetch(happyResponses());
@@ -360,6 +435,7 @@ describe("runSmoke: request shape", () => {
           status: 200,
           headers: {
             "content-type": "text/html",
+            "content-security-policy": CSP_OK,
             "set-cookie": cookieMarker,
           },
         }),
