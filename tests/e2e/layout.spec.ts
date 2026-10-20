@@ -457,6 +457,42 @@ test.describe("the add-source dialog", () => {
 
     await context.close();
   });
+
+  test("a PDF whose upload request fails with a network error is handled the same way", async ({ browser }) => {
+    test.setTimeout(90_000);
+    const { context, page } = await ownerWithNotebook(browser, "layout-e2e-add-pdf-abort");
+    const supabaseUrl = supabaseLocalConfig().url;
+
+    // No answer at all: the browser's fetch to the signed upload URL rejects with a network error.
+    await page.route(`${supabaseUrl}/storage/v1/object/upload/sign/**`, (route) => route.abort("failed"));
+    let serverActions = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.headers()["next-action"]) serverActions += 1;
+    });
+
+    const form = await openSourceForm(page, "PDF");
+    await form.getByLabel("PDF-Datei").setInputFiles({
+      name: "abgebrochen.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4\n%%EOF\n", "latin1"),
+    });
+    const title = `Abgebrochen ${Date.now()}`;
+    await form.getByLabel("Titel").fill(title);
+    await form.getByRole("button", { name: "Hochladen" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("alert")).toHaveText("Das Hochladen hat nicht geklappt.", { timeout: 30_000 });
+    await expect(dialog).toBeVisible();
+    await expect.poll(() => serverActions, { timeout: 30_000 }).toBe(2);
+    const row = page.locator(".nb-rail .sources li").filter({ hasText: title });
+    await expect(row).toContainText("Fehlgeschlagen: Hochgeladene Datei fehlt", { timeout: 30_000 });
+    await expect(row).not.toContainText("Wartet");
+    await page.waitForTimeout(1_000);
+    expect(serverActions).toBe(2);
+    await expect(dialog).toBeVisible();
+
+    await context.close();
+  });
 });
 
 test.describe("the members dialog", () => {

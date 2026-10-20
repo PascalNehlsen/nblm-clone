@@ -119,6 +119,12 @@ describe("buildChatInput: system prompt, grounding rules", () => {
     expect(citationRule).toBeLessThan(abstentionRule);
   });
 
+  it("says on the abstention rule line that the sentence needs no marker", () => {
+    const rule = lines.find((l) => l.includes(ABSTENTION));
+    expect(rule).toBeDefined();
+    expect(rule).toContain("Dieser Satz braucht keine Markierung.");
+  });
+
   it("forbids knowledge from outside the sources", () => {
     expect(system).toContain("Nutze kein Wissen außerhalb der Quellen.");
   });

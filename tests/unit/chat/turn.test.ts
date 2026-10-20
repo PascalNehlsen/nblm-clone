@@ -208,6 +208,41 @@ describe("runTurn: model call", () => {
     }
   });
 
+  it("the abstention sentence plus a marker that validates is still the abstention (model), without citations", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: [`${ABSTENTION} [1: "sitzt in Bonn"]`] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+    expect(r).toEqual({
+      ok: true,
+      message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "model" },
+    });
+    expect(h.logs[0]).toMatchObject({ abstained: true, abstention: "model", citations: 0 });
+  });
+
+  it("a near-miss abstention without a marker (no final period, lower case, upper case) is model, not no_marker", async () => {
+    const base = ABSTENTION.replace(/\.$/, "");
+    for (const text of [base, ABSTENTION.toLowerCase(), ABSTENTION.toUpperCase(), base.toLowerCase(), base.toUpperCase()]) {
+      const h = harness({ chat: { kind: "ok", deltas: [text] } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.saveTurn, text).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+      expect(r, text).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+    }
+  });
+
+  it("a normal cited answer such as 'Bonn [1: ...]' stays abstention null", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: ['Bonn [1: "sitzt in Bonn"].'] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(r).toMatchObject({
+      ok: true,
+      message: {
+        content: "Bonn [1].",
+        citations: [{ ordinal: 1, chunkId: "chunk-1", quote: "sitzt in Bonn" }],
+        abstained: false,
+        abstention: null,
+      },
+    });
+  });
+
   it("an empty answer (nothing after the echo strip) is model, not ungrounded", async () => {
     for (const deltas of [[""], ["   \n "]]) {
       const h = harness({ chat: { kind: "ok", deltas } });

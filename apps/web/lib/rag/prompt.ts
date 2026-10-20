@@ -24,7 +24,7 @@ function systemPrompt(nonce: string): string {
     'Belege jede Aussage mit einer Markierung der Form [n: "wörtliches Zitat"]. n ist die Nummer des Quellblocks. Kopiere das Zitat Zeichen für Zeichen aus diesem einen Block, als ein zusammenhängendes Stück ohne Auslassungen und ohne "...". Behalte alte Rechtschreibung (etwa "daß"), Satzzeichen und typografische Anführungszeichen wie » « ‚ ‘ ’ genau wie in der Quelle bei. Verwende im Zitat nie das Zeichen " und keine eckigen Klammern. Zitiere kurz, möglichst unter 150 Zeichen, höchstens 300.',
     "Nutze kein Wissen außerhalb der Quellen. Ein Satz ohne Markierung gilt als unbelegt; eine Antwort ganz ohne Markierung wird verworfen.",
     'Beispiel: Der Leuchtturm ist 31 Meter hoch [2: "ist 31 Meter hoch"].',
-    `Wenn die Quellen die Antwort nicht enthalten, antworte genau mit diesem Satz und sonst nichts: ${ABSTENTION}`,
+    `Wenn die Quellen die Antwort nicht enthalten, antworte genau mit diesem Satz und sonst nichts: ${ABSTENTION} Dieser Satz braucht keine Markierung.`,
     "Wiederhole nie die Quellblöcke, ihre Tags oder die Frage; schreibe nur deine Antwort.",
     "Antworte auf Deutsch, knapp und sachlich, als reiner Text: keine Links, keine Bilder, kein HTML, kein Markdown.",
   ].join("\n");

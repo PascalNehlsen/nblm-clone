@@ -51,17 +51,21 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
         setMessage(notebookErrorMessage(created.error));
         return;
       }
-      const upload = await fetch(created.signedUrl, {
+      // A network error rejects instead of answering; both count as a failed upload.
+      const uploaded = await fetch(created.signedUrl, {
         method: "PUT",
         headers: { "content-type": "application/pdf" },
         body: file,
-      });
+      }).then(
+        (r) => r.ok,
+        () => false,
+      );
       // Nothing reached Storage. Ingestion still runs once: it finds no file and marks the
-      // source failed (storage_failed), so no row is left waiting forever. The dialog stays
+      // source failed (upload_missing), so no row is left waiting forever. The dialog stays
       // open with the message; the failed row can be removed from the list.
-      if (!upload.ok) {
-        await ingestSourceAction({ notebookId, sourceId: created.sourceId });
+      if (!uploaded) {
         setMessage("Das Hochladen hat nicht geklappt.");
+        await ingestSourceAction({ notebookId, sourceId: created.sourceId }).catch(() => undefined);
         router.refresh();
         return;
       }

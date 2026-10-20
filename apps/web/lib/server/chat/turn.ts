@@ -66,12 +66,17 @@ export interface TurnMessage {
 
 export type TurnResult = { ok: true; message: TurnMessage } | { ok: false; reason: string };
 
-const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+// Caseless, single spaces, no trailing period: "keine antwort" still counts as the sentence.
+const loose = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase().replace(/[.!]+$/, "");
+const SENTENCE = loose(ABSTENTION);
 
-function classify(text: string, valid: number, dropped: number): Abstention {
-  if (valid > 0) return null;
-  const answer = squash(text);
-  if (answer === "" || answer.includes(ABSTENTION)) return "model";
+// `checked` is the answer after the citation check, valid markers renumbered to [k].
+function classify(text: string, checked: string, valid: number, dropped: number): Abstention {
+  // The abstention sentence with a quote attached is still the abstention: a cited
+  // "keine Antwort" is no answer (the prompt says the sentence needs no marker).
+  if (valid > 0) return loose(checked.replace(/\[\d{1,2}\]/g, "")) === SENTENCE ? "model" : null;
+  const answer = loose(text);
+  if (answer === "" || answer.includes(SENTENCE)) return "model";
   return dropped === 0 ? "no_marker" : "dropped";
 }
 
@@ -151,7 +156,7 @@ export async function runTurn(
       // An answer without one valid citation is not grounded in the sources. It is replaced by
       // a fixed sentence: the abstention when the model abstained itself, otherwise the notice
       // that the answer could not be backed by quotes (ADR 0026).
-      const abstention = classify(echo.text, checked.citations.length, checked.dropped);
+      const abstention = classify(echo.text, checked.text, checked.citations.length, checked.dropped);
       const abstained = abstention !== null;
       const message: TurnMessage = {
         id: deps.newId(),
