@@ -22,7 +22,7 @@ The goal is a small app built the way a production platform should be: a demo th
 - Release: migrations first, staged production deploy, smoke test and canary question against the exact artifact, promote, automatic rollback
 - Eval harness: facts, abstention and prompt-injection cases; security cases are a hard gate
 - CI: secret scan, workflow audit (offline and online), dependency review, IaC scan (trivy), CodeQL (JS/TS, Actions). Image scan: not applicable, nothing ships as a container image. Codex review: run by hand by the host session per PR
-- Runbooks, ADRs, a game day with a real postmortem (after the v1.0.3 release)
+- Runbooks, ADRs, a game day with a real postmortem (2026-10-20, docs/postmortems/)
 - Ops page and Sentry error tracking (EU), account deletion
 
 ## v1.1

@@ -1,6 +1,6 @@
 # Runbook: game day (release rollback)
 
-- Last rehearsed: not yet
+- Last rehearsed: 2026-10-20, v1.0.5 (run 39413252457): live smoke failed on `/login 500`, automatic rollback to v1.0.4 after 43 s, variable removed afterwards ([postmortem](../postmortems/2026-10-20-game-day.md))
 - Rollback itself: [release.md](release.md)
 - Who: Pascal (Vercel production env, release tag, `production` approval). The host session watches the run and writes the postmortem ([ADR 0025](../adr/0025-game-day-fault-switch.md))
 - Effect: `https://app.sec-nblm.dev/login` answers 500 for about 1 to 2 minutes until the automatic rollback. Logged-out visitors cannot sign in during that time, and `/` redirects them to the failing `/login`; signed-in pages keep working
