@@ -40,6 +40,22 @@ describe("readChatEvents", () => {
     expect(events).toEqual([{ type: "delta", text: "Hal" }, { type: "delta", text: "lo" }, DONE]);
   });
 
+  it("a done message with the extra abstention field parses and the field is ignored", async () => {
+    for (const abstention of ["no_marker", "dropped", "model", "no_sources", null]) {
+      const withExtra = { type: "done", message: { ...DONE.message, abstained: abstention !== null, abstention } };
+      const { events, result } = await run(textStream([`${JSON.stringify(withExtra)}\n`]));
+      expect(result, String(abstention)).toBe("done");
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({
+        type: "done",
+        message: { ...DONE.message, abstained: abstention !== null },
+      });
+      expect(Object.keys((events[0] as { message: object }).message).sort()).toEqual(
+        ["abstained", "citations", "content", "id"],
+      );
+    }
+  });
+
   it("joins a line that arrives in pieces", async () => {
     const line = `${JSON.stringify({ type: "delta", text: "Hallo Welt" })}\n`;
     const body = textStream([line.slice(0, 5), line.slice(5, 20), line.slice(20), `${JSON.stringify(DONE)}\n`]);

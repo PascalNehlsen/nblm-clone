@@ -594,6 +594,9 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 }
 .nb-head { display: grid; gap: var(--s2); justify-items: start; }
 .nb-head h1 { margin: 0; }
+/* The title with the small, rarely needed delete button next to it. */
+.nb-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); min-width: 0; }
+.nb-title h1 { min-width: 0; overflow-wrap: anywhere; }
 /* The notebook's sources as one band of their colors, drawn in on load. */
 .spectrum {
   display: flex;
@@ -629,6 +632,10 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
   border: 1px solid var(--rule-2);
 }
 .panel h2 { font-size: 1.05rem; }
+/* A panel's heading with its one action on the right. */
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s3); }
+.panel-head h2 { margin: 0; }
+button.small { min-height: 32px; padding: 0 var(--s3); font-size: 0.85rem; }
 .panel h3 {
   font-family: var(--font-ui);
   font-size: 0.85rem;
@@ -697,8 +704,7 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 .status[data-state="processing"]::before,
 .status[data-state="pending"]::before { animation: pulse 1.2s ease-in-out infinite; }
 
-.add-source { display: grid; gap: var(--s3); margin-top: var(--s5); min-width: 0; }
-.add-source h3 { margin: 0; }
+.add-source { display: grid; gap: var(--s3); min-width: 0; }
 .add-source [role="tabpanel"] { min-width: 0; }
 .add-source form { display: grid; gap: var(--s3); min-width: 0; }
 .add-source form button[type="submit"] { justify-self: stretch; }
@@ -757,8 +763,10 @@ input[type="file"]::file-selector-button:hover { border-color: var(--ink-3); }
 .members li form { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: end; }
 .members li form label { display: flex; align-items: center; gap: var(--s2); }
 .members li form select { width: auto; }
-
-.danger-zone { border-color: color-mix(in srgb, var(--danger) 25%, var(--rule-2)); display: flex; justify-content: center; }
+.members .manage li { padding-bottom: var(--s2); border-bottom: 1px solid var(--rule-2); }
+.members .manage .who { font-family: var(--font-mono); }
+.members form.share { margin-top: var(--s4); }
+.members form.share h3 { margin: 0; }
 
 dialog.confirm {
   max-width: min(30rem, calc(100vw - 2rem));
@@ -772,6 +780,10 @@ dialog.confirm {
 dialog.confirm[open] { animation: dialog-in 240ms var(--ease) backwards; }
 dialog.confirm::backdrop { background: rgb(20 15 10 / 0.5); backdrop-filter: blur(3px); animation: fade 200ms ease backwards; }
 dialog.confirm h2 { font-size: 1.4rem; }
+dialog.confirm.wide { width: min(34rem, calc(100vw - 2rem)); max-width: none; max-height: calc(100dvh - 2rem); overflow-y: auto; padding: var(--s5); }
+dialog .dialog-head { display: flex; justify-content: space-between; align-items: start; gap: var(--s3); margin-bottom: var(--s4); }
+dialog .dialog-head h2 { margin: 0; }
+dialog .dialog-head .close { min-height: 36px; padding: 0 var(--s3); font-size: 0.85rem; }
 dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s2); margin-top: var(--s4); }
 
 /* ---------- Chat: conversation and the margin ---------- */
@@ -834,6 +846,9 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 .conversation .live:empty { display: none; }
 /* A chat: your questions as bubbles on the right, answers on the left with their evidence. */
 .turn { display: grid; gap: var(--s2); animation: rise 260ms var(--ease) backwards; }
+/* A long unbroken source title in a citation chip wraps instead of widening the thread. */
+.history > *, .thread > *, .chips { min-width: 0; }
+.chip { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 .turn.q { justify-self: end; max-width: min(75%, 36rem); }
 .turn.q p {
   margin: 0;
@@ -876,6 +891,9 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   color: var(--src, var(--ink-2));
 }
 
+/* An answer replaced because it had no checked quote (ADR 0026): say why the text went away. */
+.turn.a.ungrounded .body { color: var(--ink-2); font-style: italic; }
+.turn .notice { margin: 0; padding-left: var(--s2); font-size: 0.8rem; color: var(--ink-3); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s2); padding-left: var(--s2); }
 .chip {
   justify-content: flex-start;
@@ -968,6 +986,9 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 /* The margin: where the passage behind a citation appears, marked like with a highlighter. */
 .margin {
   min-width: 0;
+  /* Long words and URLs from web sources wrap; nothing scrolls sideways. */
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
   padding: var(--s4) var(--s5);
   border-radius: var(--radius-lg);
   border: 1px dashed var(--rule);
@@ -979,6 +1000,8 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 .passage .head { display: flex; justify-content: space-between; align-items: start; gap: var(--s2); }
 .passage .close { min-height: 36px; padding: 0 var(--s3); font-size: 0.85rem; }
 .passage .src {
+  min-width: 0;
+  overflow-wrap: anywhere;
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -989,6 +1012,8 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 }
 .passage .src::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--src); }
 .passage p {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-read);
   font-size: 1rem;
   line-height: 1.7;
@@ -1012,7 +1037,7 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 .reader .meta { display: flex; align-items: center; gap: var(--s3); border: none; padding: 0; margin: 0 0 var(--s3); font-family: var(--font-ui); font-size: 0.85rem; }
 .reader .meta a { font-weight: 600; }
 .reader .text { display: grid; gap: var(--s3); padding-left: var(--s3); border-left: 3px solid var(--src); }
-.reader .text p { white-space: pre-line; margin: 0; padding: 0; border: none; font-family: var(--font-read); line-height: 1.7; }
+.reader .text p { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; margin: 0; padding: 0; border: none; font-family: var(--font-read); line-height: 1.7; }
 .reader .page { display: block; font-family: var(--font-ui); font-size: 0.75rem; font-weight: 700; color: var(--ink-3); margin-bottom: var(--s1); }
 @media (max-width: 1279px) { .reader .text { max-height: 60vh; overflow-y: auto; } }
 .reader .more, .reader .loading { border: none; padding: 0; color: var(--ink-3); font-size: 0.85rem; }
@@ -1189,6 +1214,29 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
   .floater { animation: none; }
 }
 
+/* Wide and tall enough: the notebook fills the window between top bar and footer, and rail,
+   conversation and margin are one height, each scrolling inside. No page scrollbar. Smaller
+   or short windows keep the page flow above. */
+@media (min-width: 1280px) and (min-height: 640px) {
+  body:has(.notebook) { height: 100dvh; }
+  .notebook {
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .nb-rail { min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+  .nb-rail .sources { display: flex; flex-direction: column; min-height: 0; }
+  .nb-rail .sources .list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+  .nb-rail .members { max-height: 14rem; overflow-y: auto; }
+  .chat { min-height: 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .conversation { height: auto; min-height: 0; }
+  .margin { position: static; max-height: none; min-height: 0; overflow-y: auto; }
+  .margin:not(:has(.passage)) { align-self: start; }
+  .notebook > .nb-rail > .sk-panel.tall { height: auto; }
+}
 /* ---------- Footer and legal pages ---------- */
 
 .site-footer {
@@ -1221,6 +1269,7 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 .sk-card { height: 9.5rem; }
 .sk-panel { height: 16rem; }
 .sk-panel.short { height: 8rem; }
+.sk-panel.tall { height: 20rem; }
 .sk-chat { height: min(60dvh, 32rem); }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 

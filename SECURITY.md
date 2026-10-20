@@ -14,7 +14,7 @@ How this app handles the risks of an LLM application. The rules themselves are i
 | LLM06 Excessive agency | The chat model gets no tools and can only return text |
 | LLM07 System prompt leakage | The system prompt holds no secrets; leaking it reveals only the citation rules |
 | LLM08 Vector and embedding weaknesses | `match_chunks` is security invoker, filtered by notebook and RLS, only ready sources (PR D1); embeddings are deleted with their source |
-| LLM09 Misinformation | Answers must cite exact quotes; an answer without a valid citation is replaced by the abstention sentence |
+| LLM09 Misinformation | Answers must cite exact quotes; an answer without a valid citation is replaced by a fixed sentence (abstention or ungrounded notice, ADR 0026) |
 | LLM10 Unbounded consumption | Per-user daily budget (tighter for anonymous users), global budget and kill switch before every call (ADR 0006); question at most 2,000 characters, 16 KB body, 8 chunks, 1,024 output tokens, 30 s timeout |
 
 To report a vulnerability, open a private security advisory on GitHub.

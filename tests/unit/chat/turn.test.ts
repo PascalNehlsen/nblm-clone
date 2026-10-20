@@ -2,7 +2,7 @@
 // so the cases use plain fakes. The fake chat caller imitates the model wrapper: it
 // streams deltas, then runs linkMessage and maps a throw to message_link_failed.
 import { describe, expect, it, vi } from "vitest";
-import { ABSTENTION } from "@/lib/rag/prompt";
+import { ABSTENTION, UNGROUNDED } from "@/lib/chat/abstention";
 import type { RetrievalResult, RetrievedChunk } from "@/lib/rag/retrieve";
 import { runTurn, type MessageStore, type TurnDeps, type TurnLogEvent } from "@/lib/server/chat/turn";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
@@ -100,9 +100,12 @@ describe("runTurn: zero chunks", () => {
     expect(h.saveTurn).toHaveBeenCalledWith(
       expect.objectContaining({ notebookId: NOTEBOOK_ID, answer: ABSTENTION, citations: [], answerId: ANSWER_ID }),
     );
-    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true } });
+    expect(r).toEqual({
+      ok: true,
+      message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "no_sources" },
+    });
     expect(h.logs).toHaveLength(1);
-    expect(h.logs[0]).toMatchObject({ outcome: "ok", chunks: 0, citations: 0, abstained: true });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", chunks: 0, citations: 0, abstained: true, abstention: "no_sources" });
   });
 
   it("saveTurn throwing gives db_failed", async () => {
@@ -148,26 +151,145 @@ describe("runTurn: model call", () => {
         content: `${ANSWER_SENTINEL} in Bonn [1].`,
         citations: [{ ordinal: 1, chunkId: "chunk-1", quote: "sitzt in Bonn" }],
         abstained: false,
+        abstention: null,
       },
     });
     expect(h.logs).toHaveLength(1);
-    expect(h.logs[0]).toMatchObject({ outcome: "ok", reason: null, chunks: 2, citations: 1, dropped: 0, abstained: false });
+    expect(h.logs[0]).toMatchObject({
+      outcome: "ok",
+      reason: null,
+      chunks: 2,
+      citations: 1,
+      dropped: 0,
+      abstained: false,
+      abstention: null,
+    });
   });
 
-  it("0 valid citations gives the abstention, saved without citations", async () => {
+  // Ungrounded answer (plan feat/notebook-layout, Part B, ADR 0026): the abstention sentence is
+  // reserved for "the sources have no answer"; an answer the checks threw away gets its own
+  // fixed sentence. These two cases changed from ABSTENTION to UNGROUNDED on purpose.
+  it("markers that all fail the check (dropped) give the UNGROUNDED sentence, saved without citations", async () => {
     const h = harness({ chat: { kind: "ok", deltas: ['Erfunden [1: "gibt es nicht"] und [5: "x"].'] } });
     const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
     expect(h.saveTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ answer: ABSTENTION, citations: [], answerId: ANSWER_ID }),
+      expect.objectContaining({ answer: UNGROUNDED, citations: [], answerId: ANSWER_ID }),
     );
-    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true } });
-    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, dropped: 2, abstained: true });
+    expect(r).toEqual({
+      ok: true,
+      message: { id: ANSWER_ID, content: UNGROUNDED, citations: [], abstained: true, abstention: "dropped" },
+    });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, dropped: 2, abstained: true, abstention: "dropped" });
   });
 
-  it("an answer without any marker also gives the abstention", async () => {
+  it("an answer without any marker gives the UNGROUNDED sentence (no_marker)", async () => {
     const h = harness({ chat: { kind: "ok", deltas: ["Freie Antwort ohne Beleg."] } });
     const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
-    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true } });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: UNGROUNDED, citations: [] }));
+    expect(r).toMatchObject({ ok: true, message: { content: UNGROUNDED, abstained: true, abstention: "no_marker" } });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, dropped: 0, abstained: true, abstention: "no_marker" });
+  });
+
+  it("the model writing the abstention sentence itself stays the ABSTENTION (model)", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: [ABSTENTION] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+    expect(h.logs[0]).toMatchObject({ abstained: true, abstention: "model" });
+  });
+
+  it("the abstention sentence with extra text or odd whitespace still counts as model", async () => {
+    const squashed = ABSTENTION.replace(/ /g, "  \n ");
+    for (const text of [`Hinweis: ${ABSTENTION} Mehr weiß ich nicht.`, squashed, `  ${ABSTENTION}\n`]) {
+      const h = harness({ chat: { kind: "ok", deltas: [text] } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.saveTurn, text).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+      expect(r, text).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+    }
+  });
+
+  it("the abstention sentence plus a marker that validates is still the abstention (model), without citations", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: [`${ABSTENTION} [1: "sitzt in Bonn"]`] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+    expect(r).toEqual({
+      ok: true,
+      message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "model" },
+    });
+    expect(h.logs[0]).toMatchObject({ abstained: true, abstention: "model", citations: 0 });
+  });
+
+  it("the abstention sentence without its period, a valid marker, then the punctuation is still the abstention (model)", async () => {
+    const base = ABSTENTION.slice(0, -1);
+    const marker = '[1: "sitzt in Bonn"]';
+    const variants = [
+      `${base} ${marker}.`,
+      `${base} ${marker}!`,
+      `${base}${marker}.`,
+      `${base}  ${marker} .`,
+      ` ${base} ${marker} . `,
+      `${base} ${marker} !`,
+    ];
+    for (const text of variants) {
+      const h = harness({ chat: { kind: "ok", deltas: [text] } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.saveTurn, text).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+      expect(r, text).toEqual({
+        ok: true,
+        message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "model" },
+      });
+      expect(h.logs[0], text).toMatchObject({ abstained: true, abstention: "model", citations: 0 });
+    }
+  });
+
+  it("a near-miss abstention without a marker (no final period, lower case, upper case) is model, not no_marker", async () => {
+    const base = ABSTENTION.replace(/\.$/, "");
+    for (const text of [base, ABSTENTION.toLowerCase(), ABSTENTION.toUpperCase(), base.toLowerCase(), base.toUpperCase()]) {
+      const h = harness({ chat: { kind: "ok", deltas: [text] } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.saveTurn, text).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+      expect(r, text).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+    }
+  });
+
+  it("a normal cited answer such as 'Bonn [1: ...]' stays abstention null", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: ['Bonn [1: "sitzt in Bonn"].'] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(r).toMatchObject({
+      ok: true,
+      message: {
+        content: "Bonn [1].",
+        citations: [{ ordinal: 1, chunkId: "chunk-1", quote: "sitzt in Bonn" }],
+        abstained: false,
+        abstention: null,
+      },
+    });
+  });
+
+  it("an empty answer (nothing after the echo strip) is model, not ungrounded", async () => {
+    for (const deltas of [[""], ["   \n "]]) {
+      const h = harness({ chat: { kind: "ok", deltas } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+    }
+  });
+
+  it("the abstention sentence next to an invalid marker is model: the model abstained, nothing was dropped to hide", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: [`${ABSTENTION} [9: "x"]`] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, abstained: true, abstention: "model" } });
+  });
+
+  it("a valid citation gives a normal answer: abstention null and no fixed sentence stored", async () => {
+    const h = harness({ chat: { kind: "ok", deltas: [`Sitz in Bonn [1: "sitzt in Bonn"].`] } });
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(r).toMatchObject({ ok: true, message: { abstained: false, abstention: null } });
+    expect(JSON.stringify(h.saveTurn.mock.calls)).not.toContain(UNGROUNDED);
+  });
+
+  it("UNGROUNDED and ABSTENTION are the two fixed German sentences", () => {
+    expect(ABSTENTION).toBe("Dazu finde ich in den Quellen keine Antwort.");
+    expect(UNGROUNDED).toBe("Ich konnte keine Antwort mit wörtlichen Zitaten aus den Quellen belegen.");
   });
 
   it("a refused budget saves nothing and returns the category", async () => {
@@ -243,9 +365,11 @@ describe("runTurn: logs", () => {
       expect(text).not.toContain(ANSWER_SENTINEL);
       // Extended for the fold fix: five drop-reason and folded counters were added.
       // Extended again for the echo fix (ADR 0018): echoStripped (a count) was added.
+      // Extended for the ungrounded answer (ADR 0026): abstention (a fixed enum, no text) was added.
       expect(Object.keys(h.logs[0] ?? {}).sort()).toEqual(
         [
           "abstained",
+          "abstention",
           "chunks",
           "citations",
           "citationsFolded",
@@ -261,6 +385,35 @@ describe("runTurn: logs", () => {
           "reason",
         ].sort(),
       );
+    }
+  });
+
+  it("the abstention log value is one of the fixed enum values, never text", async () => {
+    const allowed = [null, "no_sources", "model", "no_marker", "dropped"];
+    const scenarios: Harness[] = [
+      harness(),
+      harness({ retrieval: { ok: true, chunks: [], usageId: "u" } }),
+      harness({ chat: { kind: "ok", deltas: ["Freie Antwort"] } }),
+      harness({ chat: { kind: "ok", deltas: ['X [7: "y"]'] } }),
+      harness({ chat: { kind: "ok", deltas: [ABSTENTION] } }),
+      harness({ chat: { kind: "refused", category: "provider_error" } }),
+      harness({ retrieval: { ok: false, reason: "not_found" } }),
+    ];
+    for (const h of scenarios) {
+      await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(allowed).toContain(h.logs[0]?.abstention);
+    }
+  });
+
+  it("abstention is null on failure paths", async () => {
+    const failing: Harness[] = [
+      harness({ retrieval: { ok: false, reason: "not_found" } }),
+      harness({ chat: { kind: "refused", category: "budget_exceeded" } }),
+      harness({ saveThrows: true }),
+    ];
+    for (const h of failing) {
+      await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.logs[0]).toMatchObject({ outcome: "failed", abstention: null });
     }
   });
 
@@ -351,7 +504,7 @@ describe("runTurn: echoed source blocks (ADR 0018)", () => {
     const answer = "Die Price Action funktioniert durch eine Top-Down-Methode [1].";
     const citations = [{ ordinal: 1, chunkId: "chunk-1", quote: "Konsistenz in deiner eigenen Methode" }];
     expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer, citations }));
-    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: answer, citations, abstained: false } });
+    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: answer, citations, abstained: false, abstention: null } });
     const saved = JSON.stringify(h.saveTurn.mock.calls);
     expect(saved).not.toContain(ECHO_NONCE);
     expect(saved).not.toContain("<quelle");
@@ -388,8 +541,11 @@ describe("runTurn: echoed source blocks (ADR 0018)", () => {
     const h = echoHarness(text);
     const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
     expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
-    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true } });
-    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, abstained: true });
+    expect(r).toEqual({
+      ok: true,
+      message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "model" },
+    });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, abstained: true, abstention: "model" });
     expect(h.logs[0]?.echoStripped).toBeGreaterThanOrEqual(1);
   });
 
@@ -397,7 +553,7 @@ describe("runTurn: echoed source blocks (ADR 0018)", () => {
     const text = `<quelle-${ECHO_NONCE} nr="1"> Text und Antwort [1: "Konsistenz in deiner eigenen Methode"].`;
     const h = echoHarness(text);
     const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
-    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, citations: [], abstained: true } });
+    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, citations: [], abstained: true, abstention: "model" } });
   });
 
   for (const chars of [false, true]) {
@@ -471,7 +627,7 @@ describe("runTurn: <antwort> wrapper", () => {
       );
       expect(r).toEqual({
         ok: true,
-        message: { id: ANSWER_ID, content: "Text in Bonn [1].", citations, abstained: false },
+        message: { id: ANSWER_ID, content: "Text in Bonn [1].", citations, abstained: false, abstention: null },
       });
       expect(JSON.stringify(h.saveTurn.mock.calls).toLowerCase()).not.toContain("antwort>");
       const streamed = seen.join("");

@@ -6,6 +6,7 @@ import type { SourceStatus, SourceSummary } from "@/lib/sources/sources";
 import { hueFor } from "@/lib/ui/source-hue";
 import { ConfirmAction } from "@/components/confirm-action";
 import { useMargin } from "@/components/margin";
+import { useEffect } from "react";
 
 const STATUS_LABELS: Record<Exclude<SourceStatus, "failed">, string> = {
   pending: "Wartet",
@@ -32,6 +33,13 @@ export function SourceList({
   hues?: Record<string, number>;
 }) {
   const margin = useMargin();
+  // A source deleted while it is open in the reader: close the reader, the page keeps its
+  // client state across the action's redirect.
+  const openId = margin.item?.kind === "source" ? margin.item.sourceId : null;
+  const gone = openId !== null && !sources.some((source) => source.id === openId);
+  useEffect(() => {
+    if (gone) margin.open(null);
+  }, [gone]); // eslint-disable-line react-hooks/exhaustive-deps
   if (sources.length === 0) return <p>Noch keine Quellen.</p>;
   const reading = margin.item?.kind === "source" ? margin.item.sourceId : null;
   return (

@@ -10,7 +10,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { validateCitations } from "@/lib/rag/citations";
-import { ABSTENTION, buildChatInput } from "@/lib/rag/prompt";
+import { ABSTENTION, UNGROUNDED } from "@/lib/chat/abstention";
+import { buildChatInput } from "@/lib/rag/prompt";
 import type { RetrievedChunk } from "@/lib/rag/retrieve";
 import { createMarkerFilter } from "@/lib/rag/stream-filter";
 import { runTurn, type MessageStore, type TurnDeps } from "@/lib/server/chat/turn";
@@ -214,7 +215,9 @@ describe("runTurn with scripted hostile model output", () => {
       }
       expect(saved?.answer ?? "").not.toMatch(MARKER_ANYWHERE);
       if (c.expectedValid === 0) {
-        expect(saved?.answer).toBe(ABSTENTION);
+        // ADR 0026 (approved by Pascal 2026-10-21): either fixed sentence is stored, the
+        // abstention or the ungrounded notice; never anything else, never the canary.
+        expect([ABSTENTION, UNGROUNDED]).toContain(saved?.answer);
         expect(result.ok && result.message.abstained).toBe(true);
         // A model that echoes the canary without a valid citation never gets it stored or shown.
         expect(saved?.answer).not.toContain("CANARY-7Q2");

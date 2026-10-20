@@ -3,6 +3,7 @@
 // (helpers/session.ts).
 import { expect, test, type Page } from "@playwright/test";
 import { seedLocalSession } from "./helpers/session";
+import { openSourceForm } from "./helpers/dialogs";
 
 async function createNotebookViaUi(page: Page, title: string): Promise<void> {
   await page.goto("/");
@@ -60,15 +61,8 @@ test.describe("custom validation messages", () => {
     const page = await context.newPage();
     await createNotebookViaUi(page, `Validierung ${Date.now()}`);
 
-    const section = page.locator("section").filter({ has: page.getByRole("tablist", { name: "Art der Quelle" }) });
-    const tab = section
-      .getByRole("tablist", { name: "Art der Quelle" })
-      .getByRole("tab", { name: "Webseite", exact: true });
-    await tab.click();
-    await expect(tab).toHaveAttribute("aria-selected", "true");
-
-    const form = section.getByRole("tabpanel").locator("form");
-    await expect(form).toHaveCount(1);
+    // The URL form sits in the add-source dialog behind "Quelle hinzufügen".
+    const form = await openSourceForm(page, "Webseite");
     await form.getByLabel("Titel").fill("Meine Seite");
     const url = form.getByLabel("Webadresse");
     await url.fill("keine adresse");
@@ -84,6 +78,8 @@ test.describe("custom validation messages", () => {
     if (!u || !a) throw new Error("no bounding box for Webadresse input or alert");
     expect(a.y).toBeGreaterThanOrEqual(u.y + u.height - 1);
     expect(a.y - (u.y + u.height)).toBeLessThan(60);
+    // Invalid input never submits, so the dialog stays open.
+    await expect(page.getByRole("dialog")).toBeVisible();
   });
 });
 

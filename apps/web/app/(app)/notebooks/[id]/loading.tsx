@@ -7,7 +7,7 @@ export default function Loading() {
         <div className="sk sk-title" />
       </div>
       <div className="nb-rail">
-        <div className="sk sk-panel" />
+        <div className="sk sk-panel tall" />
         <div className="sk sk-panel short" />
       </div>
       <div className="chat">

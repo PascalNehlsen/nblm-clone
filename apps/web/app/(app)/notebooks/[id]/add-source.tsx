@@ -1,15 +1,37 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useFormStatus } from "react-dom";
 import { addTextSourceAction, addUrlSourceAction, createPdfUploadAction, ingestSourceAction } from "./sources/actions";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { MAX_TEXT_CHARS, MAX_URL_LENGTH } from "@/lib/sources/limits";
+import { ModalDialog, useDialog } from "@/components/modal-dialog";
+
+// Ingestion runs inline in the action, so sending takes seconds: the button shows it, and the
+// dialog closes when the action is done. A refused input comes back as ?fehler= and is shown
+// under the notebook title, outside the closed dialog.
+function SubmitButton({ children }: { children: ReactNode }) {
+  const { pending } = useFormStatus();
+  const dialog = useDialog();
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !pending) dialog?.close();
+    was.current = pending;
+  }, [pending, dialog]);
+  return (
+    <button type="submit" className="primary" disabled={pending} aria-busy={pending}>
+      {pending ? <span className="spin" aria-hidden="true" /> : null}
+      {children}
+    </button>
+  );
+}
 
 // The PDF goes from the browser straight to Storage with a signed upload URL (Vercel
 // caps request bodies at 4.5 MB); the server then checks and ingests it.
 function PdfUploadForm({ notebookId }: { notebookId: string }) {
   const router = useRouter();
+  const dialog = useDialog();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The chosen file's name in full: the native field would cut a long name down to "…".
@@ -29,15 +51,29 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
         setMessage(notebookErrorMessage(created.error));
         return;
       }
-      const upload = await fetch(created.signedUrl, {
+      // A network error rejects instead of answering; both count as a failed upload.
+      const uploaded = await fetch(created.signedUrl, {
         method: "PUT",
         headers: { "content-type": "application/pdf" },
         body: file,
-      });
-      if (!upload.ok) setMessage("Das Hochladen hat nicht geklappt.");
+      }).then(
+        (r) => r.ok,
+        () => false,
+      );
+      // Nothing reached Storage. Ingestion still runs once: it finds no file and marks the
+      // source failed (upload_missing), so the row does not keep waiting; only if that call
+      // fails too does it stay pending. The dialog stays open with the message; the failed
+      // row can be removed from the list.
+      if (!uploaded) {
+        setMessage("Das Hochladen hat nicht geklappt.");
+        await ingestSourceAction({ notebookId, sourceId: created.sourceId }).catch(() => undefined);
+        router.refresh();
+        return;
+      }
       await ingestSourceAction({ notebookId, sourceId: created.sourceId });
       form.reset();
       setFileName(null);
+      dialog?.close();
       router.refresh();
     } finally {
       setBusy(false);
@@ -60,7 +96,8 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
       <label>
         Titel <input type="text" name="title" required maxLength={200} />
       </label>{" "}
-      <button type="submit" className="primary" disabled={busy}>
+      <button type="submit" className="primary" disabled={busy} aria-busy={busy}>
+        {busy ? <span className="spin" aria-hidden="true" /> : null}
         Hochladen
       </button>
       {message ? <p role="alert">{message}</p> : null}
@@ -76,7 +113,7 @@ const KINDS = [
 type Kind = (typeof KINDS)[number]["id"];
 
 // One form at a time behind a tab switcher (WAI-ARIA tabs: arrow keys move between tabs).
-export function AddSource({ notebookId }: { notebookId: string }) {
+function AddSourceForms({ notebookId }: { notebookId: string }) {
   const [kind, setKind] = useState<Kind>("text");
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -91,7 +128,6 @@ export function AddSource({ notebookId }: { notebookId: string }) {
 
   return (
     <div className="add-source">
-      <h3>Quelle hinzufügen</h3>
       <div role="tablist" aria-label="Art der Quelle" className="tabs">
         {KINDS.map((k, i) => (
           <button
@@ -121,9 +157,7 @@ export function AddSource({ notebookId }: { notebookId: string }) {
           <label>
             Text <textarea name="text" required maxLength={MAX_TEXT_CHARS} />
           </label>{" "}
-          <button type="submit" className="primary">
-            Text hinzufügen
-          </button>
+          <SubmitButton>Text hinzufügen</SubmitButton>
         </form>
       </div>
       <div role="tabpanel" id="panel-pdf" aria-labelledby="tab-pdf" hidden={kind !== "pdf"}>
@@ -138,11 +172,17 @@ export function AddSource({ notebookId }: { notebookId: string }) {
           <label>
             Webadresse <input type="url" name="url" required maxLength={MAX_URL_LENGTH} />
           </label>{" "}
-          <button type="submit" className="primary">
-            Seite hinzufügen
-          </button>
+          <SubmitButton>Seite hinzufügen</SubmitButton>
         </form>
       </div>
     </div>
+  );
+}
+
+export function AddSource({ notebookId }: { notebookId: string }) {
+  return (
+    <ModalDialog trigger="Quelle hinzufügen" triggerClassName="small" title="Quelle hinzufügen" wide>
+      <AddSourceForms notebookId={notebookId} />
+    </ModalDialog>
   );
 }

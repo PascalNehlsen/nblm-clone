@@ -14,6 +14,7 @@ const MESSAGE: TurnMessage = {
   content: "In Bonn [1].",
   citations: [{ ordinal: 1, chunkId: "chunk-1", quote: "in Bonn" }],
   abstained: false,
+  abstention: null,
 };
 
 function req(opts: { method?: string; headers?: Record<string, string>; body?: string | null } = {}): Request {

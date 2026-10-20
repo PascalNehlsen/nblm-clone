@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type FormEvent } from "react";
+import { UNGROUNDED } from "@/lib/chat/abstention";
 import type { HistoryCitation, HistoryEntry } from "@/lib/chat/history";
 import { readChatEvents } from "@/lib/chat/ndjson";
 import { spacerHeight } from "@/lib/chat/scroll";
@@ -81,8 +82,9 @@ function Entry({
   onToggle: (ordinal: number, chip: HTMLButtonElement) => void;
 }) {
   const isUser = entry.role === "user";
+  const ungrounded = !isUser && entry.content === UNGROUNDED;
   return (
-    <li className={isUser ? "turn q" : "turn a"}>
+    <li className={isUser ? "turn q" : ungrounded ? "turn a ungrounded" : "turn a"}>
       <span className="who sr-only">{isUser ? "Frage" : "Antwort"}</span>
       {isUser ? (
         <p>{entry.content}</p>
@@ -91,6 +93,7 @@ function Entry({
           <AnswerText entry={entry} hues={hues} />
         </p>
       )}
+      {ungrounded ? <p className="notice">Ohne geprüfte Belege verworfen.</p> : null}
       {entry.citations.length > 0 ? (
         <div className="chips">
           {entry.citations.map((c) => (
@@ -331,9 +334,13 @@ setSource(
               </div>
             ) : null}
             {turn.checked ? (
-              <div className="turn a arrived">
+              <div className={turn.checked.content === UNGROUNDED ? "turn a arrived ungrounded" : "turn a arrived"}>
                 <span className="who sr-only">Antwort</span>
                 <p className="body">{turn.checked.content}</p>
+                {/* The streamed preview vanished: say why, instead of a silent switch (ADR 0026). */}
+                {turn.checked.content === UNGROUNDED ? (
+                  <p className="notice">Der zuerst angezeigte Text wurde verworfen, weil er keine geprüften Belege enthielt.</p>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -11,6 +11,7 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { seedLocalSessionWithClient, type SeededSession } from "./helpers/session";
+import { shareViaDialog } from "./helpers/dialogs";
 import type { SignedInUser } from "../rls/helpers/clients";
 import {
   createSource,
@@ -592,10 +593,7 @@ test.describe("a viewer", () => {
     )![0];
 
     await page.goto(url);
-    await page.getByLabel("Nutzer-ID").fill(viewerId);
-    await page.getByLabel("Rolle").selectOption({ label: "Betrachter" });
-    await page.getByRole("button", { name: "Teilen" }).click();
-    await expect(page.getByText(viewerId.slice(0, 8))).toBeVisible();
+    await shareViaDialog(page, viewerId, "Betrachter");
 
     await viewerPage.goto(url);
     const section = chatSection(viewerPage);
