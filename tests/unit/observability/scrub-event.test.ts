@@ -146,10 +146,12 @@ describe("scrubEvent: nothing user-supplied survives", () => {
     }
   });
 
-  it("keeps no request field except the path-only url (and method)", async () => {
+  it("keeps no request field at all", async () => {
     const { scrubEvent } = await load();
-    const request = (scrubEvent(dirtyEvent()) as { request?: Ev }).request ?? {};
-    for (const key of ["data", "cookies", "headers", "query_string", "env"]) {
+    const out = scrubEvent(dirtyEvent())!;
+    expect(out).not.toHaveProperty("request");
+    const request = (out as { request?: Ev }).request ?? {};
+    for (const key of ["url", "method", "data", "cookies", "headers", "query_string", "env"]) {
       expect(request, key).not.toHaveProperty(key);
     }
   });
@@ -232,10 +234,27 @@ describe("scrubEvent: positive control (technical data survives)", () => {
     }
   });
 
-  it("reduces request.url to the path, without origin, query or fragment", async () => {
+  // EXPECTATION FLIPPED with the approved fix on PR #62: this test used to expect request.url
+  // reduced to its path. Events now carry no path or URL at all, so scrubEvent drops `request`
+  // entirely (defence in depth, independent of which Sentry integrations run).
+  it("drops the request key entirely (no url path, no method)", async () => {
     const { scrubEvent } = await load();
-    const out = scrubEvent(dirtyEvent()) as { request: { url: string } };
-    expect(out.request.url).toBe("/notebooks/abc/chat");
+    const out = scrubEvent(dirtyEvent())!;
+    expect(out).not.toHaveProperty("request");
+  });
+
+  it("drops a sentinel in the request.url path and in request.method", async () => {
+    const { scrubEvent } = await load();
+    const event = dirtyEvent();
+    event.request = {
+      url: "https://a.example/SENTINEL/p",
+      method: "SENTINEL-METHOD",
+    };
+    const out = scrubEvent(event)!;
+    expect(out).not.toHaveProperty("request");
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("SENTINEL");
+    expect(json).not.toContain("a.example");
   });
 
   it("keeps the runtime tag and technical runtime/os/browser version fields", async () => {

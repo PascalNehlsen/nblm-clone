@@ -49,15 +49,6 @@ function frames(stacktrace: unknown): Json | undefined {
   };
 }
 
-function path(url: unknown): string | undefined {
-  if (typeof url !== "string") return undefined;
-  try {
-    return new URL(url, "http://localhost").pathname;
-  } catch {
-    return undefined;
-  }
-}
-
 // Allowlist: build a new event from known technical fields; never copy the input.
 export function scrubEvent<E>(event: E): E {
   const e = (isObject(event) ? event : {}) as Json;
@@ -78,13 +69,6 @@ export function scrubEvent<E>(event: E): E {
         return value;
       }),
     };
-  }
-  if (isObject(e.request)) {
-    const request: Json = {};
-    const p = path(e.request.url);
-    if (p) request.url = p;
-    if (typeof e.request.method === "string") request.method = e.request.method;
-    out.request = request;
   }
   if (isObject(e.contexts)) {
     const contexts: Json = {};
@@ -121,7 +105,8 @@ const INTEGRATIONS = new Set([
   "OnUnhandledRejection",
   "Context",
   "NodeSystemError",
-  // Next.js stack frame normalization (browser; the server one needs the build plugin, unused).
+  // Next.js stack frame normalization: the client one is active; the server one (DistDir...)
+  // stays inactive without the build plugin, which this app does not use.
   "NextjsClientStackFrameNormalization",
   "DistDirRewriteFrames",
 ]);
