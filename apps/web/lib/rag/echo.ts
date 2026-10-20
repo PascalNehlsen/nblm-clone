@@ -11,7 +11,9 @@ import "server-only";
 // Bounded so the longest possible tag fits in the stream filter's hold (HOLD_MAX = 96).
 export const OPEN_TAG = /<(quelle|frage)-([0-9a-z]{1,32})(?:\s[^<>]{0,24})?>/iy;
 export const CLOSE_TAG = /<\/(quelle|frage)-[0-9a-z]{0,32}\s{0,8}>/iy;
-const MAX_PASSES = 3;
+// Every productive pass shrinks the text, so a few passes are enough in practice; the cap
+// only bounds adversarial chains (ADR 0018 names what a hit cap can leave behind).
+const MAX_PASSES = 8;
 
 export function asciiLower(s: string): string {
   return s.replace(/[A-Z]/g, (c) => c.toLowerCase());

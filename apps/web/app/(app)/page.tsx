@@ -4,7 +4,7 @@ import { createNotebookAction } from "./notebooks/actions";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { listNotebooks } from "@/lib/notebooks/notebooks";
 import { ROLE_LABELS } from "@/lib/notebooks/roles";
-import { createClient } from "@/lib/supabase/server";
+import { getVerifiedUser } from "@/lib/supabase/server";
 import { assignHues } from "@/lib/ui/source-hue";
 
 export default async function Home({
@@ -12,10 +12,9 @@ export default async function Home({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const supabase = await createClient();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect("/login");
-  const notebooks = await listNotebooks(supabase, data.user.id);
+  const { supabase, user } = await getVerifiedUser();
+  if (!user) redirect("/login");
+  const notebooks = await listNotebooks(supabase, user.id);
   const params = (await searchParams) ?? {};
   const hues = assignHues(notebooks.map((notebook) => notebook.id));
 
@@ -41,7 +40,7 @@ export default async function Home({
         </ul>
       )}
       {/* Demo users have exactly one notebook (ADR 0012); a second one would be refused. */}
-      {data.user.is_anonymous ? null : (
+      {user.is_anonymous ? null : (
         <form action={createNotebookAction} className="new-book">
           <h2>Neues Notizbuch</h2>
           <div className="row">

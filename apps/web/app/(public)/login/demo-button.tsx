@@ -93,8 +93,15 @@ export function DemoButton({ siteKey }: { siteKey: string | null }) {
 
   return (
     <div className="demo">
-      <button type="button" onClick={onClick} disabled={busy}>
-        Demo starten (ohne Anmeldung)
+      <button type="button" onClick={onClick} disabled={busy} aria-busy={busy}>
+        {busy ? (
+          <>
+            <span className="spin" aria-hidden="true" />
+            Demo wird vorbereitet …
+          </>
+        ) : (
+          "Demo starten (ohne Anmeldung)"
+        )}
       </button>
       <p>Die Demo-Daten werden nach 24 Stunden gelöscht.</p>
       <div ref={widget} className="widget" />

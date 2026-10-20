@@ -8,10 +8,10 @@ import { SourceList } from "./source-list";
 import { listHistory } from "@/lib/chat/history";
 import { notebookErrorMessage } from "@/lib/notebooks/errors";
 import { listMembers } from "@/lib/notebooks/members";
-import { getNotebook } from "@/lib/notebooks/notebooks";
 import { isUuid } from "@/lib/notebooks/roles";
 import { listSources } from "@/lib/sources/sources";
-import { createClient } from "@/lib/supabase/server";
+import { getVerifiedUser } from "@/lib/supabase/server";
+import { getNotebookForUser } from "./access";
 import { assignHues } from "@/lib/ui/source-hue";
 import Link from "next/link";
 
@@ -32,24 +32,26 @@ export default async function NotebookPage({
   if (!isUuid(id)) notFound();
 
   // Checked here too, not only in the layout (ADR 0005).
-  const supabase = await createClient();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect("/login");
+  const { supabase, user } = await getVerifiedUser();
+  if (!user) redirect("/login");
 
-  const notebook = await getNotebook(supabase, id, data.user.id);
-  if (!notebook) notFound();
-  const members = await listMembers(supabase, id);
-  const sources = await listSources(supabase, id);
+  // In parallel, not one round trip after another; RLS decides what each query may see.
+  // The notebook itself comes from the layout's cached check (no second query).
   // A failing history query must not take the notebook page down.
-  let history: Awaited<ReturnType<typeof listHistory>> = [];
-  let historyFailed = false;
-  try {
-    history = await listHistory(supabase, id);
-  } catch {
-    historyFailed = true;
-  }
+  const [{ notebook }, members, sources, historyResult] = await Promise.all([
+    getNotebookForUser(id),
+    listMembers(supabase, id),
+    listSources(supabase, id),
+    listHistory(supabase, id).then(
+      (entries) => ({ ok: true as const, entries }),
+      () => ({ ok: false as const }),
+    ),
+  ]);
+  if (!notebook) notFound();
+  const history = historyResult.ok ? historyResult.entries : [];
+  const historyFailed = !historyResult.ok;
   const canEditSources =
-    (notebook.role === "owner" || notebook.role === "editor") && !(data.user.is_anonymous ?? false);
+    (notebook.role === "owner" || notebook.role === "editor") && !(user.is_anonymous ?? false);
 
   const hues = assignHues(sources.map((source) => source.title));
 
@@ -78,12 +80,12 @@ export default async function NotebookPage({
         </section>
         <MemberList
           members={members}
-          currentUserId={data.user.id}
+          currentUserId={user.id}
           myRole={notebook.role}
           notebookId={notebook.id}
-          isAnonymous={data.user.is_anonymous ?? false}
+          isAnonymous={user.is_anonymous ?? false}
         />
-        {notebook.role === "owner" && !data.user.is_anonymous ? (
+        {notebook.role === "owner" && !user.is_anonymous ? (
           <DeleteNotebook notebookId={notebook.id} title={notebook.title} />
         ) : null}
       </aside>

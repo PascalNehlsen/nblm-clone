@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { FormValidation } from "@/components/form-validation";
+import { NavProgress } from "@/components/nav-progress";
 import { PointerLight } from "@/components/pointer-light";
 import "./globals.css";
 
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
       <body>
+        <NavProgress />
         <a className="skip" href="#inhalt">
           Zum Inhalt springen
         </a>

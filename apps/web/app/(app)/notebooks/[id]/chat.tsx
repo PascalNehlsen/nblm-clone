@@ -131,6 +131,7 @@ export function Chat({
 }) {
   const router = useRouter();
   const margin = useMargin();
+
   const opened: Opened = margin.item?.kind === "cite" ? { entryId: margin.item.entryId, ordinal: margin.item.ordinal } : null;
   const reading = margin.item?.kind === "source" ? margin.item : null;
   const setOpened = (next: Opened) => margin.open(next ? { kind: "cite", ...next } : null);
@@ -195,6 +196,15 @@ setSource(
   }, [margin.item]); // eslint-disable-line react-hooks/exhaustive-deps
   const [question, setQuestion] = useState("");
   const [turn, dispatch] = useReducer(turnReducer, INITIAL_TURN);
+  // The chat follows the newest message: the thread and the live answer scroll to their end
+  // whenever the history, the asked question or the streamed text changes.
+  const thread = useRef<HTMLOListElement | null>(null);
+  const live = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    for (const el of [thread.current, live.current]) {
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [initialHistory.length, turn.asked, turn.pending, turn.checked, turn.busy]);
 
   // The checked answer stays until the server-rendered history contains it.
   useEffect(() => {
@@ -256,7 +266,7 @@ setSource(
             Fundstelle im Original.
           </p>
         ) : null}
-        <ol className="thread">
+        <ol className="thread" ref={thread}>
           {initialHistory.map((entry) => (
             <Entry
               key={entry.id}
@@ -277,7 +287,7 @@ setSource(
           ) : null}
         </ol>
         {/* Always mounted, so screen readers announce the first streamed text too. */}
-        <div aria-live="polite">
+        <div aria-live="polite" className="live" ref={live}>
           {turn.busy && !turn.pending && !turn.checked ? (
             <div className="thinking">
               <span className="sr-only">Antwort wird geschrieben</span>
