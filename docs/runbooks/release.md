@@ -1,6 +1,6 @@
 # Runbook: release to production
 
-- Last rehearsed: 2026-10-19, v1.0.0 (run 39296468707): the first run applied 8 migrations and stopped at the staged smoke test (anonymous sign-ins off) as planned; after model features and anonymous sign-ins were turned on, the rerun went through smoke test, canary (4 of 4), promote and live check. A signed annotated tag gives the commit SHA, so both gates work with `git tag -s`
+- Last rehearsed: 2026-10-20, v1.0.2 (run 39388916484), one run, canary and live smoke green. Earlier: 2026-10-19, v1.0.1 (run 39303166217); 2026-10-19, v1.0.0 (run 39296468707): the first run applied 8 migrations and stopped at the staged smoke test (anonymous sign-ins off) as planned; after model features and anonymous sign-ins were turned on, the rerun went through smoke test, canary (4 of 4), promote and live check. A signed annotated tag gives the commit SHA, so both gates work with `git tag -s`
 - Who: the human creates the tag and approves the `production` environment; CI does the rest (`.github/workflows/release.yml`, ADR 0015; canary ADR 0014). Nobody deploys or migrates production locally
 - What: tag on main, green on develop, then migrations, a deployment without the domain, smoke test and canary against exactly that deployment, promote to `app.sec-nblm.dev`, live smoke test, automatic promote of the previous deployment if the live check fails
 

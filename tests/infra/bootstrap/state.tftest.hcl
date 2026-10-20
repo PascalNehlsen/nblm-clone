@@ -116,10 +116,11 @@ run "every_s3_bucket_sub_resource_targets_the_state_bucket" {
 
 # P1 fix from the Codex review: the plan role no longer trusts every
 # pull_request run (anyone who can push a branch, the sandbox included, could
-# otherwise run arbitrary code with it). It now trusts only the GitHub
-# environment "plan", which has a required reviewer, like the apply role's
-# "infra".
-run "plan_role_trust_is_scoped_to_the_plan_environment_on_the_immutable_subject" {
+# otherwise run arbitrary code with it). It now trusts only two GitHub
+# environments: "plan", which has a required reviewer (like the apply role's
+# "infra"), and "drift" (nightly drift check, ADR 0024), which has no required
+# reviewer and is restricted to the main branch only.
+run "plan_role_trust_is_scoped_to_the_plan_and_drift_environments_on_the_immutable_subject" {
   command = plan
 
   override_resource {
@@ -134,9 +135,72 @@ run "plan_role_trust_is_scoped_to_the_plan_environment_on_the_immutable_subject"
     error_message = "tofu_plan must trust exactly the GitHub OIDC provider"
   }
 
+  # ADR 0024: exactly two subjects, the plan environment and the drift
+  # environment, both on the immutable id-based prefix. Order-insensitive.
   assert {
-    condition     = jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:plan"
-    error_message = "tofu_plan must trust only the plan environment subject on the immutable repo id, not every pull_request run"
+    condition = toset(flatten([
+      jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]
+      ])) == toset([
+      "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:plan",
+      "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:drift",
+    ])
+    error_message = "tofu_plan must trust exactly the plan and drift environment subjects on the immutable repo id, not every pull_request run"
+  }
+
+  assert {
+    condition     = length(flatten([jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]])) == 2
+    error_message = "tofu_plan must list exactly two sub values, no duplicates or extras"
+  }
+
+  assert {
+    condition     = alltrue([for s in flatten([jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]]) : startswith(s, "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:")])
+    error_message = "every tofu_plan sub must keep the immutable id-based prefix"
+  }
+
+  assert {
+    condition     = !contains(keys(jsondecode(aws_iam_role.tofu_plan.assume_role_policy).Statement[0].Condition), "StringLike")
+    error_message = "tofu_plan trust must use StringEquals only, no StringLike wildcard"
+  }
+}
+
+run "plan_budgets_read_policy_targets_the_plan_role_and_allows_only_two_budget_reads" {
+  command = plan
+
+  override_resource {
+    target = aws_iam_role.tofu_plan
+    values = {
+      id = "nblm-tofu-plan"
+    }
+  }
+
+  assert {
+    condition     = aws_iam_role_policy.tofu_plan_budgets_read.role == aws_iam_role.tofu_plan.id
+    error_message = "tofu_plan_budgets_read must be attached to the plan role"
+  }
+
+  assert {
+    condition     = aws_iam_role.tofu_plan.name == "nblm-tofu-plan"
+    error_message = "the role the budgets-read policy is attached to must be nblm-tofu-plan"
+  }
+
+  assert {
+    condition     = length(jsondecode(aws_iam_role_policy.tofu_plan_budgets_read.policy).Statement) == 1
+    error_message = "tofu_plan_budgets_read must have exactly one statement"
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.tofu_plan_budgets_read.policy).Statement[0].Effect == "Allow"
+    error_message = "tofu_plan_budgets_read must be an Allow statement"
+  }
+
+  assert {
+    condition     = toset(flatten([jsondecode(aws_iam_role_policy.tofu_plan_budgets_read.policy).Statement[0].Action])) == toset(["budgets:ViewBudget", "budgets:ListTagsForResource"])
+    error_message = "tofu_plan_budgets_read must allow exactly budgets:ViewBudget and budgets:ListTagsForResource"
+  }
+
+  assert {
+    condition     = toset(flatten([jsondecode(aws_iam_role_policy.tofu_plan_budgets_read.policy).Statement[0].Resource])) == toset(["arn:aws:budgets::278311879197:budget/*"])
+    error_message = "tofu_plan_budgets_read must be scoped to budget/* in account 278311879197"
   }
 }
 

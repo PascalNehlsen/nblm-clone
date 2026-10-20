@@ -11,10 +11,10 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# Plan for pull requests: config reads (SecurityAudit) and state reads, no writes.
-# Trusts only jobs in the GitHub environment `plan` (required reviewer), never
-# plain pull_request runs: anyone who can push a branch, agents included, could
-# otherwise run their own code with this role through CI.
+# Plan for pull requests and the nightly drift check: config reads (SecurityAudit) and state
+# reads, no writes. Trusts only jobs in the GitHub environments `plan` (required reviewer) and
+# `drift` (no reviewer, main only, ADR 0024), never plain pull_request runs: anyone who can
+# push a branch, agents included, could otherwise run their own code with this role through CI.
 resource "aws_iam_role" "tofu_plan" {
   name                 = "nblm-tofu-plan"
   max_session_duration = 3600
@@ -34,6 +34,16 @@ resource "aws_iam_role_policy" "tofu_plan_state_read" {
   policy = templatefile("${path.module}/policies/plan-state-read.json.tftpl", {
     bucket_arn = aws_s3_bucket.state.arn
     key_arn    = aws_kms_key.state.arn
+  })
+}
+
+# SecurityAudit does not cover reading the AWS budget (infra/aws/budget.tf), which every plan
+# after the first apply refreshes.
+resource "aws_iam_role_policy" "tofu_plan_budgets_read" {
+  name = "budgets-read"
+  role = aws_iam_role.tofu_plan.id
+  policy = templatefile("${path.module}/policies/plan-budgets-read.json.tftpl", {
+    account_id = local.account_id
   })
 }
 

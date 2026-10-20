@@ -1,0 +1,6 @@
+# Accepted IaC scan findings (trivy config, CI job "iac scan (trivy)"). AGENTS.md: a scanner is
+# never weakened to pass; a false positive or an accepted risk gets an entry here with the
+# finding id, the paths it applies to, why, and an expiry at most 90 days ahead. Trivy reports
+# an expired entry again. tests/ci/trivy-ignore.test.mjs checks the shape. Empty today: the
+# first scan of infra/ (2026-10-20, trivy 0.75.0, HIGH and CRITICAL) found nothing.
+misconfigurations: []

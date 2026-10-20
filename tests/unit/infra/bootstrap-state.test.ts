@@ -80,6 +80,7 @@ const TEMPLATES = [
   "policies/trust-github-plan.json.tftpl",
   "policies/trust-github-apply.json.tftpl",
   "policies/plan-state-read.json.tftpl",
+  "policies/plan-budgets-read.json.tftpl",
   "policies/apply-guard.json.tftpl",
   "policies/kms-state-key.json.tftpl",
   "policies/state-bucket.json.tftpl",
@@ -110,7 +111,8 @@ describe("infra/bootstrap policy templates: well-formed JSON documents", () => {
   });
 });
 
-function expectTrustPolicy(relativePath: string, expectedSub: string) {
+function expectTrustPolicy(relativePath: string, expectedSubs: string | string[]) {
+  const expectedList = Array.isArray(expectedSubs) ? expectedSubs : [expectedSubs];
   const policy = readPolicyTemplate(relativePath);
   expect(policy.Statement).toHaveLength(1);
   const statement = policy.Statement[0];
@@ -139,18 +141,24 @@ function expectTrustPolicy(relativePath: string, expectedSub: string) {
   const sub = toArray(stringEquals["token.actions.githubusercontent.com:sub"] as string | string[] | undefined);
 
   expect(aud).toEqual(["sts.amazonaws.com"]);
-  expect(sub).toEqual([expectedSub]);
+  // Exactly the expected subjects (order free), no more: the plan role now
+  // takes two (plan and drift), the apply role still one.
+  expect([...sub].sort()).toEqual([...expectedList].sort());
   for (const value of [...aud, ...sub]) expectNoWildcard(value, "condition value");
 
-  expect(sub[0]).not.toContain(MUTABLE_SUBJECT_PREFIX);
+  for (const s of sub) {
+    expect(s).not.toContain(MUTABLE_SUBJECT_PREFIX);
 
-  // P1 review fix: neither role may trust a plain pull_request run or a
-  // branch/tag ref (anyone who can push one, including the sandbox, could
-  // then run arbitrary code with that role). Both must be scoped to a GitHub
-  // environment, which has a required reviewer.
-  expect(sub[0], "must not trust every pull_request run").not.toContain(":pull_request");
-  expect(sub[0], "must not trust a branch or tag ref").not.toContain(":ref:");
-  expect(sub[0], "must be scoped to a GitHub environment").toMatch(/:environment:[a-z-]+$/);
+    // P1 review fix: neither role may trust a plain pull_request run or a
+    // branch/tag ref (anyone who can push one, including the sandbox, could
+    // then run arbitrary code with that role). Every trusted subject must be
+    // scoped to a GitHub environment. Not every environment has a required
+    // reviewer: `plan` and `infra` do, `drift` has none and is restricted to
+    // the main branch only (ADR 0024).
+    expect(s, "must not trust every pull_request run").not.toContain(":pull_request");
+    expect(s, "must not trust a branch or tag ref").not.toContain(":ref:");
+    expect(s, "must be scoped to a GitHub environment").toMatch(/:environment:[a-z-]+$/);
+  }
 
   const raw = JSON.stringify(policy);
   expect(raw).not.toContain("StringLike");
@@ -158,9 +166,58 @@ function expectTrustPolicy(relativePath: string, expectedSub: string) {
   expect(raw).not.toContain("ForAllValues");
 }
 
+// Drift detection (nightly plan, .github/workflows/drift.yml) runs in the GitHub
+// environment `drift` and assumes the same read-only plan role.
+const DRIFT_SUBJECT = "repo:PascalNehlsen@164803589/nblm-clone@1421836505:environment:drift";
+
 describe("infra/bootstrap/policies/trust-github-plan.json.tftpl", () => {
-  it("trusts the GitHub OIDC provider for the plan environment only, on the immutable repo subject", () => {
-    expectTrustPolicy("policies/trust-github-plan.json.tftpl", PLAN_SUBJECT);
+  it("trusts the GitHub OIDC provider for exactly the plan and drift environments, on the immutable repo subject, with StringEquals", () => {
+    expectTrustPolicy("policies/trust-github-plan.json.tftpl", [PLAN_SUBJECT, DRIFT_SUBJECT]);
+  });
+
+  it("the drift subject differs from the plan subject only in the environment name, and the apply subject is not trusted", () => {
+    expect(DRIFT_SUBJECT.replace(/:environment:drift$/, ":environment:plan")).toBe(PLAN_SUBJECT);
+    const raw = readBootstrapFile("policies/trust-github-plan.json.tftpl");
+    expect(raw).not.toContain(":environment:infra");
+  });
+});
+
+describe("infra/bootstrap: the plan role's budgets read (drift plan of the aws stack reads the budget)", () => {
+  const TEMPLATE = "policies/plan-budgets-read.json.tftpl";
+
+  it("aws_iam_role_policy.tofu_plan_budgets_read renders policies/plan-budgets-read.json.tftpl for the plan role, with the workload account id", () => {
+    const policy = resourceBlock("aws_iam_role_policy", "tofu_plan_budgets_read");
+    expect(policy, "expected aws_iam_role_policy.tofu_plan_budgets_read").toBeDefined();
+    expect(policy?.body ?? "").toContain(TEMPLATE);
+    expect(policy?.body ?? "").toMatch(/role\s*=\s*aws_iam_role\.tofu_plan\.id/);
+    expect(policy?.body ?? "").toMatch(/account_id\s*=\s*(local\.account_id|"278311879197")/);
+    expect(policy?.body ?? "").not.toMatch(/provider\s*=\s*aws\.management/);
+  });
+
+  it("is a well-formed document with one Allow statement for exactly budgets:ViewBudget and budgets:ListTagsForResource on budget/* of the workload account", () => {
+    const policy = readPolicyTemplate(TEMPLATE);
+    expect(policy.Version).toBe("2012-10-17");
+    expect(policy.Statement).toHaveLength(1);
+    const statement = policy.Statement[0];
+    expect(statement?.Effect).toBe("Allow");
+    expect(typeof statement?.Sid).toBe("string");
+    expect([...toArray(statement?.Action)].sort()).toEqual(["budgets:ListTagsForResource", "budgets:ViewBudget"]);
+    const resources = toArray(statement?.Resource);
+    expect(resources).toHaveLength(1);
+    expect(resources[0]).toMatch(/^arn:aws:budgets::(\$\{account_id\}|278311879197):budget\/\*$/);
+    expect(statement?.Condition).toBeUndefined();
+    expect(statement?.Principal).toBeUndefined();
+  });
+
+  it("grants no write action and no wildcard action", () => {
+    const actions = readPolicyTemplate(TEMPLATE)
+      .Statement.filter((s) => s.Effect === "Allow")
+      .flatMap((s) => toArray(s.Action));
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      expect(action).not.toMatch(/[*?]/);
+      expect(action).not.toMatch(/^budgets:(Create|Update|Delete|Modify|Tag|Untag|Execute)/);
+    }
   });
 });
 

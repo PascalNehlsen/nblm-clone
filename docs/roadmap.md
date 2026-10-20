@@ -15,16 +15,21 @@ The goal is a small app built the way a production platform should be: a demo th
 - Small ops page: ingestion errors by category, cost per day, p95 latency, latest eval score
 
 **Platform**
-- RLS matrix (owner, editor, viewer, stranger, anon) with real JWTs, catalog checks for bypasses, a repro kit
-- OpenTofu stacks: bootstrap (encrypted state, OIDC), AWS (organization with guardrails), Cloudflare (DNS), GitHub (rulesets, environments)
+- RLS matrix (owner, editor, viewer, stranger, anon) with real JWTs, catalog checks for bypasses
+- OpenTofu stacks: bootstrap (encrypted state, OIDC), AWS (organization with guardrails, cost budget alarm), Cloudflare (DNS). GitHub rulesets and environments are created by hand and documented
 - Plan in the PR, apply in CI with approval, plan guard against destroys, nightly drift check
 - Environments: preview (per PR, no AWS access), develop (`main`, the second Vercel project `nblm-web-develop`), production (release tag with approval, Vercel project `nblm-web`); ADR 0009
 - Release: migrations first, staged production deploy, smoke test and canary question against the exact artifact, promote, automatic rollback
 - Eval harness: facts, abstention and prompt-injection cases; security cases are a hard gate
-- CI: secret scan, workflow audit, dependency review, IaC and image scan, CodeQL, Codex review
-- Runbooks, ADRs, a game day with a real postmortem
+- CI: secret scan, workflow audit (offline and online), dependency review, IaC scan (trivy), CodeQL (JS/TS, Actions). Image scan: not applicable, nothing ships as a container image. Codex review: run by hand by the host session per PR
+- Runbooks, ADRs, a game day with a real postmortem (after the v1.0.3 release)
+- Ops page and Sentry error tracking (EU), account deletion
 
 ## v1.1
+
+- GitHub rulesets and environments as code (infra/github)
+- Codex review as a CI job
+- RLS repro kit (a script that reproduces a reported isolation bug with real tokens)
 
 - Hardened EC2 worker (no inbound ports, SSM instead of SSH, IMDSv2, Ansible hardening checked in CI)
 - Audio overview on the worker: two voices discuss the sources

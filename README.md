@@ -15,12 +15,12 @@ Upload sources (PDF, text, URL) into a notebook, ask questions, and get answers 
 | App | Next.js on Vercel (Frankfurt) |
 | Data | Supabase in Frankfurt: Postgres with pgvector, Auth, private Storage, row level security on every table |
 | AI | AWS Bedrock in the EU, reached through OIDC without stored keys |
-| Infrastructure | OpenTofu: AWS organization, Cloudflare DNS, GitHub rulesets and environments |
+| Infrastructure | OpenTofu: AWS organization, Cloudflare DNS, AWS cost budget, nightly drift check; GitHub rulesets and environments are set by hand and documented (as code in v1.1) |
 | Delivery | GitHub Actions: plan in the PR, apply and deploy only from CI, staged production deploy with automatic rollback |
 
 ## How AI agents are used
 
-Claude Code writes most of the code; Codex reviews every PR. What limits them, and how to check it: [`docs/ai-workflow.md`](docs/ai-workflow.md). Rules for agents and humans: [`AGENTS.md`](AGENTS.md).
+Claude Code writes most of the code; Codex reviews every PR (run by hand by the host session until the CI job exists, v1.1). What limits them, and how to check it: [`docs/ai-workflow.md`](docs/ai-workflow.md). Rules for agents and humans: [`AGENTS.md`](AGENTS.md).
 
 ## Run locally
 
