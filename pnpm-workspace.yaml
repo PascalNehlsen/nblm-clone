@@ -10,3 +10,6 @@ allowBuilds:
   # postinstall; pnpm installs that binary as an optional package. `vercel deploy` builds
   # remotely and does not run esbuild on the runner.
   esbuild: false
+  # @sentry/cli (via @sentry/nextjs) downloads its binary in postinstall; it is only used to
+  # upload source maps, which this app does not do (ADR 0022). Pascal, 2026-10-20.
+  "@sentry/cli": false

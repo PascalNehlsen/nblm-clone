@@ -13,7 +13,9 @@ Personal data the app stores, where it lives, and how long. Every new data proce
 | GitHub (OAuth identity provider) | GitHub, outside the EU | On GitHub login: GitHub learns that the user signs in to the app; the app receives the GitHub user id, name, avatar URL and email from GitHub through Supabase Auth. Separate OAuth apps for develop and production |
 | Cloudflare Turnstile (bot check for the demo login) | Cloudflare, global network, outside the EU | Only for visitors who click "Demo starten": the Turnstile script loads after the click and Cloudflare receives the IP address and browser signals to decide whether a person is there. Supabase Auth sends the resulting token (and, as Turnstile verification allows, the visitor's IP address) to Cloudflare for verification. GitHub-login visitors never reach Cloudflare. Accepted by Pascal on 2026-10-19 as an exception to EU residency (ADR 0012) |
 
-Further processors (Sentry EU) are added with the PRs that introduce them.
+| Sentry (error tracking, Functional Software, Inc.) | EU data region (Frankfurt): the SDK starts only for a DSN whose host is `o<id>.ingest.de.sentry.io` (checked in code, `lib/observability/sentry-options.ts`); the CSP allows exactly that host | Unexpected server and browser errors: error type, stack frame locations (file, function, line), request path without query, runtime, OS and browser name and version, release and environment. An allowlist drops everything else before sending: exception messages, request bodies, headers, cookies, query strings, user, extra data, breadcrumbs. No tracing, replay or console capture. The browser connection reveals the visitor's IP address to Sentry; IP storage is turned off in the project settings (configuration, not checked in code). Retention 30 days (Developer plan). Off where no DSN is set (local, CI, previews). ADR 0022 |
+
+Further processors are added with the PRs that introduce them.
 
 Cloudflare DNS and Registrar for `sec-nblm.dev` are not processors of user data: the records point to Vercel and are not proxied, so Cloudflare sees DNS lookups (as any resolver chain does) but no app traffic (infra/cloudflare).
 

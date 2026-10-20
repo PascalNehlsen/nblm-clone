@@ -21,6 +21,8 @@ export default defineConfig({
             "server-only": fileURLToPath(
               new URL("./apps/web/node_modules/server-only/empty.js", import.meta.url),
             ),
+            // Installed in apps/web only: one id for the app's import and a test's vi.mock.
+            "@sentry/nextjs": fileURLToPath(new URL("./apps/web/node_modules/@sentry/nextjs", import.meta.url)),
           },
         },
       },

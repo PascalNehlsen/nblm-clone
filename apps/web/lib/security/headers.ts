@@ -4,6 +4,8 @@
 // What the CSP adds: img-src 'self' (rendered output never loads a remote image), no framing,
 // and requests only to this app, Supabase and Turnstile.
 
+import { sentryDsnOrigin } from "../observability/sentry-options";
+
 export interface SecurityHeader {
   key: string;
   value: string;
@@ -31,8 +33,15 @@ function supabaseOrigin(url: string | null): string | null {
   return parsed.origin;
 }
 
-export function securityHeaders(input: { supabaseUrl: string | null; siteUrl: string; isDev: boolean }): SecurityHeader[] {
+export function securityHeaders(input: {
+  supabaseUrl: string | null;
+  siteUrl: string;
+  isDev: boolean;
+  sentryDsn?: string | null;
+}): SecurityHeader[] {
   const supabase = supabaseOrigin(input.supabaseUrl);
+  // Error events go to exactly the configured Sentry EU ingest host (ADR 0022), never a wildcard.
+  const sentry = sentryDsnOrigin(input.sentryDsn);
   const https = input.siteUrl.startsWith("https://");
   const withSupabase = (...sources: string[]) => (supabase ? [...sources, supabase] : sources);
 
@@ -42,7 +51,7 @@ export function securityHeaders(input: { supabaseUrl: string | null; siteUrl: st
     ["style-src", ["'self'", "'unsafe-inline'"]],
     ["img-src", ["'self'"]],
     ["font-src", ["'self'"]],
-    ["connect-src", withSupabase("'self'")],
+    ["connect-src", [...withSupabase("'self'"), ...(sentry ? [sentry] : [])]],
     ["frame-src", [TURNSTILE]],
     ["frame-ancestors", ["'none'"]],
     ["object-src", ["'none'"]],

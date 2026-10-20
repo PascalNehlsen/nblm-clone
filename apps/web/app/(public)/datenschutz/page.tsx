@@ -74,9 +74,15 @@ export default function DatenschutzPage() {
         <li>
           <strong>Cloudflare Turnstile</strong> (Schutz der Demo), nur wenn du die Demo startest; Sitz in den USA.
         </li>
+        <li>
+          <strong>Sentry</strong> (Fehlerberichte), Datenregion in Frankfurt am Main. Bei einem unerwarteten Fehler
+          erhält Sentry nur technische Angaben: Fehlerart, Stelle im Programmcode, aufgerufener Pfad ohne Parameter,
+          Browser und Betriebssystem. Inhalte wie Fragen, Quellen, Antworten oder Fehlermeldungen werden vorher
+          entfernt. Deine IP-Adresse wird dabei übertragen, aber nicht gespeichert.
+        </li>
       </ul>
       <p>
-        Supabase, Amazon Web Services und Vercel sind Unternehmen mit Sitz oder Muttergesellschaft in den USA; die
+        Supabase, Amazon Web Services, Vercel und Sentry sind Unternehmen mit Sitz oder Muttergesellschaft in den USA; die
         Verarbeitung für diese Anwendung findet bei ihnen in der EU statt. Für Übermittlungen in die USA stützen sich
         die Anbieter auf den Angemessenheitsbeschluss der EU-Kommission zum
         EU-US Data Privacy Framework beziehungsweise auf Standardvertragsklauseln. Webseiten, die du als Quelle angibst,
@@ -92,6 +98,7 @@ export default function DatenschutzPage() {
         </li>
         <li>Protokoll der Rollenänderungen: 90 Tage.</li>
         <li>Verbrauchsdaten: 90 Tage mit Bezug zu Konto und Notizbuch, danach ohne diesen Bezug.</li>
+        <li>Fehlerberichte bei Sentry: 30 Tage.</li>
         <li>Datenbanksicherungen können gelöschte Inhalte bis zum Ende ihrer Aufbewahrungsfrist enthalten.</li>
       </ul>
 
