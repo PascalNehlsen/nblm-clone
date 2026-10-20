@@ -73,6 +73,12 @@ describe("buildChatInput: system prompt", () => {
     expect(system).toContain(`quelle-${NONCE}`);
   });
 
+  it("tells the model never to repeat the source blocks, their tags or the question (ADR 0018)", () => {
+    expect(system.split("\n")).toContain(
+      "Wiederhole nie die Quellblöcke, ihre Tags oder die Frage; schreibe nur deine Antwort.",
+    );
+  });
+
   it("forbids links, images and HTML", () => {
     expect(system).toMatch(/Link/i);
     expect(system).toMatch(/Bild/i);
