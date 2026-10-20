@@ -1,8 +1,10 @@
 # nblm-clone
 
-[![ci](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/ci.yml/badge.svg)](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/ci.yml)
-[![security scans](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/security-scans.yml/badge.svg)](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/security-scans.yml)
-[![drift](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/drift.yml/badge.svg)](https://github.com/PascalNehlsen/nblm-clone/actions/workflows/drift.yml)
+<p align="center">
+  <a href="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/ci.yml"><img src="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/security-scans.yml"><img src="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/security-scans.yml/badge.svg" alt="security scans"></a>
+  <a href="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/drift.yml"><img src="https://github.com/PascalNehlsen/nblm-clone/actions/workflows/drift.yml/badge.svg" alt="drift"></a>
+</p>
 
 A NotebookLM clone: upload sources, ask questions, get answers that cite the exact passage.
 
