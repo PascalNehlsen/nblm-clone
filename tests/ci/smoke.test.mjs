@@ -805,6 +805,17 @@ describe("checkLive", () => {
   });
 });
 
+describe("checkLive: a faulted live /login (game day)", () => {
+  it("500 on every attempt -> ok false, reason status, 5 fetches", async () => {
+    const fail = () => new Response("Vorübergehend nicht verfügbar.", { status: 500 });
+    const fetch = makeFetch({ [`${SITE_URL}/login`]: [fail, fail, fail, fail, fail] });
+    const result = await checkLive({ siteUrl: SITE_URL, fetch, sleep: makeSleep() });
+    assert.equal(result.ok, false);
+    assert.equal(result.results[0].reason, "status");
+    assert.equal(fetch.calls.filter((c) => c.key === `${SITE_URL}/login`).length, 5);
+  });
+});
+
 // Race after promote: the domain may briefly serve the previous deployment (no CSP).
 describe("checkHtml: a 200 that fails only the CSP check is retried", () => {
   const htmlNoCsp = () =>
