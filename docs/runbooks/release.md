@@ -34,6 +34,7 @@ A fresh project has no schema, so the model settings cannot be changed before th
 
 - Before promote (guard, migrations, smoke, canary): nothing changed for users; the new deployment never got the domain. Migrations that ran stay (expand-only).
 - Live smoke after promote: the job promotes the previous deployment by itself, smokes again and fails. Check the summary; on the first release there is no previous deployment.
+- The automatic rollback is rehearsed with the game day ([game-day.md](game-day.md)).
 - No automatic rollback when `vercel promote` itself fails or the job is cancelled or times out; then by hand.
 - By hand: `vercel promote <deployment id> --scope <team>` with the production token, or Vercel's Instant Rollback.
 
