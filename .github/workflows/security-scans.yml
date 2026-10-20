@@ -14,9 +14,10 @@ on:
 
 permissions: {}
 
+# A newer push to a PR cancels the older run; runs on main always finish.
 concurrency:
   group: security-scans-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:

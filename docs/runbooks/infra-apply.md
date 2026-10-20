@@ -2,7 +2,7 @@
 
 - Last rehearsed: 2026-10-20, infra/aws budget alarm applied (#63, run 39404803601). Earlier: first infra/aws apply 2026-10-19 (run 39237245365), web roles for Nova 2 Lite 2026-10-19 (run 39257178874), infra/cloudflare DNS 2026-10-19 (#45, run 39288554013)
 - Who: CI only (`.github/workflows/infra.yml`); the human approves the `plan` and `infra` environment runs. Never applied locally ([ADR 0009](../adr/0009-infra-pipeline-and-develop-project.md))
-- Roles: `nblm-tofu-plan` (environment `plan`), `nblm-tofu-apply` (environment `infra`, `main` only), both from `infra/bootstrap`
+- Roles: `nblm-tofu-plan` (environments `plan` and `drift`, the nightly drift check, ADR 0024), `nblm-tofu-apply` (environment `infra`, `main` only), both from `infra/bootstrap`
 
 ## Every change
 
@@ -58,4 +58,4 @@ Update "Last rehearsed" above with the date and what was applied.
 
 ## infra/cloudflare (DNS for sec-nblm.dev)
 
-Same flow through `.github/workflows/infra-cloudflare.yml`: plan in the PR (environment `plan`, read-only Cloudflare token), plan and apply after merge (environment `infra`, edit token), plan guard on both. The AWS roles still run the jobs because the state lives in the same encrypted S3 bucket. Tokens are zone-scoped, created by hand with a 90-day expiry; rotate both in GitHub (`gh secret set CLOUDFLARE_API_TOKEN --env plan|infra`).
+Same flow through `.github/workflows/infra-cloudflare.yml`: plan in the PR (environment `plan`, read-only Cloudflare token), plan and apply after merge (environment `infra`, edit token), plan guard on both. The AWS roles still run the jobs because the state lives in the same encrypted S3 bucket. Tokens are zone-scoped, created by hand with a 90-day expiry; rotate all three in GitHub (`gh secret set CLOUDFLARE_API_TOKEN --env plan|drift|infra`; `plan` and `drift` are read-only, `drift` has its own token).

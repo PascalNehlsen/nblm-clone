@@ -151,8 +151,10 @@ function expectTrustPolicy(relativePath: string, expectedSubs: string | string[]
 
     // P1 review fix: neither role may trust a plain pull_request run or a
     // branch/tag ref (anyone who can push one, including the sandbox, could
-    // then run arbitrary code with that role). Both must be scoped to a GitHub
-    // environment, which has a required reviewer.
+    // then run arbitrary code with that role). Every trusted subject must be
+    // scoped to a GitHub environment. Not every environment has a required
+    // reviewer: `plan` and `infra` do, `drift` has none and is restricted to
+    // the main branch only (ADR 0024).
     expect(s, "must not trust every pull_request run").not.toContain(":pull_request");
     expect(s, "must not trust a branch or tag ref").not.toContain(":ref:");
     expect(s, "must be scoped to a GitHub environment").toMatch(/:environment:[a-z-]+$/);

@@ -116,9 +116,10 @@ run "every_s3_bucket_sub_resource_targets_the_state_bucket" {
 
 # P1 fix from the Codex review: the plan role no longer trusts every
 # pull_request run (anyone who can push a branch, the sandbox included, could
-# otherwise run arbitrary code with it). It now trusts only the GitHub
-# environment "plan", which has a required reviewer, like the apply role's
-# "infra".
+# otherwise run arbitrary code with it). It now trusts only two GitHub
+# environments: "plan", which has a required reviewer (like the apply role's
+# "infra"), and "drift" (nightly drift check, ADR 0024), which has no required
+# reviewer and is restricted to the main branch only.
 run "plan_role_trust_is_scoped_to_the_plan_and_drift_environments_on_the_immutable_subject" {
   command = plan
 
