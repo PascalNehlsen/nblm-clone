@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadBudgets",
+      "Effect": "Allow",
+      "Action": ["budgets:ViewBudget", "budgets:ListTagsForResource"],
+      "Resource": ["arn:aws:budgets::${account_id}:budget/*"]
+    }
+  ]
+}

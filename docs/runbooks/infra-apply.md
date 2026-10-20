@@ -1,6 +1,6 @@
 # Runbook: plan and apply infra/aws
 
-- Last rehearsed: never; the first apply is the merge of the PR that adds `infra/aws`
+- Last rehearsed: 2026-10-20, infra/aws budget alarm applied (#63, run 39404803601). Earlier: first infra/aws apply 2026-10-19 (run 39237245365), web roles for Nova 2 Lite 2026-10-19 (run 39257178874), infra/cloudflare DNS 2026-10-19 (#45, run 39288554013)
 - Who: CI only (`.github/workflows/infra.yml`); the human approves the `plan` and `infra` environment runs. Never applied locally ([ADR 0009](../adr/0009-infra-pipeline-and-develop-project.md))
 - Roles: `nblm-tofu-plan` (environment `plan`), `nblm-tofu-apply` (environment `infra`, `main` only), both from `infra/bootstrap`
 

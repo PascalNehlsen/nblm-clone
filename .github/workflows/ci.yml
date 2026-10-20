@@ -108,7 +108,7 @@ jobs:
         run: pnpm exec supabase stop --no-backup
 
   e2e:
-    # Not a required status check yet; adding it is a ruleset change for infra/github.
+    # Not a required status check yet; adding it is a ruleset change, by hand (infra/github is v1.1).
     # Full stack in the runner: local Supabase plus a production build of the web app.
     # The GitHub login is checked up to the redirect; requests to github.com are aborted.
     name: e2e (playwright)
@@ -186,7 +186,7 @@ jobs:
         run: pnpm exec supabase stop --no-backup
 
   infra:
-    # Not a required status check yet; adding it is a ruleset change for infra/github.
+    # Not a required status check yet; adding it is a ruleset change, by hand (infra/github is v1.1).
     # No cloud credentials: providers are downloaded, nothing is planned against AWS.
     name: infra (fmt, validate, test)
     runs-on: ubuntu-latest

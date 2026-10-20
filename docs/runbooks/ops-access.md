@@ -1,6 +1,6 @@
 # Runbook: operator access to /ops
 
-- Last rehearsed: not yet (after the ops page PR is merged, on develop)
+- Last rehearsed: 2026-10-20 on develop (Pascal granted himself `ops`; /ops loaded after #64). Revoke and production: not yet
 - Who: the human, in the Supabase SQL editor of the project (or psql as `postgres`). Never from the sandbox or CI ([ADR 0023](../adr/0023-ops-page.md))
 - Effect: the next request to `/ops`. The flag is read from the Auth server on every request, not from the session token, so revoking it works at once
 

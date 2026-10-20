@@ -1,0 +1,83 @@
+name: drift
+
+# Nightly drift check (ADR 0024): `tofu plan` for infra/aws and infra/cloudflare against what
+# is deployed, with the read-only plan role. A difference fails the run, which emails Pascal;
+# nothing is applied, saved or uploaded. The `drift` environment has no reviewer and allows
+# only main, and the plan role trusts it (infra/bootstrap), so only reviewed code runs here.
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: drift
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  PLAN_ROLE_ARN: arn:aws:iam::278311879197:role/nblm-tofu-plan
+
+jobs:
+  drift:
+    name: drift (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: drift
+    permissions:
+      contents: read
+      id-token: write # OIDC token for the read-only plan role
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [aws, cloudflare]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: drift-${{ matrix.stack }}-${{ github.run_id }}
+
+      - name: Init
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STACK: ${{ matrix.stack }}
+        run: scripts/tofu.sh -chdir="infra/$STACK" init -input=false -lockfile=readonly
+
+      # -detailed-exitcode: 0 no changes, 2 drift, anything else is an error. No -out: the
+      # plan is only read.
+      - name: Plan
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+          STACK: ${{ matrix.stack }}
+        run: |
+          rc=0
+          scripts/tofu.sh -chdir="infra/$STACK" plan -input=false -lock=false -no-color -detailed-exitcode > plan.txt || rc=$?
+          case "$rc" in
+            0) echo "No drift in infra/$STACK." >> "$GITHUB_STEP_SUMMARY" ;;
+            2)
+              {
+                echo "### Drift in infra/$STACK"
+                echo
+                echo '```text'
+                cat plan.txt
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::drift in infra/$STACK"
+              exit 1
+              ;;
+            *) cat plan.txt; exit "$rc" ;;
+          esac
