@@ -207,6 +207,16 @@ describe("infra/bootstrap/policies/scp-region-guard.json: behaviour", () => {
     expect(isDenied(policy, "s3:CreateBucket", "unspecified")).toBe(false);
   });
 
+  it("allows the AWS Budgets actions in us-east-1 (the Budgets API endpoint) and eu-central-1", () => {
+    const policy = loadPolicy();
+
+    for (const action of ["budgets:CreateBudget", "budgets:ViewBudget", "budgets:ModifyBudget"]) {
+      for (const region of ["us-east-1", "eu-central-1"]) {
+        expect(isDenied(policy, action, region), `${action} in ${region}`).toBe(false);
+      }
+    }
+  });
+
   it("us-west-2 is not a specially allowed region: nothing outside the Bedrock/global exceptions is allowed there", () => {
     const policy = loadPolicy();
 

@@ -370,6 +370,77 @@ describe("infra/aws policies/bedrock-embeddings.json.tftpl (unchanged)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Ops page PR: AWS cost budget (infra/aws/budget.tf). Static checks only.
+// ---------------------------------------------------------------------------
+
+describe("infra/aws budget", () => {
+  const strippedAws = () => stripHclComments(concatTfFrom(awsDir));
+
+  it("has exactly one aws_budgets_budget, in budget.tf", () => {
+    expect(fs.existsSync(path.join(awsDir, "budget.tf")), "expected infra/aws/budget.tf").toBe(true);
+    const blocks = extractBlocks(strippedAws(), /resource\s+"aws_budgets_budget"\s+"[a-z0-9_]+"\s*(?=\{)/);
+    expect(blocks).toHaveLength(1);
+    const inBudgetTf = extractBlocks(
+      stripHclComments(readFileFrom(awsDir, "budget.tf")),
+      /resource\s+"aws_budgets_budget"\s+"[a-z0-9_]+"\s*(?=\{)/,
+    );
+    expect(inBudgetTf).toHaveLength(1);
+  });
+
+  it("has no budget actions and no SNS topic or subscription anywhere in infra/aws", () => {
+    const source = strippedAws();
+    expect(source).not.toMatch(/aws_budgets_budget_action/);
+    expect(source).not.toMatch(/aws_sns_/);
+  });
+
+  it("the limit is the literal \"10\", given through a local", () => {
+    const source = strippedAws();
+    const budget = extractBlocks(source, /resource\s+"aws_budgets_budget"\s+"[a-z0-9_]+"\s*(?=\{)/)[0];
+    expect(budget, "expected an aws_budgets_budget resource").toBeDefined();
+    expect(budget?.body).toMatch(/limit_amount\s*=\s*local\.[a-z0-9_]+/);
+    expect(resolveLiteral(source, budget?.body ?? "", "limit_amount")).toBe("10");
+    expect(budget?.body).toMatch(/limit_unit\s*=\s*"USD"/);
+    expect(budget?.body).toMatch(/budget_type\s*=\s*"COST"/);
+    expect(budget?.body).toMatch(/time_unit\s*=\s*"MONTHLY"/);
+  });
+
+  it("has exactly four notification blocks, subscribed to var.budget_alert_email only", () => {
+    const source = strippedAws();
+    const budget = extractBlocks(source, /resource\s+"aws_budgets_budget"\s+"[a-z0-9_]+"\s*(?=\{)/)[0];
+    expect(budget, "expected an aws_budgets_budget resource").toBeDefined();
+    const notifications = extractBlocks(budget?.body ?? "", /notification\s*(?=\{)/);
+    expect(notifications).toHaveLength(4);
+    for (const n of notifications) {
+      expect(n.body).toMatch(/subscriber_email_addresses\s*=\s*\[\s*var\.budget_alert_email\s*\]/);
+      expect(n.body).not.toMatch(/subscriber_sns_topic_arns/);
+    }
+    const kinds = notifications
+      .map((n) => `${n.body.match(/notification_type\s*=\s*"([A-Z]+)"/)?.[1]}:${n.body.match(/threshold\s*=\s*(\d+)/)?.[1]}`)
+      .sort();
+    expect(kinds).toEqual(["ACTUAL:100", "ACTUAL:50", "ACTUAL:80", "FORECASTED:100"]);
+  });
+
+  it("contains no email address literal in any infra/aws/*.tf file", () => {
+    for (const file of readAllTfFrom(awsDir)) {
+      expect(stripHclComments(file.content), `${file.fileName} must not hold an email address`).not.toMatch(
+        /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/,
+      );
+    }
+  });
+
+  it("variable budget_alert_email has no default, is sensitive, and validates the format", () => {
+    const variable = extractBlock(strippedAws(), /variable\s+"budget_alert_email"\s*(?=\{)/);
+    expect(variable, 'expected variable "budget_alert_email" { ... }').toBeDefined();
+    expect(variable?.body).not.toMatch(/\bdefault\s*=/);
+    expect(variable?.body).toMatch(/\bsensitive\s*=\s*true\b/);
+    expect(variable?.body).toMatch(/\btype\s*=\s*string\b/);
+    const validation = extractBlock(variable?.body ?? "", /validation\s*(?=\{)/);
+    expect(validation, "expected a validation { ... } block").toBeDefined();
+    expect(validation?.body).toMatch(/regex|can\(/);
+  });
+});
+
 // Note: the existing "no access_key, secret_key or token anywhere under
 // infra/" guard in bootstrap-hcl.test.ts already scans the whole of infraDir
 // (tests/unit/infra/hcl.ts's walkFiles(infraDir)), so it covers infra/aws too

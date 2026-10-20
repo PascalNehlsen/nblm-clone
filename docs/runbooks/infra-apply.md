@@ -15,6 +15,8 @@
 
 Only one run of the workflow on `main` runs at a time and none is cancelled. A newer push waits; if a third arrives meanwhile, GitHub drops the waiting middle run, which is fine because the newest run plans everything merged so far.
 
+`infra/aws` needs the GitHub variable `BUDGET_ALERT_EMAIL` in the `plan` environment (the budget alert address). Without it the plan fails; it is set once, by Pascal.
+
 ## Checks after the first apply (host, read-only)
 
 ```bash

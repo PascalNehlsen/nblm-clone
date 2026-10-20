@@ -26,7 +26,13 @@ function allIds(): string[] {
 
 export async function handleEvalRequest(
   request: Request,
-  deps: { secret: string | undefined; run: () => Promise<EvalResult> | null },
+  deps: {
+    secret: string | undefined;
+    run: () => Promise<EvalResult> | null;
+    // Stores the score for the ops page (ADR 0023). Awaited, but a failure never changes the
+    // response: the eval result is what the gate reads.
+    record?: (result: EvalResult) => Promise<void> | void;
+  },
 ): Promise<Response> {
   const secret = deps.secret?.trim() ?? "";
   if (secret === "") return empty(404);
@@ -50,6 +56,13 @@ export async function handleEvalRequest(
       errored: ids.length,
       reasons: Object.fromEntries(ids.map((id) => [id, "turn-failed"])),
     };
+  }
+  if (deps.record) {
+    try {
+      await deps.record(result);
+    } catch {
+      // Fail-soft: recording is for the ops page only.
+    }
   }
   const cases: Record<string, boolean> = {};
   for (const [id, passed] of Object.entries(result.cases)) cases[id] = passed === true;

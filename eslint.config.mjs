@@ -32,8 +32,15 @@ const ADMIN_IMPORTS_EXCEPT_ACCOUNTS = {
 
 // The admin modules (usage, accounts) stay separate: neither imports the other.
 const ADMIN_SIBLINGS = {
-  regex: "^\\./(usage|accounts)(\\.[cm]?[jt]sx?)?$",
-  message: "The admin modules stay separate (ADR 0006, ADR 0021).",
+  regex: "^\\./(usage|accounts|ops)(\\.[cm]?[jt]sx?)?$",
+  message: "The admin modules stay separate (ADR 0006, ADR 0021, ADR 0023).",
+};
+
+// lib/server/ops/read.ts and lib/server/eval/record.ts are the only importers of the admin ops
+// module (ops page, ADR 0023), and of nothing else under admin.
+const ADMIN_IMPORTS_EXCEPT_OPS = {
+  regex: "(^|/)admin(/(?!ops$)|$)",
+  message: "Only lib/server/admin/ops may be imported here (ADR 0023).",
 };
 
 // The model-call engine is imported only by call.ts (production wiring) and testing.ts.
@@ -199,6 +206,46 @@ export default defineConfig([
             BEDROCK_IMPORTS,
             BEDROCK_SDK_IMPORTS,
             SUPABASE_IMPORTS,
+          ],
+        },
+      ],
+    },
+  },
+  // The ops page's reader and the eval recorder may import the admin ops module (and nothing
+  // else under admin); the Supabase SDK stays banned there.
+  {
+    files: ["apps/web/lib/server/ops/read.ts", "apps/web/lib/server/eval/record.ts"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ADMIN_IMPORTS_EXCEPT_OPS,
+            CALL_CORE_IMPORTS,
+            TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
+            SUPABASE_IMPORTS,
+          ],
+        },
+      ],
+    },
+  },
+  // The admin ops module calls two RPCs with fetch: no Supabase SDK, no sibling admin module.
+  {
+    files: ["apps/web/lib/server/admin/ops.ts"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ADMIN_IMPORTS,
+            CALL_CORE_IMPORTS,
+            TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
+            SUPABASE_IMPORTS,
+            ADMIN_SIBLINGS,
           ],
         },
       ],

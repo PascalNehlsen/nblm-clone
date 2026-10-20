@@ -10,6 +10,12 @@
 
 mock_provider "aws" {}
 
+# var.budget_alert_email (infra/aws/budget.tf) has no default, so every run in
+# this file needs a value. Not used by any assertion below.
+variables {
+  budget_alert_email = "budget-test@example.com"
+}
+
 # Top-level `locals` blocks are not part of the .tftest.hcl grammar, so the
 # overridden OIDC provider arn below is a repeated literal, the same pattern
 # tests/infra/bootstrap/state.tftest.hcl uses for its mock key/bucket arns.

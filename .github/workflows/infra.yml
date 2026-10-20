@@ -63,6 +63,8 @@ jobs:
 
       # The plan role cannot write state, so no lock (ADR 0003).
       - name: Plan
+        env:
+          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
         run: scripts/tofu.sh -chdir=infra/aws plan -input=false -lock=false -no-color -out=aws.tfplan
 
       - name: Plan in the summary
@@ -118,6 +120,8 @@ jobs:
       - name: Plan
         id: plan
         shell: bash
+        env:
+          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
         run: |
           rc=0
           scripts/tofu.sh -chdir=infra/aws plan -input=false -lock=false -no-color -detailed-exitcode -out=aws.tfplan || rc=$?
