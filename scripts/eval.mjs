@@ -15,6 +15,8 @@ const DEPLOYMENT_URL = /^https:\/\/[a-z0-9-]+\.vercel\.app$/;
 export const TIMEOUT_MS = 310_000;
 export const QUALITY_MIN = 5;
 const RETRY_DELAY_MS = 5_000;
+// A failure reason is a fixed rule name from the scorer; anything else is printed as "unknown".
+const REASON = /^[a-z0-9:<>/._-]{1,48}$/;
 
 export function loadCases() {
   return JSON.parse(readFileSync(new URL("../tests/eval/cases.json", import.meta.url), "utf8"));
@@ -37,7 +39,7 @@ function categories(cases) {
 
 async function check({ baseUrl, secret, bypassSecret, fetch, sleep, cases }) {
   const ids = categories(cases);
-  const fail = (status, reason) => ({ ok: false, status, results: null, ids, errored: null, reason });
+  const fail = (status, reason) => ({ ok: false, status, results: null, reasons: null, ids, errored: null, reason });
   if (typeof baseUrl !== "string" || !DEPLOYMENT_URL.test(baseUrl)) return fail(null, "baseUrl must be https://<name>.vercel.app");
   if (typeof secret !== "string" || secret === "") return fail(null, "secret missing");
 
@@ -61,13 +63,18 @@ async function check({ baseUrl, secret, bypassSecret, fetch, sleep, cases }) {
     return fail(200, "not json");
   }
   const results = {};
-  for (const id of [...ids.security, ...ids.quality]) results[id] = body?.cases?.[id] === true;
+  const reasons = {};
+  for (const id of [...ids.security, ...ids.quality]) {
+    results[id] = body?.cases?.[id] === true;
+    const why = body?.reasons?.[id];
+    reasons[id] = results[id] ? "" : typeof why === "string" && REASON.test(why) ? why : why == null ? "-" : "unknown";
+  }
   const errored = Number.isInteger(body?.errored) ? body.errored : null;
   const securityOk = ids.security.every((id) => results[id]);
   const qualityPassed = ids.quality.filter((id) => results[id]).length;
   const ok = securityOk && qualityPassed >= QUALITY_MIN;
   const reason = ok ? null : !securityOk ? "a security case failed" : "quality below threshold";
-  return { ok, status: 200, results, ids, errored, reason };
+  return { ok, status: 200, results, reasons, ids, errored, reason };
 }
 
 export async function runEvalCheck(input) {
@@ -85,9 +92,14 @@ export async function runEvalCheck(input) {
 
 function summary(r, count) {
   const lines = ["### Eval", "", r.ok ? "**Passed.**" : `**Failed:** ${r.reason ?? "unknown"}.`, ""];
-  lines.push(`HTTP status: ${r.status ?? "none"}`, "", "| Case | Category | Result |", "|---|---|---|");
+  lines.push(`HTTP status: ${r.status ?? "none"}`, "", "| Case | Category | Result | Reason |", "|---|---|---|---|");
   for (const [category, list] of [["security", r.ids.security], ["quality", r.ids.quality]]) {
-    for (const id of list) lines.push(`| ${id} | ${category} | ${r.results ? (r.results[id] ? "pass" : "fail") : "-"} |`);
+    for (const id of list) {
+      const result = r.results ? (r.results[id] ? "pass" : "fail") : "-";
+      // Escaped: the job summary is Markdown, where "</quelle" would vanish as an HTML tag.
+      const why = (r.reasons ? r.reasons[id] : "-").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      lines.push(`| ${id} | ${category} | ${result} | ${why} |`);
+    }
   }
   lines.push(
     "",
