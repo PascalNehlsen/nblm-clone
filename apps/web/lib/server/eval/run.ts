@@ -6,7 +6,7 @@ import type { RetrievedChunk } from "@/lib/rag/retrieve";
 import { runTurn, type TurnResult } from "@/lib/server/chat/turn";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
 import { EVAL_CASES, QUALITY_FIXTURES, chunksFor } from "./corpus";
-import { scoreAbstention, scoreFact, scoreSecurity, type TurnOutcome } from "./score";
+import { abstentionReason, factReason, securityReason, type TurnOutcome } from "./score";
 
 // Live eval run (ADR 0017): every case of tests/eval/cases.json gets one real chat turn over
 // its fixture chunks, without retrieval and without database writes besides the usage rows
@@ -15,6 +15,8 @@ import { scoreAbstention, scoreFact, scoreSecurity, type TurnOutcome } from "./s
 export interface EvalResult {
   cases: Record<string, boolean>;
   errored: number;
+  // The first violated rule per case (a fixed rule name, never text), null when it passed.
+  reasons: Record<string, string | null>;
 }
 
 export interface EvalLogEvent {
@@ -39,22 +41,23 @@ interface Job {
   id: string;
   question: string;
   chunks: RetrievedChunk[];
-  score: (o: TurnOutcome, nonce: string, systemPromptFirstLine: string) => boolean;
+  // The first violated rule, or null when the case passes.
+  reason: (o: TurnOutcome, nonce: string, systemPromptFirstLine: string) => string | null;
 }
 
 function jobs(): Job[] {
   const quality = chunksFor(QUALITY_FIXTURES);
   return [
-    ...EVAL_CASES.facts.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome, nonce: string) => scoreFact(c, o, quality, { nonce }) })),
-    ...EVAL_CASES.abstention.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome, nonce: string) => scoreAbstention(o, { nonce }) })),
+    ...EVAL_CASES.facts.map((c) => ({ id: c.id, question: c.question, chunks: quality, reason: (o: TurnOutcome, nonce: string) => factReason(c, o, quality, { nonce }) })),
+    ...EVAL_CASES.abstention.map((c) => ({ id: c.id, question: c.question, chunks: quality, reason: (o: TurnOutcome, nonce: string) => abstentionReason(o, { nonce }) })),
     ...EVAL_CASES.security.map((c) => {
       const chunks = chunksFor([c.fixture]);
       return {
         id: c.id,
         question: c.question,
         chunks,
-        score: (o: TurnOutcome, nonce: string, systemPromptFirstLine: string) =>
-          scoreSecurity(c, o, chunks, { nonce, systemPromptFirstLine }),
+        reason: (o: TurnOutcome, nonce: string, systemPromptFirstLine: string) =>
+          securityReason(c, o, chunks, { nonce, systemPromptFirstLine }),
       };
     }),
   ];
@@ -91,6 +94,7 @@ export async function runEval(deps: EvalDeps): Promise<EvalResult> {
   const startedAt = deps.now();
   const all = jobs();
   const cases: Record<string, boolean> = {};
+  const reasons: Record<string, string | null> = {};
   let errored = 0;
   let next = 0;
 
@@ -118,12 +122,14 @@ export async function runEval(deps: EvalDeps): Promise<EvalResult> {
         outcome = { ok: false };
       }
       if (!outcome.ok) errored++;
-      cases[job.id] = outcome.ok ? job.score(outcome, nonce, firstLine) : false;
+      const reason = outcome.ok ? job.reason(outcome, nonce, firstLine) : "turn-failed";
+      reasons[job.id] = reason;
+      cases[job.id] = reason === null;
     }
   };
   await Promise.all(Array.from({ length: Math.min(EVAL_CONCURRENCY, all.length) }, worker));
 
   const passed = Object.values(cases).filter(Boolean).length;
   deps.log({ event: "eval", passed, total: all.length, errored, ms: Math.max(0, Math.round(deps.now() - startedAt)) });
-  return { cases, errored };
+  return { cases, errored, reasons };
 }

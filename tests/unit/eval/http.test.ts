@@ -13,8 +13,17 @@ const ALL_IDS = [
   ...EVAL_CASES.abstention.map((c) => c.id),
   ...EVAL_CASES.security.map((c) => c.id),
 ];
-const GOOD: EvalResult = { cases: Object.fromEntries(ALL_IDS.map((id) => [id, true])), errored: 0 };
-const MIXED: EvalResult = { cases: { ...GOOD.cases, dauer: false, "html-tags": false }, errored: 1 };
+// Extended for the eval-reasons change: EvalResult now carries reasons (null for passes).
+const GOOD: EvalResult = {
+  cases: Object.fromEntries(ALL_IDS.map((id) => [id, true])),
+  errored: 0,
+  reasons: Object.fromEntries(ALL_IDS.map((id) => [id, null])),
+};
+const MIXED: EvalResult = {
+  cases: { ...GOOD.cases, dauer: false, "html-tags": false },
+  errored: 1,
+  reasons: { ...GOOD.reasons, dauer: "missing-term:0", "html-tags": "turn-failed" },
+};
 
 function req(opts: { method?: string; headers?: Record<string, string>; body?: string } = {}): Request {
   const method = opts.method ?? "POST";
@@ -170,6 +179,90 @@ describe("eval http: success", () => {
     const res = await handleEvalRequest(req(), d);
     const text = await res.text();
     expect(text).not.toContain("ANSWER_DO_NOT_LEAK");
-    expect(Object.keys(JSON.parse(text) as object).sort()).toEqual(["cases", "errored"]);
+    // Extended: the body keys are now cases, errored and reasons (was cases and errored).
+    expect(Object.keys(JSON.parse(text) as object).sort()).toEqual(["cases", "errored", "reasons"]);
+  });
+
+  it("passes valid reasons through and keeps null for passes", async () => {
+    const { d } = deps({ run: async () => MIXED });
+    const body = (await (await handleEvalRequest(req(), d)).json()) as EvalResult;
+    expect(body.reasons.dauer).toBe("missing-term:0");
+    expect(body.reasons["html-tags"]).toBe("turn-failed");
+    expect(body.reasons.gruendung).toBeNull();
+  });
+
+  it("accepts every reason shape of the spec", async () => {
+    const valid = [
+      "turn-failed",
+      "abstained",
+      "answered",
+      "leak:evil.example",
+      "leak:<quelle-",
+      "leak:</quelle",
+      "leak:javascript:",
+      "missing-term:12",
+      "no-citation-of-source",
+      "content:forbidden:<script",
+      "raw:payload:3",
+      "content:marker",
+      "citation-not-in-chunk",
+      "a".repeat(48),
+    ];
+    for (const reason of valid) {
+      const { d } = deps({ run: async () => ({ ...MIXED, reasons: { ...MIXED.reasons, dauer: reason } }) });
+      const body = (await (await handleEvalRequest(req(), d)).json()) as EvalResult;
+      expect(body.reasons.dauer, reason).toBe(reason);
+    }
+  });
+
+  it("a reason that does not match the allowed shape becomes unknown, and its text is not returned", async () => {
+    const invalid = [
+      "ANSWER_DO_NOT_LEAK",
+      "Contains Spaces",
+      "line\nbreak",
+      "a|b",
+      "ünicode",
+      "a".repeat(49),
+      "",
+      "[1: \"quote\"]",
+      "Leak:x",
+    ];
+    for (const reason of invalid) {
+      const { d } = deps({ run: async () => ({ ...MIXED, reasons: { ...MIXED.reasons, dauer: reason } }) });
+      const text = await (await handleEvalRequest(req(), d)).text();
+      const body = JSON.parse(text) as EvalResult;
+      expect(body.reasons.dauer, JSON.stringify(reason)).toBe("unknown");
+      if (reason.length > 0) expect(text).not.toContain(reason);
+      // The other reasons are untouched.
+      expect(body.reasons["html-tags"]).toBe("turn-failed");
+      expect(body.reasons.gruendung).toBeNull();
+    }
+  });
+
+  it("a non-string reason becomes unknown", async () => {
+    const bad = { ...MIXED, reasons: { ...MIXED.reasons, dauer: 42, charge: { text: "ANSWER_DO_NOT_LEAK" } } } as unknown as EvalResult;
+    const { d } = deps({ run: async () => bad });
+    const text = await (await handleEvalRequest(req(), d)).text();
+    const body = JSON.parse(text) as EvalResult;
+    expect(body.reasons.dauer).toBe("unknown");
+    expect(body.reasons.charge).toBe("unknown");
+    expect(text).not.toContain("ANSWER_DO_NOT_LEAK");
+  });
+
+  it("a rejecting or synchronously throwing run gives turn-failed for every case", async () => {
+    for (const run of [
+      () => Promise.reject(new Error("boom SENTINEL_ERR")),
+      () => {
+        throw new Error("sync SENTINEL_ERR");
+      },
+    ]) {
+      const { d } = deps({ run });
+      const text = await (await handleEvalRequest(req(), d)).text();
+      expect(text).not.toContain("SENTINEL_ERR");
+      const body = JSON.parse(text) as EvalResult;
+      expect(Object.keys(body).sort()).toEqual(["cases", "errored", "reasons"]);
+      expect(Object.keys(body.reasons).sort()).toEqual([...ALL_IDS].sort());
+      for (const id of ALL_IDS) expect(body.reasons[id], id).toBe("turn-failed");
+    }
   });
 });

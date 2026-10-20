@@ -322,6 +322,115 @@ describe("runEvalCheck: output never contains secrets or body text", () => {
   });
 });
 
+// New in the eval-reasons change (spec .git/EVAL-REASONS-SPEC.md): a fourth report column "Reason".
+// Existing tests above are unchanged.
+describe("runEvalCheck: Reason column", () => {
+  const REASONS_MARKER = "REASON_BODY_MARKER_DO_NOT_PRINT";
+  const noReasons = () => Object.fromEntries(ALL_IDS.map((id) => [id, null]));
+  const bodyWith = (patch, reasons) => ({
+    cases: { ...allTrue(), ...patch },
+    errored: 0,
+    reasons: { ...noReasons(), ...reasons },
+  });
+  const cellsOf = (report, id) => {
+    const row = report.split("\n").find((l) => l.startsWith("|") && l.split("|")[1]?.trim() === id);
+    assert.ok(row, `report must have a row for ${id}`);
+    return row.split("|").slice(1, -1).map((c) => c.trim());
+  };
+  const report = async (body) => (await runEvalCheck(args({ fetch: makeFetch([json(200, body)]) }))).report;
+
+  it("the table header has a fourth column named Reason", async () => {
+    const r = await report(bodyWith({}, {}));
+    const header = r.split("\n").find((l) => l.includes("Case") && l.includes("Category"));
+    assert.ok(header, r);
+    assert.deepEqual(header.split("|").slice(1, -1).map((c) => c.trim()), ["Case", "Category", "Result", "Reason"]);
+  });
+
+  it("a failing case shows its reason, a passing case has an empty Reason cell", async () => {
+    const r = await report(bodyWith({ dauer: false, "html-tags": false }, { dauer: "missing-term:0", "html-tags": "content:nonce" }));
+    assert.deepEqual(cellsOf(r, "dauer"), ["dauer", "quality", "fail", "missing-term:0"]);
+    assert.deepEqual(cellsOf(r, "html-tags"), ["html-tags", "security", "fail", "content:nonce"]);
+    assert.deepEqual(cellsOf(r, "gruendung"), ["gruendung", "quality", "pass", ""]);
+  });
+
+  it("every row has four cells", async () => {
+    const r = await report(bodyWith({ dauer: false }, { dauer: "abstained" }));
+    for (const id of ALL_IDS) assert.equal(cellsOf(r, id).length, 4, id);
+  });
+
+  it("a reason on a passing case is not printed", async () => {
+    const r = await report(bodyWith({}, { gruendung: "leak:nonce" }));
+    assert.deepEqual(cellsOf(r, "gruendung"), ["gruendung", "quality", "pass", ""]);
+    assert.ok(!r.includes("leak:nonce"));
+  });
+
+  it("a failing case without a reason in the body shows a dash", async () => {
+    const noKey = { cases: { ...allTrue(), dauer: false }, errored: 0, reasons: {} };
+    assert.deepEqual(cellsOf(await report(noKey), "dauer"), ["dauer", "quality", "fail", "-"]);
+    const noReasonsAtAll = { cases: { ...allTrue(), dauer: false }, errored: 0 };
+    assert.deepEqual(cellsOf(await report(noReasonsAtAll), "dauer"), ["dauer", "quality", "fail", "-"]);
+    const nullReason = bodyWith({ dauer: false }, { dauer: null });
+    assert.deepEqual(cellsOf(await report(nullReason), "dauer"), ["dauer", "quality", "fail", "-"]);
+  });
+
+  it("a reason that does not match the allowed shape prints as unknown, never its text", async () => {
+    const invalid = [
+      REASONS_MARKER,
+      "has spaces",
+      "a|b",
+      "x\n| injected | row | here | now |",
+      "a".repeat(49),
+      "",
+      42,
+      { text: REASONS_MARKER },
+    ];
+    for (const bad of invalid) {
+      const r = await report(bodyWith({ dauer: false }, { dauer: bad }));
+      assert.deepEqual(cellsOf(r, "dauer"), ["dauer", "quality", "fail", "unknown"], JSON.stringify(bad));
+      assert.ok(!r.includes(REASONS_MARKER), "invalid reason text printed");
+      assert.ok(!r.includes("injected"), "invalid reason text printed");
+    }
+  });
+
+  it("a reason of exactly 48 allowed characters is printed", async () => {
+    const ok = "a".repeat(48);
+    assert.deepEqual(cellsOf(await report(bodyWith({ dauer: false }, { dauer: ok })), "dauer")[3], ok);
+  });
+
+  it("escapes < and > as &lt; and &gt; so Markdown does not swallow them", async () => {
+    const r = await report(
+      bodyWith({ "html-tags": false, kanzler: false, charge: false }, {
+        "html-tags": "raw:forbidden:</quelle",
+        kanzler: "leak:<quelle-",
+        charge: "leak:<frage-",
+      }),
+    );
+    assert.equal(cellsOf(r, "html-tags")[3], "raw:forbidden:&lt;/quelle");
+    assert.equal(cellsOf(r, "kanzler")[3], "leak:&lt;quelle-");
+    assert.equal(cellsOf(r, "charge")[3], "leak:&lt;frage-");
+    assert.ok(!r.includes("</quelle"), r);
+    assert.ok(!r.includes("<quelle-"), r);
+    assert.ok(!r.includes("<frage-"), r);
+  });
+
+  it("the result object has no reason text outside the report", async () => {
+    const result = await runEvalCheck(
+      args({ fetch: makeFetch([json(200, bodyWith({ dauer: false }, { dauer: "missing-term:0" }))]) }),
+    );
+    assert.ok(result.report.includes("missing-term:0"));
+  });
+
+  it("never prints body text beyond the validated reasons", async () => {
+    const body = { ...bodyWith({ dauer: false }, { dauer: "abstained" }), answer: REASONS_MARKER, message: REASONS_MARKER };
+    const r = await report(body);
+    assert.ok(!r.includes(REASONS_MARKER));
+    assert.ok(r.includes("abstained"));
+    // Reasons for ids outside the corpus are never printed.
+    const extra = bodyWith({ dauer: false }, { dauer: "abstained", "UNKNOWN_CASE_DO_NOT_PRINT": "turn-failed" });
+    assert.ok(!(await report(extra)).includes("UNKNOWN_CASE_DO_NOT_PRINT"));
+  });
+});
+
 describe("eval script: entry and corpus source", () => {
   const source = readFileSync(new URL("../../scripts/eval.mjs", import.meta.url), "utf8");
 
