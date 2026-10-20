@@ -33,8 +33,11 @@ function retryable(response) {
   return response.status === 404 || response.status >= 500;
 }
 
-// Fetches with retries on network errors, 404 and 5xx. Returns the last response or null.
-async function fetchWithRetry(fetch, sleep, url, headers) {
+// Fetches with retries on network errors, 404 and 5xx, and on whatever `retryIf` names.
+// Returns the last response or null; a later network error does not hide a response that
+// was only retried because of `retryIf`, so its real reason is reported.
+async function fetchWithRetry(fetch, sleep, url, headers, retryIf = () => false) {
+  let held = null;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     let response = null;
     try {
@@ -42,8 +45,9 @@ async function fetchWithRetry(fetch, sleep, url, headers) {
     } catch {
       response = null;
     }
-    if (response && !retryable(response)) return response;
-    if (attempt === ATTEMPTS) return response;
+    if (response && !retryable(response) && !retryIf(response)) return response;
+    if (response && retryIf(response)) held = response;
+    if (attempt === ATTEMPTS) return response ?? held;
     await sleep(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS.at(-1));
   }
   return null;
@@ -80,13 +84,12 @@ function redirectTarget(response, siteUrl) {
 function cspOk(response) {
   const policy = response.headers.get("content-security-policy");
   if (!policy) return false;
-  const directives = new Map(
-    policy
-      .split(";")
-      .map((d) => d.trim().split(/\s+/))
-      .filter((tokens) => tokens[0])
-      .map(([name, ...values]) => [name.toLowerCase(), values]),
-  );
+  // Browsers use the first occurrence of a directive and ignore later duplicates.
+  const directives = new Map();
+  for (const part of policy.split(";")) {
+    const [name, ...values] = part.trim().split(/\s+/);
+    if (name && !directives.has(name.toLowerCase())) directives.set(name.toLowerCase(), values);
+  }
   const exactly = (name, value) => {
     const values = directives.get(name);
     return values !== undefined && values.length === 1 && values[0] === value;
@@ -94,8 +97,16 @@ function cspOk(response) {
   return exactly("img-src", "'self'") && exactly("frame-ancestors", "'none'");
 }
 
+// A 200 that fails only the CSP is retried too: right after a promote the domain can still
+// serve the previous deployment for a few seconds (develop run 39392338437).
+const htmlWithoutCsp = (response) =>
+  response.status === 200 &&
+  (response.headers.get("content-type") ?? "").startsWith("text/html") &&
+  !response.headers.has("x-powered-by") &&
+  !cspOk(response);
+
 async function checkHtml(name, fetch, sleep, origin, path, headers) {
-  const response = await fetchWithRetry(fetch, sleep, origin + path, headers);
+  const response = await fetchWithRetry(fetch, sleep, origin + path, headers, htmlWithoutCsp);
   if (!response) return result(name, path, null, "no response");
   if (response.status !== 200) return result(name, path, response, "status");
   if (!(response.headers.get("content-type") ?? "").startsWith("text/html")) return result(name, path, response, "content-type");

@@ -352,6 +352,30 @@ describe("runSmoke: Content-Security-Policy on /login", () => {
     assert.ok(cspFailure(result));
   });
 
+  // Browsers use the FIRST occurrence of a duplicated directive and ignore later ones.
+  it("fails when a widened img-src comes first and a strict one follows", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; img-src *; img-src 'self'; frame-ancestors 'none'",
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
+  it("passes when a strict img-src comes first and a widened duplicate follows", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; img-src 'self'; img-src *; frame-ancestors 'none'",
+    });
+    assert.equal(result.ok, true);
+  });
+
+  it("fails when a widened frame-ancestors comes first and 'none' follows", async () => {
+    const result = await runWithLoginHeaders({
+      "content-security-policy": "default-src 'self'; img-src 'self'; frame-ancestors *; frame-ancestors 'none'",
+    });
+    assert.equal(result.ok, false);
+    assert.ok(cspFailure(result));
+  });
+
   it("does not print the policy value in the report", async () => {
     const marker = "CSP_VALUE_DO_NOT_PRINT";
     const result = await runWithLoginHeaders({
@@ -778,6 +802,79 @@ describe("checkLive", () => {
     assert.equal(result.ok, false);
     const calls = fetch.calls.filter((c) => c.key === `${SITE_URL}/login`);
     assert.equal(calls.length, 5);
+  });
+});
+
+// Race after promote: the domain may briefly serve the previous deployment (no CSP).
+describe("checkHtml: a 200 that fails only the CSP check is retried", () => {
+  const htmlNoCsp = () =>
+    new Response("<html><body>login</body></html>", {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+
+  it("checkLive: no CSP first, CSP on the second response passes after one sleep", async () => {
+    const fetch = makeFetch({ [`${SITE_URL}/login`]: [htmlNoCsp, htmlOk] });
+    const sleep = makeSleep();
+    const result = await checkLive({ siteUrl: SITE_URL, fetch, sleep });
+    assert.equal(result.ok, true);
+    assert.equal(sleep.calls.length, 1);
+    assert.equal(fetch.calls.filter((c) => c.key === `${SITE_URL}/login`).length, 2);
+  });
+
+  it("checkLive: no CSP on all 5 attempts fails with reason csp after exactly 5 fetches", async () => {
+    const fetch = makeFetch({
+      [`${SITE_URL}/login`]: [htmlNoCsp, htmlNoCsp, htmlNoCsp, htmlNoCsp, htmlNoCsp],
+    });
+    const sleep = makeSleep();
+    const result = await checkLive({ siteUrl: SITE_URL, fetch, sleep });
+    assert.equal(result.ok, false);
+    assert.equal(result.results[0].reason, "csp");
+    assert.equal(fetch.calls.filter((c) => c.key === `${SITE_URL}/login`).length, 5);
+  });
+
+  it("runSmoke staged: no CSP first, CSP on the second response passes", async () => {
+    const responses = happyResponses();
+    responses[`${BASE_URL}/login`] = [htmlNoCsp, htmlOk];
+    const fetch = makeFetch(responses);
+    const sleep = makeSleep();
+    const result = await runSmoke(baseArgs({ fetch, sleep }));
+    assert.equal(result.ok, true);
+    assert.equal(fetch.calls.filter((c) => c.key === `${BASE_URL}/login`).length, 2);
+  });
+
+  it("a wrong content-type is not retried", async () => {
+    const fetch = makeFetch({
+      [`${SITE_URL}/login`]: [
+        () => new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-security-policy": CSP_OK } }),
+        htmlOk,
+      ],
+    });
+    const sleep = makeSleep();
+    const result = await checkLive({ siteUrl: SITE_URL, fetch, sleep });
+    assert.equal(result.ok, false);
+    assert.equal(result.results[0].reason, "content-type");
+    assert.equal(fetch.calls.length, 1);
+    assert.equal(sleep.calls.length, 0);
+  });
+
+  it("an x-powered-by header is not retried", async () => {
+    const fetch = makeFetch({
+      [`${SITE_URL}/login`]: [
+        () =>
+          new Response("<html></html>", {
+            status: 200,
+            headers: { "content-type": "text/html", "content-security-policy": CSP_OK, "x-powered-by": "Next.js" },
+          }),
+        htmlOk,
+      ],
+    });
+    const sleep = makeSleep();
+    const result = await checkLive({ siteUrl: SITE_URL, fetch, sleep });
+    assert.equal(result.ok, false);
+    assert.equal(result.results[0].reason, "x-powered-by");
+    assert.equal(fetch.calls.length, 1);
+    assert.equal(sleep.calls.length, 0);
   });
 });
 
