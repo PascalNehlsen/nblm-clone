@@ -59,6 +59,24 @@ export async function soleOwnedNotebooks(client: SupabaseClient, userId: string)
   return owned.filter((id) => !coOwned.has(id));
 }
 
+// What the deletion dialog names: notebooks the user owns alone, and how many of them have
+// other members (who lose access). null on any lookup error, never a partial count: the
+// dialog then warns in general terms instead of understating what goes.
+export async function deletionSummary(client: SupabaseClient, userId: string): Promise<{ sole: number; shared: number } | null> {
+  try {
+    const sole = await soleOwnedNotebooks(client, userId);
+    const shared = new Set<string>();
+    for (let i = 0; i < sole.length; i += 100) {
+      for (const m of await memberships(client, { notebookIds: sole.slice(i, i + 100) })) {
+        if (m.user_id !== userId) shared.add(m.notebook_id);
+      }
+    }
+    return { sole: sole.length, shared: shared.size };
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteAccount(deps: DeleteAccountDeps, form: FormData): Promise<{ redirectTo: string }> {
   const { data } = await deps.client.auth.getUser();
   const user = data.user;

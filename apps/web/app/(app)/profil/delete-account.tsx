@@ -9,7 +9,13 @@ function notebooks(n: number): string {
 
 // The danger zone on /profil. The dialog says what goes: every notebook the user owns alone,
 // also shared ones (their members lose access). Demo users end their demo the same way.
-export function DeleteAccount({ anonymous, sole, shared }: { anonymous: boolean; sole: number; shared: number }) {
+export function DeleteAccount({
+  anonymous,
+  summary,
+}: {
+  anonymous: boolean;
+  summary: { sole: number; shared: number } | null;
+}) {
   const label = anonymous ? "Demo beenden und Daten löschen" : "Konto löschen";
   return (
     <section className="danger-zone" aria-label={label}>
@@ -21,10 +27,12 @@ export function DeleteAccount({ anonymous, sole, shared }: { anonymous: boolean;
         title={`${label}?`}
         confirmLabel="Endgültig löschen"
       >
-        {sole === 0
+        {summary === null
+          ? "Dein Konto wird gelöscht. Wie viele Notizbücher betroffen sind, konnte nicht ermittelt werden. Alle Notizbücher, die nur dir gehören, werden gelöscht, auch geteilte."
+          : summary.sole === 0
           ? "Dein Konto wird gelöscht. Du besitzt kein Notizbuch allein; deine Mitgliedschaften und Fragen in fremden Notizbüchern werden entfernt."
-          : `Dein Konto wird gelöscht. ${notebooks(sole)} mit allen Quellen, Abschnitten, Fragen und Dateien gelöscht.` +
-            (shared > 0 ? ` ${shared} davon geteilt: Die Mitglieder verlieren den Zugriff.` : "")}{" "}
+          : `Dein Konto wird gelöscht. ${notebooks(summary.sole)} mit allen Quellen, Abschnitten, Fragen und Dateien gelöscht.` +
+            (summary.shared > 0 ? ` ${summary.shared} davon geteilt: Die Mitglieder verlieren den Zugriff.` : "")}{" "}
         Das lässt sich nicht rückgängig machen.
       </ConfirmAction>
     </section>

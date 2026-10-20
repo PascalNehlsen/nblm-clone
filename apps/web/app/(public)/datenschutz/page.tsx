@@ -88,7 +88,7 @@ export default function DatenschutzPage() {
         <li>Demo-Konten mit allen Inhalten: 24 Stunden, spätestens 24 Stunden und 15 Minuten.</li>
         <li>
           Quellen und ihre Abschnitte: bis du die Quelle oder das Notizbuch löschst. Fragen und Antworten: bis das
-          Notizbuch gelöscht wird. Dein Konto kannst du jederzeit im Profil selbst löschen: Notizbücher, die nur dir gehören, werden mit allen Quellen, Abschnitten, Fragen und Dateien gelöscht, deine Fragen in fremden Notizbüchern ebenso.
+          Notizbuch gelöscht wird. Dein Konto kannst du jederzeit im Profil selbst löschen: Notizbücher, die nur dir gehören, werden mit allen Quellen, Abschnitten, Fragen und Dateien gelöscht, deine Fragen in fremden Notizbüchern ebenso. Quellen, die du in fremde Notizbücher hochgeladen hast, bleiben dort, ohne Bezug zu dir.
         </li>
         <li>Protokoll der Rollenänderungen: 90 Tage.</li>
         <li>Verbrauchsdaten: 90 Tage mit Bezug zu Konto und Notizbuch, danach ohne diesen Bezug.</li>

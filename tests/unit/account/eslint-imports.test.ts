@@ -2,7 +2,8 @@
 // eslint.config.mjs, run through ESLint's Node API on virtual files (same technique as
 // tests/unit/eslint-imports.test.ts), must say:
 //   - lib/server/account/delete-account.ts alone may import lib/server/admin/accounts
-//   - lib/server/admin/accounts.ts alone (with usage.ts) may import @supabase/supabase-js there
+//   - lib/server/admin/usage.ts alone may import values from @supabase/supabase-js there
+//     (accounts.ts uses fetch: full SUPABASE_IMPORTS ban, type imports allowed)
 //   - nothing else may import it: not the profil server action, not call.ts, not any other file
 //     in lib/server/account/, lib/notebooks, lib/supabase or app/
 //   - the exceptions are narrow: delete-account.ts still may not import admin/usage, other
@@ -92,9 +93,28 @@ describe("the delete-account.ts exception is narrow", () => {
 });
 
 describe("lib/server/admin/accounts.ts may import the Supabase SDK, nothing else may via the admin directory", () => {
-  it("does not flag accounts.ts importing createClient from @supabase/supabase-js", async () => {
+  // This expectation flipped by an approved change: accounts.ts talks to the admin API through
+  // fetch, so it gets the full SUPABASE_IMPORTS ban (type imports allowed). usage.ts keeps its
+  // exception for @supabase/supabase-js.
+  it("flags accounts.ts importing a value (createClient) from @supabase/supabase-js", async () => {
     const messages = await lint(
       "apps/web/lib/server/admin/accounts.ts",
+      'import { createClient } from "@supabase/supabase-js";\nexport const x = createClient;\n',
+    );
+    expect(flagged(messages)).toBe(true);
+  });
+
+  it("does not flag accounts.ts importing a type from @supabase/supabase-js", async () => {
+    const messages = await lint(
+      "apps/web/lib/server/admin/accounts.ts",
+      'import type { SupabaseClient } from "@supabase/supabase-js";\nexport type C = SupabaseClient;\n',
+    );
+    expect(flagged(messages)).toBe(false);
+  });
+
+  it("still does not flag usage.ts importing createClient from @supabase/supabase-js", async () => {
+    const messages = await lint(
+      "apps/web/lib/server/admin/usage.ts",
       'import { createClient } from "@supabase/supabase-js";\nexport const x = createClient;\n',
     );
     expect(flagged(messages)).toBe(false);

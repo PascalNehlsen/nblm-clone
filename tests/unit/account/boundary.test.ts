@@ -143,6 +143,24 @@ describe("delete-account.ts imports by relative path only, and nothing request-b
   });
 });
 
+describe("the profil page uses deletionSummary for the dialog counts", () => {
+  const PAGE = path.join(webDir, "app/(app)/profil/page.tsx");
+  const NEUTRAL =
+    "Wie viele Notizbücher betroffen sind, konnte nicht ermittelt werden. Alle Notizbücher, die nur dir gehören, werden gelöscht, auch geteilte.";
+  const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
+
+  it("page.tsx imports and calls deletionSummary and no longer calls soleOwnedNotebooks", () => {
+    const content = read(PAGE);
+    expect(content).toMatch(/\bimport\b[^;]*\bdeletionSummary\b[^;]*from\s+["'][^"']*account\/delete-account["']/);
+    expect(content).toMatch(/\bdeletionSummary\s*\(/);
+    expect(content).not.toContain("soleOwnedNotebooks");
+  });
+
+  it("the neutral text for an unknown count appears in the profil page or its delete dialog", () => {
+    expect(read(PAGE) + read(UI)).toContain(NEUTRAL);
+  });
+});
+
 describe("the profil server action and UI", () => {
   it("actions.ts is a server action file that uses deleteAccount and never the admin module or an admin key", () => {
     expect(fs.existsSync(ACTIONS), "app/(app)/profil/actions.ts is missing").toBe(true);

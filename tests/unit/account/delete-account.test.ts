@@ -38,7 +38,7 @@ vi.mock("@/lib/notebooks/notebooks", async (importOriginal) => {
   return { ...original, deleteNotebook: deleteNotebookMock };
 });
 
-import { deleteAccount } from "@/lib/server/account/delete-account";
+import { deleteAccount, deletionSummary } from "@/lib/server/account/delete-account";
 
 type Role = "owner" | "editor" | "viewer";
 interface MemberRow {
@@ -70,6 +70,8 @@ interface State {
   user: FakeUser | null;
   members: MemberRow[];
   membersError: boolean;
+  membersErrorOnIn: boolean;
+  inCalls: number[];
   adminOk: boolean;
   log: string[];
   nextLate: number;
@@ -102,9 +104,10 @@ function query() {
   let limit = Number.POSITIVE_INFINITY;
   let head = false;
   let wantsCount = false;
+  let usedIn = false;
 
   const run = () => {
-    if (state.membersError) return { data: null, count: null, error: { message: "boom", code: "XX000" } };
+    if (state.membersError || (state.membersErrorOnIn && usedIn)) return { data: null, count: null, error: { message: "boom", code: "XX000" } };
     const matching = state.members.filter((row) => filters.every((f) => f(row)));
     const page = matching.slice(offset, offset + limit).map((row) => ({
       ...row,
@@ -121,7 +124,12 @@ function query() {
     },
     eq: (name: string, value: unknown) => (filters.push((r) => column(r, name) === value), api),
     neq: (name: string, value: unknown) => (filters.push((r) => column(r, name) !== value), api),
-    in: (name: string, values: unknown[]) => (filters.push((r) => values.includes(column(r, name))), api),
+    in: (name: string, values: unknown[]) => {
+      state.inCalls.push(values.length);
+      usedIn = true;
+      filters.push((r) => values.includes(column(r, name)));
+      return api;
+    },
     is: (name: string, value: unknown) => (filters.push((r) => column(r, name) === value), api),
     not: (name: string, operator: string, value: unknown) => {
       if (operator === "eq" || operator === "is") filters.push((r) => column(r, name) !== value);
@@ -211,6 +219,8 @@ beforeEach(() => {
     user: { id: ME, is_anonymous: false },
     members: baseMembers(),
     membersError: false,
+    membersErrorOnIn: false,
+    inCalls: [],
     adminOk: true,
     log: [],
     nextLate: 900,
@@ -449,6 +459,51 @@ describe("fails closed", () => {
 
     expect(result).toEqual({ redirectTo: "/profil?fehler=konto_loeschen" });
     expect(signOut).not.toHaveBeenCalled();
+  });
+});
+
+// deletionSummary(client, userId): Promise<{ sole: number; shared: number } | null>
+// sole = notebooks the user owns alone (same rule as soleOwnedNotebooks), shared = how many of
+// those have at least one other member (any role). Membership lookups by notebook id come in
+// batches of at most 100 ids. ANY lookup error returns null, never a partial count.
+describe("deletionSummary", () => {
+  it("counts sole and shared for the fixture (A sole, B sole and shared, C co-owned, D/E others')", async () => {
+    const { client } = makeDeps();
+    expect(await deletionSummary(client as never, ME)).toEqual({ sole: 2, shared: 1 });
+  });
+
+  it("a user without notebooks gets zero and zero", async () => {
+    state.members = state.members.filter((m) => m.user_id !== ME);
+    const { client } = makeDeps();
+    expect(await deletionSummary(client as never, ME)).toEqual({ sole: 0, shared: 0 });
+  });
+
+  it("returns null when the members query errors", async () => {
+    state.membersError = true;
+    const { client } = makeDeps();
+    expect(await deletionSummary(client as never, ME)).toBeNull();
+  });
+
+  it("returns null, not a partial count, when only the batched lookup errors", async () => {
+    state.membersErrorOnIn = true;
+    const { client } = makeDeps();
+    expect(await deletionSummary(client as never, ME)).toBeNull();
+  });
+
+  it("with 150 sole-owned notebooks every .in() carries at most 100 ids and the counts are right", async () => {
+    state.members = [];
+    for (let i = 0; i < 150; i++) {
+      const id = uuid(1000 + i);
+      state.members.push({ notebook_id: id, user_id: ME, role: "owner" });
+      if (i % 3 === 0) state.members.push({ notebook_id: id, user_id: EDITOR, role: "viewer" }); // 50 shared
+    }
+    const { client } = makeDeps();
+
+    const result = await deletionSummary(client as never, ME);
+
+    expect(result).toEqual({ sole: 150, shared: 50 });
+    expect(state.inCalls.length).toBeGreaterThanOrEqual(2);
+    for (const n of state.inCalls) expect(n).toBeLessThanOrEqual(100);
   });
 });
 
