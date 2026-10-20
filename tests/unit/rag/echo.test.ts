@@ -1,4 +1,4 @@
-// Echo strip (ADR 0018, spec .git/ECHO-SPEC.md "echo.ts"). The model sometimes repeats the
+// Echo strip (ADR 0018). The model sometimes repeats the
 // delimited source blocks. They must never reach the saved answer: blocks are removed through
 // their matching close tag, forged closes cannot end a block early, a block without a close
 // drops the rest, stray tags and the bare nonce go too.
@@ -164,5 +164,120 @@ describe("stripEcho: linear time", () => {
 
   it("200k characters of plain text", () => {
     expect(time("Wort ".repeat(40_000))).toBeLessThan(LIMIT_MS);
+  });
+});
+
+// Amendment 1 (ADR 0018) from here on.
+const P = NONCE.slice(0, 8);
+const S = NONCE.slice(8);
+
+describe("stripEcho: İ (U+0130) never shifts indexes", () => {
+  const I = "İ";
+
+  it("İ before an echoed block", () => {
+    const r = stripEcho(`${I}${I}${I} <quelle-${NONCE} nr="1">geheim</quelle-${NONCE}> Antwort`, NONCE);
+    expect(r.text).toBe(`${I}${I}${I}  Antwort`);
+    expect(r.stripped).toBe(1);
+  });
+
+  it("İ inside an echoed block", () => {
+    const r = stripEcho(`<quelle-${NONCE} nr="1">${I.repeat(40)} geheim</quelle-${NONCE}> Antwort`, NONCE);
+    expect(r.text).toBe("Antwort");
+    expect(r.stripped).toBe(1);
+  });
+
+  it("İ after an echoed block", () => {
+    const r = stripEcho(`<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}> Antwort ${I}${I}`, NONCE);
+    expect(r.text).toBe(`Antwort ${I}${I}`);
+  });
+
+  it("16 and more İ before a bare nonce", () => {
+    const r = stripEcho(`${I.repeat(20)}${NONCE} Antwort`, NONCE);
+    expect(r.text).toBe(`${I.repeat(20)} Antwort`);
+    expect(r.stripped).toBe(1);
+  });
+
+  it("İ before a stray close tag and before an uppercase nonce", () => {
+    expect(stripEcho(`${I.repeat(20)}</quelle-abc> Antwort`, NONCE).text).toBe(`${I.repeat(20)} Antwort`);
+    expect(stripEcho(`${I.repeat(20)}${NONCE.toUpperCase()} Antwort`, NONCE).text).toBe(`${I.repeat(20)} Antwort`);
+  });
+});
+
+describe("stripEcho: nested nonce and rebuilt tags", () => {
+  it("p + NONCE + s is removed completely", () => {
+    const r = stripEcho(`Anfang ${P}${NONCE}${S} Ende`, NONCE);
+    expect(r.text).toBe("Anfang  Ende");
+    expect(r.text.toLowerCase()).not.toContain(NONCE);
+    expect(r.stripped).toBeGreaterThanOrEqual(2);
+  });
+
+  it("nesting three deep is removed too", () => {
+    const r = stripEcho(`A ${P}${P}${NONCE}${S}${S} E`, NONCE);
+    expect(r.text.toLowerCase()).not.toContain(NONCE);
+    expect(r.text).toBe("A  E");
+  });
+
+  it("p + a whole echoed block + s leaves no nonce", () => {
+    const r = stripEcho(`Anfang ${P}<quelle-${NONCE} nr="1">x</quelle-${NONCE}>${S} Ende`, NONCE);
+    expect(r.text).toBe("Anfang  Ende");
+    expect(r.text.toLowerCase()).not.toContain(NONCE);
+  });
+
+  it("a tag rebuilt by removing the nonce is stripped", () => {
+    const r = stripEcho(`Antwort <quel${NONCE}le-1>x</quelle-1>`, NONCE);
+    expect(r.text).toBe("Antwort");
+    expect(r.text.toLowerCase()).not.toContain("<quelle");
+    expect(r.stripped).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a rebuilt close tag is stripped too", () => {
+    const r = stripEcho(`Eins </quel${NONCE}le-1> zwei`, NONCE);
+    expect(r.text).toBe("Eins  zwei");
+  });
+});
+
+describe("stripEcho: tag bounds", () => {
+  const A100 = "a".repeat(100);
+
+  it("an open tag with about 100 characters of attributes is not a tag; its text stays", () => {
+    const text = `<quelle-abc nr="1" ${A100}>x</quelle-abc> Antwort`;
+    // The long open tag is plain text; the ordinary stray close tag after it is removed.
+    expect(stripEcho(text, NONCE).text).toBe(`<quelle-abc nr="1" ${A100}>x Antwort`);
+  });
+
+  it("the nonce is still removed next to a long open tag", () => {
+    const r = stripEcho(`Vorher ${NONCE} <quelle-abc ${A100}>x Nachher`, NONCE);
+    expect(r.text).toBe(`Vorher  <quelle-abc ${A100}>x Nachher`);
+  });
+
+  it("a close tag padded with about 100 spaces is not a tag; its text stays", () => {
+    const pad = " ".repeat(100);
+    expect(stripEcho(`Vorher </quelle-abc${pad}> Nachher`, NONCE).text).toBe(`Vorher </quelle-abc${pad}> Nachher`);
+  });
+
+  it("the nonce is still removed inside a padded close tag text", () => {
+    const pad = " ".repeat(100);
+    expect(stripEcho(`Vorher </quelle-${NONCE}${pad}> Nachher`, NONCE).text).toBe(`Vorher </quelle-${pad}> Nachher`);
+  });
+
+  it("a close tag with up to 8 spaces before > ends a block", () => {
+    for (const n of [1, 8]) {
+      const text = `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(n)}> Antwort`;
+      expect(stripEcho(text, NONCE).text, `${n} spaces`).toBe("Antwort");
+    }
+  });
+
+  it("a close tag with 9 spaces before > does not end the block: the rest is dropped", () => {
+    const text = `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(9)}> Antwort`;
+    expect(stripEcho(text, NONCE).text).toBe("");
+  });
+
+  it("an open tag with 24 characters of attributes is a tag", () => {
+    expect(stripEcho(`<quelle-abc ${"a".repeat(24)}>x</quelle-abc> Antwort`, NONCE).text).toBe("Antwort");
+  });
+
+  it("an id of 33 characters is not a tag id", () => {
+    const id = "a".repeat(33);
+    expect(stripEcho(`Vor <quelle-${id}>x Nach`, NONCE).text).toBe(`Vor <quelle-${id}>x Nach`);
   });
 });

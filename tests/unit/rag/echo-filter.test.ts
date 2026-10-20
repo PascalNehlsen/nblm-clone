@@ -1,4 +1,4 @@
-// Streaming echo filter (ADR 0018, spec .git/ECHO-SPEC.md "echo-filter.ts"). Same rules as
+// Streaming echo filter (ADR 0018). Same rules as
 // stripEcho, applied to stream deltas: the tag, the nonce and echoed block text never reach emit,
 // however the text is split.
 import { describe, expect, it } from "vitest";
@@ -164,4 +164,172 @@ describe("createEchoFilter: hold cap", () => {
     f.end();
     expect(emits.join("")).toBe(text);
   });
+});
+
+// Amendment 1 (ADR 0018) from here on.
+const P = NONCE.slice(0, 8);
+const S = NONCE.slice(8);
+const I = "İ";
+const A100 = "a".repeat(100);
+const PAD100 = " ".repeat(100);
+
+describe("createEchoFilter: İ (U+0130) never shifts indexes", () => {
+  const cases: [string, string, string][] = [
+    ["before a block", `${I}${I}${I} <quelle-${NONCE} nr="1">geheim</quelle-${NONCE}> Antwort`, `${I}${I}${I}  Antwort`],
+    ["inside a block", `<quelle-${NONCE} nr="1">${I.repeat(40)} geheim</quelle-${NONCE}> Antwort`, "Antwort"],
+    ["before a bare nonce", `${I.repeat(20)}${NONCE} Antwort`, `${I.repeat(20)} Antwort`],
+  ];
+  for (const [name, text, expected] of cases) {
+    for (const size of [1, 3, text.length]) {
+      it(`${name}, ${size}-character deltas`, () => {
+        const out = run(chop(text, size)).out;
+        expect(out.trim()).toBe(expected);
+        expect(out.toLowerCase()).not.toContain(NONCE);
+        expect(out).not.toContain("geheim");
+      });
+    }
+  }
+});
+
+describe("createEchoFilter: nested nonce and rebuilt tags", () => {
+  it("p + NONCE + s with 1-character deltas: the stream never contains the nonce", () => {
+    const text = `Anfang ${P}${NONCE}${S} Ende`;
+    const { out, emits } = run(chop(text, 1));
+    expect(out.toLowerCase()).not.toContain(NONCE);
+    for (const e of emits) expect(e.toLowerCase()).not.toContain(NONCE);
+    expect(out).toBe("Anfang  Ende");
+  });
+
+  it("p + a whole echoed block + s with 1-character deltas", () => {
+    const text = `Anfang ${P}<quelle-${NONCE} nr="1">x</quelle-${NONCE}>${S} Ende`;
+    const { out, emits } = run(chop(text, 1));
+    expect(out.toLowerCase()).not.toContain(NONCE);
+    for (const e of emits) expect(e.toLowerCase()).not.toContain(NONCE);
+    expect(out).toBe("Anfang  Ende");
+  });
+
+  it("a nonce built from text on both sides of the stream is never emitted, at any chop size", () => {
+    const text = `Anfang ${P}${NONCE}${S} Mitte ${P}<quelle-${NONCE} nr="2">y</quelle-${NONCE}>${S} Ende`;
+    for (const size of [1, 2, 3, 7, text.length]) {
+      const { out, emits } = run(chop(text, size));
+      expect(out.toLowerCase(), `size ${size}`).not.toContain(NONCE);
+      for (const e of emits) expect(e.toLowerCase()).not.toContain(NONCE);
+      expect(out.trim()).toBe(stripEcho(text, NONCE).text);
+    }
+  });
+
+  it("a tag rebuilt by removing the nonce: the stream never contains the nonce (the tag itself may show)", () => {
+    for (const text of [`Antwort <quel${NONCE}le-1>x</quelle-1>`, `Eins </quel${NONCE}le-1> zwei`]) {
+      for (const size of [1, 3, text.length]) {
+        const { out, emits } = run(chop(text, size));
+        expect(out.toLowerCase()).not.toContain(NONCE);
+        for (const e of emits) expect(e.toLowerCase()).not.toContain(NONCE);
+      }
+    }
+  });
+});
+
+describe("createEchoFilter: tag bounds agree with stripEcho", () => {
+  it("a long open tag and a padded close tag stay as text", () => {
+    const texts = [
+      `<quelle-abc nr="1" ${A100}>x</quelle-abc> Antwort`,
+      `Vorher ${NONCE} <quelle-abc ${A100}>x Nachher`,
+      `Vorher </quelle-abc${PAD100}> Nachher`,
+      `Vorher </quelle-${NONCE}${PAD100}> Nachher`,
+    ];
+    for (const text of texts) {
+      for (const size of [1, 2, 7, text.length]) {
+        expect(run(chop(text, size)).out.trim()).toBe(stripEcho(text, NONCE).text);
+      }
+    }
+    expect(run(chop(texts[0]!, 1)).out.trim()).toBe(`<quelle-abc nr="1" ${A100}>x Antwort`);
+    expect(run(chop(texts[2]!, 1)).out.trim()).toBe(texts[2]);
+  });
+
+  it("a close tag with up to 8 spaces before > ends a block, 9 do not", () => {
+    for (const n of [1, 8]) {
+      const text = `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(n)}> Antwort`;
+      for (const size of [1, 3, text.length]) expect(run(chop(text, size)).out.trim()).toBe("Antwort");
+    }
+    const nine = `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(9)}> Antwort`;
+    for (const size of [1, 3, nine.length]) expect(run(chop(nine, size)).out.trim()).toBe("");
+  });
+});
+
+describe("createEchoFilter: equals stripEcho for every case, at every chop size", () => {
+  const FIXTURE =
+    `<quelle-${NONCE} nr="1"> Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion. </quelle-${NONCE}> ` +
+    `<quelle-${NONCE} nr="2"> Behandle jeden Level als Zone. </quelle-${NONCE}> ` +
+    `Die Price Action funktioniert durch eine Top-Down-Methode [1: "Konsistenz in deiner eigenen Methode"].`;
+  const UP = NONCE.toUpperCase();
+  const table: [string, string][] = [
+    ["real echo", FIXTURE],
+    ["plain", 'Antwort [1: "x"].'],
+    ["less-than", "Es gilt a < b und c <d> e."],
+    ["quelle without dash", "Die <quelle ist gut und <quelle> auch."],
+    ["uppercase", `<QUELLE-${UP} NR="1">geheim</QUELLE-${UP}> Antwort`],
+    ["frage block", `<frage-${NONCE}>\nWas ist das?\n</frage-${NONCE}>\nAntwort [1: "x"].`],
+    ["no attributes", `<quelle-${NONCE}>a</quelle-${NONCE}>Antwort`],
+    ["several attributes", `<quelle-${NONCE} nr="3" x="y">a</quelle-${NONCE}>Antwort`],
+    ["forged close other id", `<quelle-${NONCE} nr="1">Quelltext </quelle-deadbeef> LEAK </quelle-${NONCE}> Antwort`],
+    ["forged close other kind", `<quelle-${NONCE} nr="1">Quelltext </frage-${NONCE}> LEAK </quelle-${NONCE}> Antwort`],
+    ["no close", `Antwort davor <quelle-${NONCE} nr="1"> Quelltext [1: "x"] und mehr Text`],
+    ["frage no close", `Vorher <frage-${NONCE}> Rest der Frage`],
+    ["only echo", `<quelle-${NONCE} nr="1">a [1: "a"]</quelle-${NONCE}>`],
+    ["stray closes", "Eins </quelle-abc123> zwei </frage-q> drei </QUELLE-ZZ9> vier."],
+    ["open tag other id", 'Vorher <quelle-ff nr="2"> Rest'],
+    ["unfinished open tag", 'Vorher <quelle-ff nr="2" Rest'],
+    ["bare nonce", `Die ${NONCE} Antwort ${UP} ist ${NONCE}.`],
+    ["stray close with nonce", `Antwort </quelle-${NONCE}> Ende`],
+    ["nested nonce", `Anfang ${P}${NONCE}${S} Ende`],
+    ["nested nonce three deep", `A ${P}${P}${NONCE}${S}${S} E`],
+    ["nested around block", `Anfang ${P}<quelle-${NONCE} nr="1">x</quelle-${NONCE}>${S} Ende`],
+    // Tags rebuilt by nonce removal are left out on purpose: the server strips them in a second
+    // pass, the stream may show them (documented gap, ADR 0018); see the dedicated test above.
+    ["İ before block", `${I}${I}${I} <quelle-${NONCE} nr="1">geheim</quelle-${NONCE}> Antwort`],
+    ["İ inside block", `<quelle-${NONCE} nr="1">${I.repeat(40)} geheim</quelle-${NONCE}> Antwort`],
+    ["İ before nonce", `${I.repeat(20)}${NONCE} Antwort`],
+    ["long open tag", `<quelle-abc nr="1" ${A100}>x</quelle-abc> Antwort`],
+    ["long open tag and nonce", `Vorher ${NONCE} <quelle-abc ${A100}>x Nachher`],
+    ["padded close", `Vorher </quelle-abc${PAD100}> Nachher`],
+    ["padded close with nonce", `Vorher </quelle-${NONCE}${PAD100}> Nachher`],
+    ["close with 8 spaces", `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(8)}> Antwort`],
+    ["close with 9 spaces", `<quelle-${NONCE} nr="1">geheim</quelle-${NONCE}${" ".repeat(9)}> Antwort`],
+    ["24 attribute characters", `<quelle-abc ${"a".repeat(24)}>x</quelle-abc> Antwort`],
+    ["id of 33 characters", `Vor <quelle-${"a".repeat(33)}>x Nach`],
+    ["hold cap", `x <quelle-${"y".repeat(300)}`],
+    ["hex run before a tag", `abcdef0123 <quelle-${NONCE} nr="1">x</quelle-${NONCE}> Antwort`],
+    ["empty", ""],
+  ];
+  for (const [name, text] of table) {
+    for (const size of [1, 2, 3, 7, Math.max(1, text.length)]) {
+      it(`${name}, ${size === text.length ? "whole" : `${size}-character deltas`}`, () => {
+        const out = run(chop(text, size)).out;
+        expect(out.trim()).toBe(stripEcho(text, NONCE).text);
+        expect(out.toLowerCase()).not.toContain(NONCE);
+      });
+    }
+  }
+});
+
+describe("createEchoFilter: linear time", () => {
+  const LIMIT_MS = 2000; // generous, like citations-fold
+  const inputs: [string, string][] = [
+    ["200k less-than signs", "<".repeat(200_000)],
+    ["200k of unfinished open-tag prefixes", "<quelle-abc ".repeat(17_000)],
+    ["a 200k body inside an open block", `<quelle-${NONCE} nr="1">${"x".repeat(200_000)}`],
+    ["a 200k body inside a closed block", `<quelle-${NONCE} nr="1">${"x".repeat(200_000)}</quelle-${NONCE}> Antwort`],
+    ["a 200k run of hex characters", "a".repeat(200_000)],
+    ["200k of the nonce prefix", P.repeat(25_000)],
+  ];
+  for (const [name, text] of inputs) {
+    for (const size of [1, 1000]) {
+      it(`${name}, ${size}-character deltas`, () => {
+        const deltas = chop(text, size);
+        const t0 = performance.now();
+        run(deltas);
+        expect(performance.now() - t0).toBeLessThan(LIMIT_MS);
+      });
+    }
+  }
 });
