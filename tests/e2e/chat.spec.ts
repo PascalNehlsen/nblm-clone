@@ -203,6 +203,89 @@ test.describe("chat layout", () => {
   });
 });
 
+test.describe("chat scrolling", () => {
+  async function atBottom(list: ReturnType<ReturnType<typeof chatSection>["getByRole"]>): Promise<boolean> {
+    return list.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 2);
+  }
+
+  test("a long history scrolls inside the thread, keeps the composer visible and starts at the bottom", async ({
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-scroll");
+    await seedChunk(owner, id);
+    for (let i = 1; i <= 15; i++) {
+      await seedPair(
+        owner,
+        id,
+        `Frage Nummer ${i}?`,
+        `Antwort Nummer ${i}. ${"Dies ist ein längerer Absatz, der Platz im Verlauf braucht. ".repeat(4)}`,
+        [],
+      );
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const list = section.getByRole("list").first();
+    await expect(section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." })).toHaveCount(1);
+
+    const box = (await list.boundingBox())!;
+    expect(box).toBeTruthy();
+    expect(box.height).toBeLessThan(900);
+    // The thread is the scroll container, it does not just grow.
+    const scrollable = await list.evaluate((el) => el.scrollHeight > el.clientHeight);
+    expect(scrollable).toBe(true);
+
+    await expect(section.getByLabel("Frage")).toBeInViewport();
+
+    await expect.poll(() => atBottom(list)).toBe(true);
+    await expect(
+      section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." }),
+    ).toBeInViewport();
+
+    await context.close();
+  });
+
+  test("after asking a new question the thread is scrolled to the bottom again", async ({ browser }) => {
+    test.setTimeout(180_000);
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-scroll-ask");
+    await seedChunk(owner, id);
+    for (let i = 1; i <= 15; i++) {
+      await seedPair(owner, id, `Frage Nummer ${i}?`, `Antwort Nummer ${i}. ${"Mehr Text für die Höhe. ".repeat(8)}`, []);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const list = section.getByRole("list").first();
+    await expect(section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." })).toHaveCount(1);
+
+    // Scroll away from the bottom first, so "again at the bottom" is a real change.
+    await list.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+
+    await section.getByLabel("Frage").fill("Wie viele Personen arbeiten dort?");
+    await section.getByRole("button", { name: "Fragen", exact: true }).click();
+
+    await expect(
+      section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" }),
+    ).toHaveCount(1);
+    await expect(section.getByRole("alert").filter({ hasText: "Modell nicht konfiguriert" })).toBeVisible({
+      timeout: 45_000,
+    });
+
+    await expect.poll(() => atBottom(list)).toBe(true);
+    await expect(
+      section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" }),
+    ).toBeInViewport();
+    await expect(section.getByLabel("Frage")).toBeInViewport();
+
+    await context.close();
+  });
+});
+
 test.describe("asking a question", () => {
   test("without a configured model the alert says Modell nicht konfiguriert and no pending text remains", async ({
     browser,

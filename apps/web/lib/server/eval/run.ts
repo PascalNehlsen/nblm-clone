@@ -45,8 +45,8 @@ interface Job {
 function jobs(): Job[] {
   const quality = chunksFor(QUALITY_FIXTURES);
   return [
-    ...EVAL_CASES.facts.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome) => scoreFact(c, o, quality) })),
-    ...EVAL_CASES.abstention.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome) => scoreAbstention(o) })),
+    ...EVAL_CASES.facts.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome, nonce: string) => scoreFact(c, o, quality, { nonce }) })),
+    ...EVAL_CASES.abstention.map((c) => ({ id: c.id, question: c.question, chunks: quality, score: (o: TurnOutcome, nonce: string) => scoreAbstention(o, { nonce }) })),
     ...EVAL_CASES.security.map((c) => {
       const chunks = chunksFor([c.fixture]);
       return {

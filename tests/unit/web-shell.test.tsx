@@ -13,8 +13,8 @@ import Page from "../../apps/web/app/(app)/page";
 // internal `import { createClient } from "@/lib/supabase/server"` and
 // `import { listNotebooks } from "@/lib/notebooks/notebooks"` resolve to
 // these mocks (same technique as tests/unit/auth/callback.test.ts).
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(async () => ({
+vi.mock("@/lib/supabase/server", () => {
+  const fakeClient = {
     auth: {
       async getUser() {
         return {
@@ -23,8 +23,15 @@ vi.mock("@/lib/supabase/server", () => ({
         };
       },
     },
-  })),
-}));
+  };
+  return {
+    createClient: vi.fn(async () => fakeClient),
+    getVerifiedUser: vi.fn(async () => ({
+      supabase: fakeClient,
+      user: { id: "11111111-1111-4111-8111-111111111111", is_anonymous: false },
+    })),
+  };
+});
 
 vi.mock("@/lib/notebooks/notebooks", () => ({
   listNotebooks: vi.fn(async () => []),

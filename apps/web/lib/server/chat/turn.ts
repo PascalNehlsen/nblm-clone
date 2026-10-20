@@ -4,6 +4,8 @@ import { validateCitations, type ValidCitation } from "@/lib/rag/citations";
 import { ABSTENTION, buildChatInput } from "@/lib/rag/prompt";
 import type { RetrievalResult } from "@/lib/rag/retrieve";
 import { createMarkerFilter } from "@/lib/rag/stream-filter";
+import { stripEcho } from "@/lib/rag/echo";
+import { createEchoFilter } from "@/lib/rag/echo-filter";
 import { normalizeText } from "@/lib/server/ingest/normalize";
 import type { ModelCallRequest, ModelCallResult } from "@/lib/server/model/call";
 
@@ -36,6 +38,8 @@ export interface TurnLogEvent {
   droppedMalformed: number | null;
   droppedOverLimit: number | null;
   citationsFolded: number | null;
+  // Echoed prompt blocks, stray tags and nonce occurrences removed from the answer (ADR 0018).
+  echoStripped: number | null;
   ms: number;
 }
 
@@ -73,6 +77,7 @@ export async function runTurn(
     droppedMalformed: null as number | null,
     droppedOverLimit: null as number | null,
     citationsFolded: null as number | null,
+    echoStripped: null as number | null,
   };
   const finish = (result: TurnResult): TurnResult => {
     deps.log({
@@ -109,19 +114,25 @@ export async function runTurn(
     stats.droppedMalformed = 0;
     stats.droppedOverLimit = 0;
     stats.citationsFolded = 0;
+    stats.echoStripped = 0;
     return finish({ ok: true, message: { id, content: ABSTENTION, citations: [], abstained: true } });
   }
 
-  const filter = createMarkerFilter(args.onDelta ?? (() => undefined));
+  // One nonce per turn: it delimits the blocks in the prompt and is stripped from the answer.
+  const nonce = deps.nonce();
+  const markers = createMarkerFilter(args.onDelta ?? (() => undefined));
+  const filter = createEchoFilter(nonce, (text) => markers.push(text));
   let saved: TurnMessage | null = null;
 
   const result = await deps.callChat({
     kind: "chat",
     notebookId: args.notebookId,
-    input: buildChatInput(question, chunks, deps.nonce()),
+    input: buildChatInput(question, chunks, nonce),
     onDelta: (text) => filter.push(text),
     linkMessage: async (output) => {
-      const checked = validateCitations(output.text, chunks);
+      // Echoed source blocks go first, so markers inside them never count as citations.
+      const echo = stripEcho(output.text, nonce);
+      const checked = validateCitations(echo.text, chunks);
       // An answer without one valid citation is not grounded in the sources: abstain.
       const abstained = checked.citations.length === 0;
       const message: TurnMessage = {
@@ -145,6 +156,7 @@ export async function runTurn(
       stats.droppedMalformed = checked.droppedBy.malformed;
       stats.droppedOverLimit = checked.droppedBy.over_limit;
       stats.citationsFolded = checked.folded;
+      stats.echoStripped = echo.stripped;
       saved = message;
       return message.id;
     },
@@ -152,6 +164,7 @@ export async function runTurn(
 
   if (!result.ok) return finish({ ok: false, reason: result.category });
   filter.end();
+  markers.end();
   if (!saved) return finish({ ok: false, reason: "message_link_failed" });
   return finish({ ok: true, message: saved });
 }

@@ -121,6 +121,33 @@ test.describe("getting around", () => {
   });
 });
 
+test.describe("navigation feedback", () => {
+  test("the nav progress bar is active while a notebook loads and gone once it shows", async ({ context }) => {
+    await context.addCookies(await seedLocalSession("navigation-e2e-nav-progress"));
+    const page = await context.newPage();
+    const title = `Fortschritt ${Date.now()}`;
+    await createNotebookViaUi(page, title);
+
+    await page.goto("/");
+    const card = page.locator("main").locator('a[href^="/notebooks/"]').filter({ hasText: title }).first();
+    await expect(card).toBeVisible();
+    const progress = page.locator(".nav-progress");
+    await expect(progress).not.toHaveAttribute("data-active", /.*/);
+
+    // Delay the document/RSC request for the notebook so the pending state is observable.
+    await page.route(/\/notebooks\/[0-9a-f-]{36}/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await route.continue();
+    });
+
+    await card.click();
+    await expect(progress).toHaveAttribute("data-active", /.*/, { timeout: 900 });
+    await expect(page).toHaveURL(/\/notebooks\/[0-9a-f-]{36}/);
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
+    await expect(progress).not.toHaveAttribute("data-active", /.*/);
+  });
+});
+
 async function expectProfilInTopBar(page: Page): Promise<void> {
   const links = page.getByRole("link", { name: "Profil", exact: true });
   await expect(links).toHaveCount(1);

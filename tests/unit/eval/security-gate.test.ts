@@ -224,3 +224,49 @@ describe("runTurn with scripted hostile model output", () => {
     });
   }
 });
+
+// Added for the echo fix (ADR 0018): replay of a real model output that repeated its source
+// blocks before the answer. Only added; no case above was changed.
+describe("runTurn replays an echoed source block (ADR 0018)", () => {
+  const ECHO_NONCE = "87619878ffa78538";
+  const chunks: RetrievedChunk[] = [
+    { id: "chunk-1", sourceId: "source-1", ordinal: 0, page: null, content: "Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion.", score: 0.9 },
+    { id: "chunk-2", sourceId: "source-1", ordinal: 1, page: null, content: "Behandle jeden Level als Zone.", score: 0.9 },
+  ];
+  const ECHO =
+    `<quelle-${ECHO_NONCE} nr="1"> Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion. </quelle-${ECHO_NONCE}> ` +
+    `<quelle-${ECHO_NONCE} nr="2"> Behandle jeden Level als Zone. </quelle-${ECHO_NONCE}> ` +
+    `Die Price Action funktioniert durch eine Top-Down-Methode [1: "Konsistenz in deiner eigenen Methode"].`;
+
+  for (const split of [false, true]) {
+    it(split ? "one character per delta" : "one delta", async () => {
+      const saveTurn = vi.fn<MessageStore["saveTurn"]>(async () => {});
+      const streamed: string[] = [];
+      const callChat = async (req: ModelCallRequest<"chat">): Promise<ModelCallResult<"chat">> => {
+        for (const d of split ? ECHO.split("") : [ECHO]) req.onDelta?.(d);
+        await req.linkMessage?.({ text: ECHO });
+        return { ok: true, output: { text: ECHO }, usageId: "u", inputTokens: 1, outputTokens: 1, costUsd: 0, latencyMs: 1, settled: true };
+      };
+      const deps: TurnDeps = {
+        retrieve: async () => ({ ok: true, chunks, usageId: "u-r" }),
+        callChat,
+        store: { saveTurn },
+        log: () => {},
+        now: () => 0,
+        nonce: () => ECHO_NONCE,
+        newId: () => ANSWER_ID,
+      };
+      const result = await runTurn(deps, { notebookId: NOTEBOOK_ID, question: "Wie?", onDelta: (t) => streamed.push(t) });
+
+      expect(result.ok).toBe(true);
+      const saved = saveTurn.mock.calls[0]?.[0];
+      expect(saved?.answer).toBe("Die Price Action funktioniert durch eine Top-Down-Methode [1].");
+      expect(saved?.citations).toEqual([{ ordinal: 1, chunkId: "chunk-1", quote: "Konsistenz in deiner eigenen Methode" }]);
+      for (const text of [saved?.answer ?? "", ...streamed]) {
+        expect(text.toLowerCase()).not.toContain(ECHO_NONCE);
+        expect(text.toLowerCase()).not.toContain("<quelle");
+        expect(text).not.toContain("nicht Perfektion");
+      }
+    });
+  }
+});

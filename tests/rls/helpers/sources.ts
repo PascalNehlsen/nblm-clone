@@ -138,10 +138,11 @@ export async function setSourceStatus(
   actor: SignedInUser,
   sourceId: string,
   status: SourceStatus,
+  errorCategory = "extract_failed",
 ): Promise<void> {
   const { data, error } = await actor.client
     .from("sources")
-    .update({ status, error_category: status === "failed" ? "extract_failed" : null })
+    .update({ status, error_category: status === "failed" ? errorCategory : null })
     .eq("id", sourceId)
     .select("id");
   if (error || !data || data.length !== 1) {

@@ -242,6 +242,7 @@ describe("runTurn: logs", () => {
       expect(text).not.toContain(CHUNK_SENTINEL);
       expect(text).not.toContain(ANSWER_SENTINEL);
       // Extended for the fold fix: five drop-reason and folded counters were added.
+      // Extended again for the echo fix (ADR 0018): echoStripped (a count) was added.
       expect(Object.keys(h.logs[0] ?? {}).sort()).toEqual(
         [
           "abstained",
@@ -253,6 +254,7 @@ describe("runTurn: logs", () => {
           "droppedNotInChunk",
           "droppedOverLimit",
           "droppedUnknownChunk",
+          "echoStripped",
           "event",
           "ms",
           "outcome",
@@ -319,6 +321,139 @@ describe("runTurn: logs", () => {
       citationsFolded: 0,
     });
     expect(JSON.stringify(h.logs)).not.toContain(ANSWER_SENTINEL);
+  });
+});
+
+describe("runTurn: echoed source blocks (ADR 0018)", () => {
+  const ECHO_NONCE = "87619878ffa78538";
+  const ECHO_CHUNKS = [
+    chunk(1, "Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion."),
+    chunk(2, "Behandle jeden Level als Zone."),
+  ];
+  const ECHO_OUTPUT =
+    `<quelle-${ECHO_NONCE} nr="1"> Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion. </quelle-${ECHO_NONCE}> ` +
+    `<quelle-${ECHO_NONCE} nr="2"> Behandle jeden Level als Zone. </quelle-${ECHO_NONCE}> ` +
+    `Die Price Action funktioniert durch eine Top-Down-Methode [1: "Konsistenz in deiner eigenen Methode"].`;
+
+  function echoHarness(text: string, chars = false): Harness & { nonceCalls: () => number } {
+    const h = harness({
+      retrieval: { ok: true, chunks: ECHO_CHUNKS, usageId: "u-r" },
+      chat: { kind: "ok", deltas: chars ? text.split("") : [text] },
+    });
+    const nonce = vi.fn(() => ECHO_NONCE);
+    h.deps.nonce = nonce;
+    return Object.assign(h, { nonceCalls: () => nonce.mock.calls.length });
+  }
+
+  it("saves the answer without nonce or tags, with the valid citation renumbered", async () => {
+    const h = echoHarness(ECHO_OUTPUT);
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
+    const answer = "Die Price Action funktioniert durch eine Top-Down-Methode [1].";
+    const citations = [{ ordinal: 1, chunkId: "chunk-1", quote: "Konsistenz in deiner eigenen Methode" }];
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer, citations }));
+    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: answer, citations, abstained: false } });
+    const saved = JSON.stringify(h.saveTurn.mock.calls);
+    expect(saved).not.toContain(ECHO_NONCE);
+    expect(saved).not.toContain("<quelle");
+    expect(saved).not.toContain("nicht Perfektion");
+  });
+
+  it("asks for the nonce once per turn", async () => {
+    const h = echoHarness(ECHO_OUTPUT);
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
+    expect(h.nonceCalls()).toBe(1);
+  });
+
+  it("markers inside echoed blocks never count: only the marker after them is a citation", async () => {
+    const text =
+      `<quelle-${ECHO_NONCE} nr="1"> Text [1: "Konsistenz in deiner eigenen Methode"] </quelle-${ECHO_NONCE}> ` +
+      `Antwort [2: "Behandle jeden Level"].`;
+    const h = echoHarness(text);
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
+    expect(r).toMatchObject({
+      ok: true,
+      message: {
+        content: "Antwort [1].",
+        citations: [{ ordinal: 1, chunkId: "chunk-2", quote: "Behandle jeden Level" }],
+        abstained: false,
+      },
+    });
+  });
+
+  it("only echoed blocks abstain with zero citations, even with valid markers inside the blocks", async () => {
+    const text =
+      `<quelle-${ECHO_NONCE} nr="1"> Entscheidend ist Konsistenz in deiner eigenen Methode, nicht Perfektion. ` +
+      `[1: "Konsistenz in deiner eigenen Methode"] </quelle-${ECHO_NONCE}> ` +
+      `<quelle-${ECHO_NONCE} nr="2"> Behandle jeden Level als Zone. [2: "Behandle jeden Level"] </quelle-${ECHO_NONCE}>`;
+    const h = echoHarness(text);
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
+    expect(h.saveTurn).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+    expect(r).toEqual({ ok: true, message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true } });
+    expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 0, abstained: true });
+    expect(h.logs[0]?.echoStripped).toBeGreaterThanOrEqual(1);
+  });
+
+  it("an unclosed echoed block drops the rest, so a citation after it does not count", async () => {
+    const text = `<quelle-${ECHO_NONCE} nr="1"> Text und Antwort [1: "Konsistenz in deiner eigenen Methode"].`;
+    const h = echoHarness(text);
+    const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?" });
+    expect(r).toMatchObject({ ok: true, message: { content: ABSTENTION, citations: [], abstained: true } });
+  });
+
+  for (const chars of [false, true]) {
+    it(`no streamed chunk contains the nonce, a tag or source text (${chars ? "one character" : "one"} delta)`, async () => {
+      const h = echoHarness(ECHO_OUTPUT, chars);
+      const seen: string[] = [];
+      await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?", onDelta: (t) => seen.push(t) });
+      const streamed = seen.join("");
+      expect(streamed).toContain("Die Price Action funktioniert durch eine Top-Down-Methode");
+      expect(streamed).not.toContain("[1");
+      expect(streamed).not.toContain("nicht Perfektion");
+      expect(streamed).not.toContain("Zone");
+      for (const s of [streamed, ...seen]) {
+        expect(s.toLowerCase()).not.toContain(ECHO_NONCE);
+        expect(s.toLowerCase()).not.toContain("<quelle");
+      }
+    });
+  }
+
+  it("nothing is streamed for an echo-only output", async () => {
+    const h = echoHarness(`<quelle-${ECHO_NONCE} nr="1"> Entscheidend ist Konsistenz </quelle-${ECHO_NONCE}>`, true);
+    const seen: string[] = [];
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wie?", onDelta: (t) => seen.push(t) });
+    expect(seen.join("").trim()).toBe("");
+  });
+
+  it("the log counts what was stripped and holds no nonce or text", async () => {
+    const h = echoHarness(ECHO_OUTPUT);
+    await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: QUESTION_SENTINEL });
+    expect(h.logs).toHaveLength(1);
+    expect(h.logs[0]?.echoStripped).toBeGreaterThanOrEqual(1);
+    expect(typeof h.logs[0]?.echoStripped).toBe("number");
+    const text = JSON.stringify(h.logs);
+    expect(text).not.toContain(ECHO_NONCE);
+    expect(text).not.toContain("Perfektion");
+    expect(text).not.toContain("Price Action");
+  });
+
+  it("echoStripped is 0 for a clean answer, 0 on the no-chunks path, null on failure paths", async () => {
+    const clean = harness();
+    await runTurn(clean.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(clean.logs[0]?.echoStripped).toBe(0);
+
+    const none = harness({ retrieval: { ok: true, chunks: [], usageId: "u-r" } });
+    await runTurn(none.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+    expect(none.logs[0]?.echoStripped).toBe(0);
+
+    const failing: Harness[] = [
+      harness({ retrieval: { ok: false, reason: "not_found" } }),
+      harness({ chat: { kind: "refused", category: "budget_exceeded" } }),
+      harness({ saveThrows: true }),
+    ];
+    for (const h of failing) {
+      await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.logs[0]).toMatchObject({ outcome: "failed", echoStripped: null });
+    }
   });
 });
 
