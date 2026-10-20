@@ -48,6 +48,7 @@ export default async function LoginPage({
       </div>
       <div className="login-card" data-tilt="3">
         <h1>Anmelden</h1>
+        {params.konto === "geloescht" ? <p role="status">Dein Konto wurde gelöscht.</p> : null}
         {message ? <p role="status">{message}</p> : null}
         <form action={signInWithGitHub}>
           <input type="hidden" name="next" value={next} />

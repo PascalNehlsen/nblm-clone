@@ -41,7 +41,10 @@ function collectSourceFiles(dir: string): string[] {
 // "SECRET_KEY" (the SUPABASE_SECRET_KEY env var name), "sb_secret_" (the key-shape
 // check) and "service_role" (the JWT role check), so it needs a narrow, explicit
 // exemption from the substring scan below -- every other file stays covered.
-const EXEMPT_FROM_SUBSTRING_SCAN = ["lib/server/admin/usage.ts"];
+// Account deletion adds lib/server/admin/accounts.ts as the second such module (same key-shape
+// allowlist, same reasons). Nothing else is exempted: delete-account.ts must not mention any
+// of these substrings (tests/unit/account/boundary.test.ts pins the rest of that boundary).
+const EXEMPT_FROM_SUBSTRING_SCAN = ["lib/server/admin/usage.ts", "lib/server/admin/accounts.ts"];
 
 // The exemption logic itself, as a pure function over synthetic files, so a
 // forbidden substring in some other (non-exempt) file is still proven to fail
@@ -112,7 +115,14 @@ describe("boundary scan: no admin-credential-shaped substrings under apps/web", 
 // nothing outside the two files ADR 0006 names may reference the admin module
 // path at all, in any import form.
 const ADMIN_REFERENCE_SUBSTRINGS = ["server/admin", "admin/usage"];
-const ALLOWED_ADMIN_REFERENCE_FILES = ["lib/server/model/call.ts", "lib/server/admin/usage.ts"];
+// lib/server/admin/accounts.ts joins its sibling here (account deletion). Its only importer,
+// lib/server/account/delete-account.ts, is NOT listed: it must reach it by a relative
+// "../admin/accounts" specifier, which neither needle matches.
+const ALLOWED_ADMIN_REFERENCE_FILES = [
+  "lib/server/model/call.ts",
+  "lib/server/admin/usage.ts",
+  "lib/server/admin/accounts.ts",
+];
 
 describe("boundary scan: only call.ts and admin/usage.ts may reference the admin module path", () => {
   it("a dynamic import of the admin module elsewhere is caught; the same text in call.ts is not", () => {
