@@ -34,4 +34,4 @@ select id, email from auth.users where raw_app_meta_data -> 'ops' = 'true'::json
 
 ## When the page says "Die Betriebsdaten konnten nicht geladen werden"
 
-The app has no `SUPABASE_SECRET_KEY` (Preview never has one) or the RPC failed. Check the Vercel function logs for `ops store:` messages, which carry no data. Run `select public.ops_summary(7);` as `service_role` in the SQL editor (`set local role service_role;` in a transaction) to see the raw result.
+The app has no `SUPABASE_SECRET_KEY` (Preview never has one) or the RPC failed. The Vercel function logs show `ops store: summary failed` (a fixed line without data). Run `select public.ops_summary(7);` as `service_role` in the SQL editor (`set local role service_role;` in a transaction) to see the raw result.

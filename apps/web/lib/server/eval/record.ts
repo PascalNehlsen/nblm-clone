@@ -7,6 +7,8 @@ import type { EvalResult } from "./run";
 // Stores the score of a live eval run for the ops page (ADR 0023): counts only. ok mirrors the
 // develop gate: every security case and at least 5 quality cases passed. Errors reach the
 // caller; the eval route ignores them, so recording never changes an eval result.
+// Same threshold as the develop gate in scripts/eval.mjs (quality needs 5 of the cases);
+// change both together.
 const QUALITY_MIN = 5;
 
 export async function recordEvalResult(result: EvalResult): Promise<void> {

@@ -28,8 +28,8 @@ test.describe("ops: signed-in user without the operator flag", () => {
     await expect(page.getByText("Kosten pro Tag")).toHaveCount(0);
   });
 
-  test("a query string does not change that (/ops?days=30 is a 404 too)", async ({ page }) => {
-    const response = await page.goto("/ops?days=30");
+  test("a query string does not change that (/ops?tage=30 is a 404 too)", async ({ page }) => {
+    const response = await page.goto("/ops?tage=30");
     expect(response?.status()).toBe(404);
   });
 

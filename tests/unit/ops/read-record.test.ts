@@ -42,12 +42,21 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+// SIGNATURE CHANGE (approved fix after the reviewer FAIL, PR #63): loadOpsSummary now takes the
+// verified user first, loadOpsSummary(user, days, now?), and checks isOperator(user) itself. The
+// layout alone is not enough: client-side navigation does not re-run it (ADR 0005). The calls
+// below were loadOpsSummary(days, NOW) before; only the signature changed, not what is asserted.
+type OpsUser = Parameters<typeof import("@/lib/server/ops/access").isOperator>[0];
+const asUser = (over: Record<string, unknown>): OpsUser =>
+  ({ id: "11111111-1111-4111-8111-111111111111", ...over }) as unknown as OpsUser;
+const OPERATOR = asUser({ app_metadata: { ops: true } });
+
 describe("loadOpsSummary", () => {
   it.each([7, 30] as const)("reads %s days through the admin module and returns the parsed summary", async (days) => {
     readOpsSummary.mockResolvedValue({ ...RAW, days });
     const { loadOpsSummary } = await import("@/lib/server/ops/read");
 
-    const out = await loadOpsSummary(days, NOW);
+    const out = await loadOpsSummary(OPERATOR, days, NOW);
 
     expect(readOpsSummary).toHaveBeenCalledTimes(1);
     expect(readOpsSummary).toHaveBeenCalledWith(days);
@@ -58,13 +67,52 @@ describe("loadOpsSummary", () => {
   it("throws when the result does not match the contract", async () => {
     readOpsSummary.mockResolvedValue({ ...RAW, user_id: "11111111-1111-4111-8111-111111111111" });
     const { loadOpsSummary } = await import("@/lib/server/ops/read");
-    await expect(loadOpsSummary(7, NOW)).rejects.toThrow();
+    await expect(loadOpsSummary(OPERATOR, 7, NOW)).rejects.toThrow();
   });
 
   it("throws when the admin module throws, with the error passed on unchanged", async () => {
     readOpsSummary.mockRejectedValue(new Error("ops store unavailable: not configured"));
     const { loadOpsSummary } = await import("@/lib/server/ops/read");
-    await expect(loadOpsSummary(7, NOW)).rejects.toThrow("ops store unavailable: not configured");
+    await expect(loadOpsSummary(OPERATOR, 7, NOW)).rejects.toThrow("ops store unavailable: not configured");
+  });
+
+  it.each([
+    ["a signed-in user without the flag", asUser({ app_metadata: {} })],
+    ["a user with no app_metadata", asUser({})],
+    ["ops only in user_metadata", asUser({ app_metadata: {}, user_metadata: { ops: true } })],
+    ["ops as the string \"true\"", asUser({ app_metadata: { ops: "true" } })],
+    ["an anonymous user with the flag", asUser({ app_metadata: { ops: true }, is_anonymous: true })],
+    ["no user (null)", null],
+  ])("rejects %s and never calls the admin module", async (_label, who) => {
+    readOpsSummary.mockResolvedValue({ ...RAW });
+    const { loadOpsSummary } = await import("@/lib/server/ops/read");
+
+    await expect(loadOpsSummary(who as OpsUser, 7, NOW)).rejects.toThrow();
+    await expect(loadOpsSummary(who as OpsUser, 30)).rejects.toThrow();
+
+    expect(readOpsSummary).not.toHaveBeenCalled();
+  });
+
+  it("the refusal carries a fixed message with no user data", async () => {
+    const { loadOpsSummary } = await import("@/lib/server/ops/read");
+    const who = asUser({ app_metadata: {}, email: "someone@example.test" });
+    const err = await loadOpsSummary(who, 7, NOW).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg.length).toBeGreaterThan(0);
+    expect(msg).not.toContain("someone@example.test");
+    expect(msg).not.toContain("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("calls the admin module exactly once, with days, for an operator", async () => {
+    readOpsSummary.mockResolvedValue({ ...RAW, days: 30 });
+    const { loadOpsSummary } = await import("@/lib/server/ops/read");
+    await loadOpsSummary(OPERATOR, 30, NOW);
+    expect(readOpsSummary).toHaveBeenCalledTimes(1);
+    expect(readOpsSummary).toHaveBeenCalledWith(30);
   });
 });
 

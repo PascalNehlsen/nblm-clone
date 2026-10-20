@@ -9,7 +9,7 @@ The roadmap asks for a small ops page: ingestion errors by category, cost per da
 
 ## Decision
 
-- **Who:** `/ops` is for users whose `app_metadata` has `ops: true` (set by hand, runbook `ops-access.md`), never anonymous ones. `user_metadata` is never read. The check runs in the route's layout on the user verified with the Auth server. Everyone else gets a real 404.
+- **Who:** `/ops` is for users whose `app_metadata` has `ops: true` (set by hand, runbook `ops-access.md`), never anonymous ones. `user_metadata` is never read. The layout and the page both check the user verified with the Auth server, because a layout does not re-run on every navigation (ADR 0005). `loadOpsSummary` takes the user and refuses non-operators before the admin module is touched. Everyone else gets a real 404.
 - **Data:** `public.ops_summary(p_days)` (7 or 30 Berlin days) returns counts and sums only:
   - failed sources per category;
   - cost per day and kind (every row counts, like the budget);
@@ -20,7 +20,7 @@ The roadmap asks for a small ops page: ingestion errors by category, cost per da
   - the latest eval run.
 
   There are no user, notebook or model ids and no text.
-- **Eval score:** `public.record_eval_run(...)` stores it in `private.eval_runs` after every live eval (develop only, ADR 0017). Recording is fail-soft: it never changes the eval result.
+- **Eval score:** `public.record_eval_run(...)` (commit sha checked as 7 to 40 hex characters) stores it in `private.eval_runs` after every live eval (develop only, ADR 0017). Recording is fail-soft: it never changes the eval result.
 - **Privilege:** both functions are security invoker, with `search_path = ''`, executable only by `service_role`. No security definer, no change to the ADR 0001 allowlist.
 - **Code path:** `lib/server/admin/ops.ts` is the third service_role module. It exports only `readOpsSummary` and `recordEvalRun` and calls the RPCs with fetch. Only `lib/server/ops/read.ts` and `lib/server/eval/record.ts` may import it (ESLint plus boundary tests).
 - **Rendering:** the page validates the result field by field (`parseOpsSummary`) before rendering it as plain text.

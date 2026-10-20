@@ -30,7 +30,7 @@
 
 begin;
 
-select plan(102);
+select plan(109);
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -346,9 +346,9 @@ select pg_temp.role_throws('authenticated', 'select public.ops_summary(7)', '425
   'authenticated cannot call ops_summary (42501)');
 select pg_temp.role_throws('anon', 'select public.ops_summary(7)', '42501',
   'anon cannot call ops_summary (42501)');
-select pg_temp.role_throws('authenticated', $sql$ select public.record_eval_run('x', 1, 2, 1, 2, 0, true) $sql$, '42501',
+select pg_temp.role_throws('authenticated', $sql$ select public.record_eval_run('abc1234', 1, 2, 1, 2, 0, true) $sql$, '42501',
   'authenticated cannot call record_eval_run (42501)');
-select pg_temp.role_throws('anon', $sql$ select public.record_eval_run('x', 1, 2, 1, 2, 0, true) $sql$, '42501',
+select pg_temp.role_throws('anon', $sql$ select public.record_eval_run('abc1234', 1, 2, 1, 2, 0, true) $sql$, '42501',
   'anon cannot call record_eval_run (42501)');
 
 -- ---------------------------------------------------------------------------
@@ -365,37 +365,55 @@ select is(pg_temp.svc_sqlstate('select public.ops_summary(null::int)'), '22023',
 select is(pg_temp.svc_sqlstate('select public.ops_summary(7)'), 'OK', 'ops_summary(7) runs as service_role');
 select is(pg_temp.svc_sqlstate('select public.ops_summary(30)'), 'OK', 'ops_summary(30) runs as service_role');
 
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('bad-1', -1, 5, 1, 2, 0, true) $sql$), '22023',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('badbad1', -1, 5, 1, 2, 0, true) $sql$), '22023',
   'record_eval_run rejects a negative security_passed (22023)');
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('bad-2', 6, 5, 1, 2, 0, true) $sql$), '22023',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('badbad2', 6, 5, 1, 2, 0, true) $sql$), '22023',
   'record_eval_run rejects security_passed above security_total (22023)');
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('bad-3', 1, 5, 3, 2, 0, true) $sql$), '22023',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('badbad3', 1, 5, 3, 2, 0, true) $sql$), '22023',
   'record_eval_run rejects quality_passed above quality_total (22023)');
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('bad-4', 0, -1, 0, 2, 0, true) $sql$), '22023',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('badbad4', 0, -1, 0, 2, 0, true) $sql$), '22023',
   'record_eval_run rejects a negative total (22023)');
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('bad-5', 1, 5, 1, 2, -1, true) $sql$), '22023',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('badbad5', 1, 5, 1, 2, -1, true) $sql$), '22023',
   'record_eval_run rejects a negative errored count (22023)');
 select pg_temp.safe_ok(
-  $sql$ select count(*) = 0 from private.eval_runs where commit_sha like 'bad-%' $sql$,
+  $sql$ select count(*) = 0 from private.eval_runs where commit_sha like 'badbad%' $sql$,
   'rejected record_eval_run calls stored nothing'
 );
 
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('ok-zero', 0, 0, 0, 0, 0, false) $sql$), 'OK',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('a000001', 0, 0, 0, 0, 0, false) $sql$), 'OK',
   'record_eval_run accepts all zeros');
-select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('ok-full', 5, 5, 12, 12, 0, true) $sql$), 'OK',
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('a000002', 5, 5, 12, 12, 0, true) $sql$), 'OK',
   'record_eval_run accepts passed equal to total');
 select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run(null, 5, 5, 12, 12, 0, true) $sql$), 'OK',
   'record_eval_run accepts a null commit sha');
 
+-- Commit sha format: null, or lowercase hex of 7 to 40 characters (^[0-9a-f]{7,40}$), else 22023.
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('not-a-sha', 5, 5, 12, 12, 0, true) $sql$), '22023',
+  'record_eval_run rejects a commit sha that is not hex (22023)');
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('ABC1234', 5, 5, 12, 12, 0, true) $sql$), '22023',
+  'record_eval_run rejects an uppercase commit sha (22023)');
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run(repeat('a', 41), 5, 5, 12, 12, 0, true) $sql$), '22023',
+  'record_eval_run rejects a 41-character commit sha (22023)');
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('abc123', 5, 5, 12, 12, 0, true) $sql$), '22023',
+  'record_eval_run rejects a 6-character commit sha (22023)');
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run('abc1234', 5, 5, 12, 12, 0, true) $sql$), 'OK',
+  'record_eval_run accepts a 7-character hex commit sha');
+select is(pg_temp.svc_sqlstate($sql$ select public.record_eval_run(repeat('a', 40), 5, 5, 12, 12, 0, true) $sql$), 'OK',
+  'record_eval_run accepts a 40-character hex commit sha');
+select pg_temp.safe_ok(
+  $sql$ select count(*) = 0 from private.eval_runs where commit_sha in ('not-a-sha', 'ABC1234', 'abc123') or length(commit_sha) > 40 $sql$,
+  'rejected commit shas stored nothing'
+);
+
 select is(
-  pg_temp.svc_sqlstate($sql$ select public.record_eval_run('recorded-sha', 3, 4, 6, 10, 1, false) $sql$),
+  pg_temp.svc_sqlstate($sql$ select public.record_eval_run('c0ffee1', 3, 4, 6, 10, 1, false) $sql$),
   'OK',
   'setup: service_role records one eval run'
 );
 select pg_temp.safe_ok(
   $sql$
     select count(*) = 1 from private.eval_runs
-    where commit_sha = 'recorded-sha'
+    where commit_sha = 'c0ffee1'
       and security_passed = 3 and security_total = 4
       and quality_passed = 6 and quality_total = 10
       and errored = 1 and ok = false
@@ -530,8 +548,8 @@ select pg_temp.sql_lives(
   $sql$
     insert into private.eval_runs (ran_at, commit_sha, security_passed, security_total, quality_passed,
                                    quality_total, errored, ok)
-    values (now() - interval '1 day', 'eval-newer', 5, 5, 9, 12, 1, true),
-           (now() - interval '2 days', 'eval-older', 1, 5, 2, 12, 0, false)
+    values (now() - interval '1 day', 'e0000001', 5, 5, 9, 12, 1, true),
+           (now() - interval '2 days', 'e0000002', 1, 5, 2, 12, 0, false)
   $sql$,
   'setup: two eval runs, the newer one inserted first'
 );
@@ -591,7 +609,7 @@ select pg_temp.safe_ok(
 );
 select pg_temp.safe_ok(
   $sql$
-    select j->'eval'->>'commit_sha' = 'eval-newer'
+    select j->'eval'->>'commit_sha' = 'e0000001'
        and (j->'eval'->>'security_passed')::int = 5 and (j->'eval'->>'security_total')::int = 5
        and (j->'eval'->>'quality_passed')::int = 9 and (j->'eval'->>'quality_total')::int = 12
        and (j->'eval'->>'errored')::int = 1 and j->'eval'->'ok' = 'true'::jsonb

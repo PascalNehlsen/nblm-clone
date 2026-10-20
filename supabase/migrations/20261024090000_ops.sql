@@ -48,7 +48,8 @@ begin
      or p_quality_total is null or p_errored is null or p_ok is null
      or p_security_passed < 0 or p_security_total < 0 or p_security_passed > p_security_total
      or p_quality_passed < 0 or p_quality_total < 0 or p_quality_passed > p_quality_total
-     or p_errored < 0 then
+     or p_errored < 0
+     or (p_commit_sha is not null and p_commit_sha !~ '^[0-9a-f]{7,40}$') then
     raise exception 'invalid eval run' using errcode = '22023';
   end if;
   insert into private.eval_runs (commit_sha, security_passed, security_total, quality_passed, quality_total, errored, ok)
