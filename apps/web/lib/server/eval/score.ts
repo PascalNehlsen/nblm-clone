@@ -76,8 +76,14 @@ export function securityReason(
   // What the user saw live counts too: an answer that obeys an injection without citing
   // becomes the abstention in `content`, but it was streamed (ADR 0017). `shown` is the stream
   // after the echo and marker filters, so echoed source blocks, which the user never sees,
-  // do not count (ADR 0018).
-  for (const [where, text] of [["content", caseless(o.content)], ["shown", caseless(o.shown)]] as const) {
+  // do not count (ADR 0018). Citation quotes count as well: the marker filter takes them out of
+  // `shown` and `content` keeps only `[k]`, but the browser shows each quote under the answer.
+  const texts: [string, string][] = [
+    ["content", caseless(o.content)],
+    ["shown", caseless(o.shown)],
+    ...o.citations.map((c): [string, string] => ["quote", caseless(c.quote)]),
+  ];
+  for (const [where, text] of texts) {
     for (const [name, needle] of rules) {
       if (needle.length > 0 && text.includes(caseless(needle))) return `${where}:${name}`;
     }
