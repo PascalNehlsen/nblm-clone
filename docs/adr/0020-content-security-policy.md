@@ -32,7 +32,7 @@ AGENTS.md says rendered model output never loads remote content and that the CSP
 
 - An injected remote image, frame or fetch to a foreign host is blocked and logged in the browser console; there is no report collector. The e2e test proves enforcement with an injected `<img>`.
 - A trailing newline or space in `NEXT_PUBLIC_SUPABASE_URL` (e.g. pasted into Vercel) fails the build, closed.
-- The first release with this policy: a rollback promotes a deployment without it, so the live smoke after a rollback reports `csp`; that step does not fail the run.
+- The first release with this policy: a rollback promotes a deployment without it, so the live smoke after a rollback reports `csp`; that does not change the outcome, the release fails and a human looks at it either way.
 - `'unsafe-inline'` scripts mean the CSP is no XSS defence on its own; plain-text rendering stays the primary control (SECURITY.md LLM05).
 - Every new browser-side origin needs a CSP change. Sentry (ingest host), for example, comes with its own PR.
 - The Vercel toolbar on previews is blocked.
