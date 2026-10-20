@@ -656,6 +656,8 @@ create function pg_temp.check_service_role_private_privileges() returns setof te
     where case when relkind <> 'S' then has_table_privilege('service_role', oid, priv) end
       and not (relname = 'model_settings' and priv = 'SELECT')
       and not (relname = 'usage' and priv = 'SELECT')
+      -- Ops page (090_ops.test.sql): the one later addition. service_role reads private.eval_runs.
+      and not (relname = 'eval_runs' and priv = 'SELECT')
   ),
   column_violations as (
     select nspname || '.' || relname || '.' || a.attname || ':' || priv as sig
@@ -663,7 +665,11 @@ create function pg_temp.check_service_role_private_privileges() returns setof te
     join pg_attribute a on a.attrelid = oid and a.attnum > 0 and not a.attisdropped
     cross join lateral unnest(array['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) as priv
     where case when relkind <> 'S' then has_column_privilege('service_role', oid, a.attname, priv) end
-      and not (priv = 'SELECT' and relname in ('usage', 'model_settings'))
+      and not (priv = 'SELECT' and relname in ('usage', 'model_settings', 'eval_runs'))
+      -- Ops page: record_eval_run inserts exactly these seven columns as service_role; 090 pins
+      -- that nothing else (id, update, delete) is granted.
+      and not (relname = 'eval_runs' and priv = 'INSERT' and a.attname in (
+        'commit_sha', 'security_passed', 'security_total', 'quality_passed', 'quality_total', 'errored', 'ok'))
       and not (relname = 'usage' and priv = 'INSERT' and a.attname in (select col from allowed_insert_cols))
       and not (relname = 'usage' and priv = 'UPDATE' and a.attname in (select col from allowed_update_cols))
   ),

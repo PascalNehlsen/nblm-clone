@@ -44,7 +44,14 @@ function collectSourceFiles(dir: string): string[] {
 // Account deletion adds lib/server/admin/accounts.ts as the second such module (same key-shape
 // allowlist, same reasons). Nothing else is exempted: delete-account.ts must not mention any
 // of these substrings (tests/unit/account/boundary.test.ts pins the rest of that boundary).
-const EXEMPT_FROM_SUBSTRING_SCAN = ["lib/server/admin/usage.ts", "lib/server/admin/accounts.ts"];
+// The ops page adds lib/server/admin/ops.ts as the third such module (same key-shape allowlist).
+// Its importers, lib/server/ops/read.ts and lib/server/eval/record.ts, are not exempted:
+// tests/unit/ops/boundary.test.ts pins the rest of that boundary.
+const EXEMPT_FROM_SUBSTRING_SCAN = [
+  "lib/server/admin/usage.ts",
+  "lib/server/admin/accounts.ts",
+  "lib/server/admin/ops.ts",
+];
 
 // The exemption logic itself, as a pure function over synthetic files, so a
 // forbidden substring in some other (non-exempt) file is still proven to fail
@@ -122,6 +129,9 @@ const ALLOWED_ADMIN_REFERENCE_FILES = [
   "lib/server/model/call.ts",
   "lib/server/admin/usage.ts",
   "lib/server/admin/accounts.ts",
+  // Third admin module (ops page). Its importers read.ts and record.ts use "../admin/ops" and
+  // must not spell out "server/admin" anywhere, comments included.
+  "lib/server/admin/ops.ts",
 ];
 
 describe("boundary scan: only call.ts and admin/usage.ts may reference the admin module path", () => {

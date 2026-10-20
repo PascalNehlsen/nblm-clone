@@ -1,5 +1,6 @@
 import { runEval } from "@/lib/server/eval/run";
 import { handleEvalRequest } from "@/lib/server/eval/http";
+import { recordEvalResult } from "@/lib/server/eval/record";
 import { createCanaryCallers } from "@/lib/server/model/canary-callers";
 
 // Live eval (ADR 0017), develop only: EVAL_SECRET is never set on production. All logic is in
@@ -14,5 +15,6 @@ export async function POST(request: Request): Promise<Response> {
       if (!callers) return null;
       return runEval({ callChat: callers.callChat, log: (e) => console.info(JSON.stringify(e)), now: () => performance.now() });
     },
+    record: recordEvalResult,
   });
 }
