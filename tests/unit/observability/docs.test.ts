@@ -21,6 +21,28 @@ describe("Sentry documentation", () => {
     });
   }
 
+  // RequestData and HttpContext are removed: no event carries a request path or browser data.
+  for (const rel of ["docs/privacy.md", "docs/adr/0022-error-tracking.md", "apps/web/app/(public)/datenschutz/page.tsx"]) {
+    it(`${rel} does not claim a request path`, () => {
+      const text = read(rel);
+      for (const phrase of ["request path", "Pfad ohne Parameter", "aufgerufener Pfad", "stack and route"]) {
+        expect(text.toLowerCase(), phrase).not.toContain(phrase.toLowerCase());
+      }
+    });
+  }
+
+  it("the datenschutz Sentry list item does not claim browser and OS data", () => {
+    const page = read("apps/web/app/(public)/datenschutz/page.tsx");
+    const start = page.indexOf("<strong>Sentry</strong>");
+    expect(start, "Sentry list item").toBeGreaterThan(-1);
+    const item = page.slice(start, page.indexOf("</li>", start));
+    expect(item.replace(/\s+/g, " ")).not.toContain("Browser und Betriebssystem");
+  });
+
+  it("ADR 0022 mentions SENTRY_TRACES_SAMPLE_RATE (must stay unset in Vercel)", () => {
+    expect(read("docs/adr/0022-error-tracking.md")).toContain("SENTRY_TRACES_SAMPLE_RATE");
+  });
+
   it("ADR 0022 says tracing is off by leaving tracesSampleRate unset", () => {
     expect(read("docs/adr/0022-error-tracking.md")).toMatch(/tracesSampleRate[^\n]*(unset|not set|absent|omitted)|(unset|not set|absent|omitted)[^\n]*tracesSampleRate/i);
   });

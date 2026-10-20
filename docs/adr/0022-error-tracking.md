@@ -17,14 +17,15 @@ Unexpected errors in production were only visible when someone reported them. AG
   - `tracePropagationTargets: []`, so no tracing headers go to Supabase or Bedrock.
   - Every breadcrumb is dropped.
   - The default integrations pass an **allowlist**: error handlers, linked errors, dedupe, filters and Next.js frame normalization. Sessions (sent per page view), tracing, request data, source lines, local variables, modules and console capture are off, and so is anything a future SDK version adds. A normal page view sends nothing.
-- **Allowlist (`scrubEvent`):** an event keeps its id, time, level, platform, release and environment, the exception type and mechanism, the frame file, function, line and column, the request method and path without query or fragment, runtime, OS, browser and device name and version, and the `runtime` tag. The exception value becomes `redacted`; everything else is dropped.
+- **Allowlist (`scrubEvent`):** an event keeps its id, time, level, platform, release and environment, the exception type and mechanism, the frame file, function, line and column, runtime, OS, browser and device name and version where present (in practice runtime and OS on the server; the browser sends no user agent), and the `runtime` tag. The integrations that would add a request (RequestData, HttpContext) are off, so events carry no path or URL. The exception value becomes `redacted`; everything else is dropped.
 - **CSP:** `connect-src` gets exactly the DSN's ingest origin and no wildcard (ADR 0020).
 - **Project settings (Pascal):** IP storage off, the server-side data scrubber on, no spend above the free plan.
 
 ## Consequences
 
-- Errors become visible with stack and route, but without the message. Debugging relies on the type, the frame and the path. Without source maps, browser frames point at minified chunks.
+- Errors become visible with type and stack, but without the message or the route. Debugging relies on the type, the frame and the path. Without source maps, browser frames point at minified chunks.
 - A new browser origin: the visitor's IP reaches Sentry with each event, and is not stored, by configuration.
+- `SENTRY_TRACES_SAMPLE_RATE` must stay unset in Vercel: the Node SDK reads it when the option is absent and would turn server tracing back on (`beforeSendTransaction` still drops transactions).
 - Every Sentry SDK upgrade must keep the tests in `tests/unit/observability/` green. They plant a sentinel in every field and check that it never survives.
 - An Edge-runtime route would not report (none exists; the proxy runs on Node). Revisit: source maps with a build token, a tunnel route, or tracing. Each needs its own plan, because each adds a secret or a data channel.
 

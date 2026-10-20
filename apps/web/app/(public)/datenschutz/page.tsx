@@ -76,8 +76,8 @@ export default function DatenschutzPage() {
         </li>
         <li>
           <strong>Sentry</strong> (Fehlerberichte), Datenregion in Frankfurt am Main. Bei einem unerwarteten Fehler
-          erhält Sentry nur technische Angaben: Fehlerart, Stelle im Programmcode, aufgerufener Pfad ohne Parameter,
-          Browser und Betriebssystem. Inhalte wie Fragen, Quellen, Antworten oder Fehlermeldungen werden vorher
+          erhält Sentry nur technische Angaben: Fehlerart und Stelle im Programmcode, bei Serverfehlern auch Laufzeit
+          und Betriebssystem des Servers. Bei normalen Seitenaufrufen wird nichts gesendet. Inhalte wie Fragen, Quellen, Antworten oder Fehlermeldungen werden vorher
           entfernt. Deine IP-Adresse wird dabei übertragen, aber nicht gespeichert.
         </li>
       </ul>

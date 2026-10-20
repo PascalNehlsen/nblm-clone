@@ -134,6 +134,19 @@ describe("buildSentryOptions", () => {
     expect(kept.sort()).toEqual(["BrowserApiErrors", "EventFilters"]);
   });
 
+  it("matches Next.js frame integrations by exact name only", async () => {
+    const { buildSentryOptions } = await load();
+    const integrations = buildSentryOptions({ dsn: EU_DSN })!.integrations as (
+      d: { name: string }[],
+    ) => { name: string }[];
+    const kept = integrations(
+      ["NextjsSomethingNew", "FooRewriteFrames", "DistDirOther", "NextjsClientStackFrameNormalization", "DistDirRewriteFrames"].map(
+        (name) => ({ name }),
+      ),
+    ).map((i) => i.name);
+    expect(kept.sort()).toEqual(["DistDirRewriteFrames", "NextjsClientStackFrameNormalization"]);
+  });
+
   it("drops every transaction", async () => {
     const { buildSentryOptions } = await load();
     const options = buildSentryOptions({ dsn: EU_DSN })!;

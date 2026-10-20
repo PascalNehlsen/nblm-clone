@@ -1,7 +1,7 @@
 // Sentry options for both runtimes (ADR 0022). Errors only: no tracing, no replay, no
-// breadcrumbs, no PII. Every event passes an allowlist that keeps the error type, the stack
-// frames' locations and the request path; everything that could carry user text (exception
-// messages, request bodies, headers, query strings, extra data, user) is dropped. Without a
+// breadcrumbs, no PII. Every event passes an allowlist that keeps the error type and the stack
+// frames' locations; everything that could carry user text (exception messages, request
+// bodies, headers, query strings, extra data, user) is dropped. Without a
 // DSN whose host is Sentry's EU ingest (residency, AGENTS.md), the SDK stays off.
 
 type Json = Record<string, unknown>;
@@ -121,11 +121,13 @@ const INTEGRATIONS = new Set([
   "OnUnhandledRejection",
   "Context",
   "NodeSystemError",
+  // Next.js stack frame normalization (browser; the server one needs the build plugin, unused).
+  "NextjsClientStackFrameNormalization",
+  "DistDirRewriteFrames",
 ]);
-const NEXTJS_FRAMES = /^(Nextjs[A-Za-z]*|[A-Za-z]*RewriteFrames|DistDir[A-Za-z]*)$/;
 
 export function keepIntegration(name: string): boolean {
-  return INTEGRATIONS.has(name) || NEXTJS_FRAMES.test(name);
+  return INTEGRATIONS.has(name);
 }
 
 export function buildSentryOptions(env: { dsn?: string; environment?: string; release?: string }) {
