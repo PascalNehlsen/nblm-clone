@@ -300,6 +300,21 @@ describe("createEchoFilter: equals stripEcho for every case, at every chop size"
     ["hold cap", `x <quelle-${"y".repeat(300)}`],
     ["hex run before a tag", `abcdef0123 <quelle-${NONCE} nr="1">x</quelle-${NONCE}> Antwort`],
     ["empty", ""],
+    ["antwort wrapper", '<antwort>A [1: "x"].</antwort>'],
+    ["antwort wrapper, case and attributes", '<Antwort-ab12 lang="de">A [1: "x"].</ANTWORT >'],
+    ["antwort wrapper mid-text", "Davor <antwort>Mitte</antwort> danach <antwort-z9>Ende"],
+    ["antwort stray close", "Text</antwort> weiter"],
+    ["antwort close padded with 8 spaces", `<antwort>A.</antwort${" ".repeat(8)}>`],
+    ["antwort close padded with 9 spaces", `Vor </antwort${" ".repeat(9)}> Nach`],
+    ["echo block inside antwort wrapper", `<antwort><quelle-${NONCE} nr="1">geheim</quelle-${NONCE}>Antwort [1: "x"].</antwort>`],
+    ["antworten is not a tag", "Die <antworten> sind gut."],
+    ["antwort without >", "Die <antwort ist gut."],
+    ["antwort over-long id", `Vor <antwort-${"a".repeat(33)}>x Nach`],
+    ["antwort over-long attributes", `Vor <antwort-ab ${"a".repeat(25)}>x Nach`],
+    ["antwort 24 attribute characters", `<antwort-ab ${"a".repeat(24)}>A</antwort>`],
+    // A wrapper rebuilt around the nonce is left out on purpose, like the rebuilt quelle tags
+    // above: the stream cannot see it (documented gap, ADR 0018); see the dedicated test.
+    ["antwort in an echo-only text", `<antwort><quelle-${NONCE} nr="1">a</quelle-${NONCE}></antwort>`],
   ];
   for (const [name, text] of table) {
     for (const size of [1, 2, 3, 7, Math.max(1, text.length)]) {
@@ -310,6 +325,71 @@ describe("createEchoFilter: equals stripEcho for every case, at every chop size"
       });
     }
   }
+});
+
+describe("createEchoFilter: <antwort> wrapper", () => {
+  const WRAPPED = [
+    '<antwort>A [1: "x"].</antwort>',
+    '<Antwort-ab12 lang="de">A [1: "x"].</ANTWORT >',
+    "Davor <antwort>Mitte</antwort> danach <antwort-z9>Ende",
+    "Text</antwort> weiter",
+    `<antwort>Vor <quelle-${NONCE} nr="1">geheim</quelle-${NONCE}> Antwort</antwort>`,
+  ];
+  const PARTIAL = /<(a(n(t(w(o(r(t)?)?)?)?)?)?)?$/i;
+
+  it("no emitted chunk contains <antwort, </antwort or a partial <antw prefix, at chop sizes 1..n", () => {
+    for (const text of WRAPPED) {
+      for (let size = 1; size <= text.length; size++) {
+        const { out, emits } = run(chop(text, size));
+        const all = [out, ...emits];
+        for (const e of all) {
+          expect(e.toLowerCase(), `${text} @${size}`).not.toContain("<antwort");
+          expect(e.toLowerCase(), `${text} @${size}`).not.toContain("</antwort");
+          expect(e.toLowerCase(), `${text} @${size}`).not.toContain("<antw");
+          expect(e, `${text} @${size}`).not.toMatch(PARTIAL);
+        }
+        expect(out.trim(), `${text} @${size}`).toBe(stripEcho(text, NONCE).text);
+      }
+    }
+  });
+
+  it("<antworten sind gut is released as soon as the next character rules out a tag", () => {
+    // The filter always keeps the last nonce.length - 1 characters back, so enough text must
+    // follow. What matters: the text is not held up to the 96-character tag hold.
+    const TEXT = "<antworten sind gut und noch mehr Text dazu";
+    const emits: string[] = [];
+    const f = createEchoFilter(NONCE, (t) => emits.push(t));
+    f.push(TEXT);
+    expect(emits.join("").startsWith("<antworten sind gut")).toBe(true);
+    expect(TEXT.length - emits.join("").length).toBeLessThan(96);
+    f.end();
+    expect(emits.join("")).toBe(TEXT);
+  });
+
+  it("the same holds one character at a time", () => {
+    const TEXT = "<antworten sind gut und noch mehr Text dazu";
+    const emits: string[] = [];
+    const f = createEchoFilter(NONCE, (t) => emits.push(t));
+    for (const ch of TEXT) f.push(ch);
+    expect(emits.join("").startsWith("<antworten sind gut")).toBe(true);
+    f.end();
+    expect(emits.join("")).toBe(TEXT);
+  });
+
+  it("a wrapper rebuilt around the nonce: the stream never contains the nonce (the tag itself may show)", () => {
+    const text = `A <antw${NONCE}ort>B</antw${NONCE}ort> C`;
+    for (let size = 1; size <= text.length; size++) {
+      const { out, emits } = run(chop(text, size));
+      for (const e of [out, ...emits]) expect(e.toLowerCase(), `@${size}`).not.toContain(NONCE);
+      // The stored answer is clean: a second pass over the stream output equals stripEcho(text).
+      expect(stripEcho(out, NONCE).text, `@${size}`).toBe(stripEcho(text, NONCE).text);
+    }
+  });
+
+  it("a held <antwort prefix at the end is emitted on end()", () => {
+    expect(run(["Ende <antw"]).out).toBe("Ende <antw");
+    expect(run(["Ende <antwort"]).out).toBe("Ende <antwort");
+  });
 });
 
 describe("createEchoFilter: linear time", () => {

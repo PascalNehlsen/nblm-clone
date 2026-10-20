@@ -227,19 +227,29 @@ test.describe("chat scrolling", () => {
     await page.goto(url);
 
     const section = chatSection(page);
-    const list = section.getByRole("list").first();
+    // One scroll container: a focusable region "Verlauf" that holds the list, the live area
+    // and a spacer. The list itself and the live area do not scroll.
+    const scroller = section.getByRole("region", { name: "Verlauf" });
+    await expect(scroller).toHaveCount(1);
+    await expect(scroller).toHaveAttribute("tabindex", "0");
+    await expect(scroller.getByRole("list").first()).toBeAttached();
     await expect(section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." })).toHaveCount(1);
 
-    const box = (await list.boundingBox())!;
+    const box = (await scroller.boundingBox())!;
     expect(box).toBeTruthy();
     expect(box.height).toBeLessThan(900);
-    // The thread is the scroll container, it does not just grow.
-    const scrollable = await list.evaluate((el) => el.scrollHeight > el.clientHeight);
+    const scrollable = await scroller.evaluate((el) => el.scrollHeight > el.clientHeight);
     expect(scrollable).toBe(true);
+    const ownScroll = await scroller.evaluate((el) => {
+      const inner = [el.querySelector("ol"), el.querySelector(".live")] as (HTMLElement | null)[];
+      return inner.map((e) => (e ? getComputedStyle(e).overflowY : "missing"));
+    });
+    for (const overflowY of ownScroll) expect(["visible", "clip"]).toContain(overflowY);
 
     await expect(section.getByLabel("Frage")).toBeInViewport();
 
-    await expect.poll(() => atBottom(list)).toBe(true);
+    // Starts at the bottom, instantly (no animation to wait for).
+    await expect.poll(() => atBottom(scroller)).toBe(true);
     await expect(
       section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." }),
     ).toBeInViewport();
@@ -247,7 +257,9 @@ test.describe("chat scrolling", () => {
     await context.close();
   });
 
-  test("after asking a new question the thread is scrolled to the bottom again", async ({ browser }) => {
+  test("after sending, the new question's top sits at the region's top and the composer is visible", async ({
+    browser,
+  }) => {
     test.setTimeout(180_000);
     const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-scroll-ask");
     await seedChunk(owner, id);
@@ -258,29 +270,112 @@ test.describe("chat scrolling", () => {
     await page.goto(url);
 
     const section = chatSection(page);
-    const list = section.getByRole("list").first();
+    const scroller = section.getByRole("region", { name: "Verlauf" });
     await expect(section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." })).toHaveCount(1);
 
-    // Scroll away from the bottom first, so "again at the bottom" is a real change.
-    await list.evaluate((el) => {
+    // Scroll away from the bottom first, so the move after sending is a real change.
+    await scroller.evaluate((el) => {
       el.scrollTop = 0;
     });
 
     await section.getByLabel("Frage").fill("Wie viele Personen arbeiten dort?");
     await section.getByRole("button", { name: "Fragen", exact: true }).click();
 
-    await expect(
-      section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" }),
-    ).toHaveCount(1);
+    const question = section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" });
+    await expect(question).toHaveCount(1);
+
+    const topGap = async (): Promise<number> => {
+      const regionBox = (await scroller.boundingBox())!;
+      const questionBox = (await question.boundingBox())!;
+      return questionBox.y - regionBox.y;
+    };
+    await expect.poll(async () => Math.abs(await topGap()), { timeout: 10_000 }).toBeLessThanOrEqual(8);
+    await expect(section.getByLabel("Frage")).toBeInViewport();
+
     await expect(section.getByRole("alert").filter({ hasText: "Modell nicht konfiguriert" })).toBeVisible({
       timeout: 45_000,
     });
+    // The question stays anchored at the top after the error appears as well.
+    expect(Math.abs(await topGap())).toBeLessThanOrEqual(8);
+    await expect(section.getByLabel("Frage")).toBeInViewport();
 
-    await expect.poll(() => atBottom(list)).toBe(true);
+    await context.close();
+  });
+
+  test("while the answer streams nothing moves: scrollTop and scrollHeight stay put for a short answer", async ({
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-scroll-stream");
+    await seedChunk(owner, id);
+    for (let i = 1; i <= 15; i++) {
+      await seedPair(owner, id, `Frage Nummer ${i}?`, `Antwort Nummer ${i}. ${"Mehr Text für die Höhe. ".repeat(8)}`, []);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // Hold the chat POST until the test releases it, then answer with NDJSON in the exact
+    // line format of lib/server/chat/http.ts: delta lines, then one done line.
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ANSWER = "Kurze Antwort ohne Beleg.";
+    await page.route("**/notebooks/*/chat", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await released;
+      const lines = [
+        { type: "delta", text: "Kurze Antwort " },
+        { type: "delta", text: "ohne Beleg." },
+        {
+          type: "done",
+          message: {
+            id: "99999999-9999-4999-8999-999999999999",
+            content: ANSWER,
+            citations: [],
+            abstained: false,
+          },
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
+        body: lines.map((l) => `${JSON.stringify(l)}\n`).join(""),
+      });
+    });
+
+    await page.goto(url);
+    const section = chatSection(page);
+    const scroller = section.getByRole("region", { name: "Verlauf" });
+    await expect(section.getByRole("listitem").filter({ hasText: "Antwort Nummer 15." })).toHaveCount(1);
+
+    await section.getByLabel("Frage").fill("Wie viele Personen arbeiten dort?");
+    await section.getByRole("button", { name: "Fragen", exact: true }).click();
     await expect(
       section.getByRole("listitem").filter({ hasText: "Wie viele Personen arbeiten dort?" }),
-    ).toBeInViewport();
-    await expect(section.getByLabel("Frage")).toBeInViewport();
+    ).toHaveCount(1);
+
+    // The one scroll to the question has settled when two reads 150 ms apart agree.
+    const read = () => scroller.evaluate((el) => ({ top: el.scrollTop, height: el.scrollHeight }));
+    await expect
+      .poll(async () => {
+        const a = await read();
+        await page.waitForTimeout(150);
+        const b = await read();
+        return a.top === b.top && a.height === b.height;
+      })
+      .toBe(true);
+    const before = await read();
+
+    release();
+    await expect(section.getByText(ANSWER)).toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(300);
+
+    const after = await read();
+    expect(Math.abs(after.top - before.top)).toBeLessThanOrEqual(2);
+    expect(after.height).toBe(before.height);
 
     await context.close();
   });

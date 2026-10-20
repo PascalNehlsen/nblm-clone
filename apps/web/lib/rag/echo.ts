@@ -11,6 +11,9 @@ import "server-only";
 // Bounded so the longest possible tag fits in the stream filter's hold (HOLD_MAX = 96).
 export const OPEN_TAG = /<(quelle|frage)-([0-9a-z]{1,32})(?:\s[^<>]{0,24})?>/iy;
 export const CLOSE_TAG = /<\/(quelle|frage)-[0-9a-z]{0,32}\s{0,8}>/iy;
+// A wrapper the model invents around its answer (`<antwort>`, `<antwort-x ...>`, `</antwort>`):
+// only the tag goes, the text between is the answer and stays.
+export const WRAP_TAG = /<(?:antwort(?:-[0-9a-z]{1,32})?(?:\s[^<>]{0,24})?|\/antwort(?:-[0-9a-z]{1,32})?\s{0,8})>/iy;
 // Every productive pass shrinks the text, so a few passes are enough in practice; the cap
 // only bounds adversarial chains (ADR 0018 names what a hit cap can leave behind).
 const MAX_PASSES = 8;
@@ -65,10 +68,11 @@ function findClose(lower: string, name: string, from: number): { at: number; end
   return null;
 }
 
-function stripOnce(text: string, nonce: string): { text: string; stripped: number } {
+function stripOnce(text: string, nonce: string): { text: string; stripped: number; unwrapped: number } {
   const lower = asciiLower(text);
   let out = "";
   let stripped = 0;
+  let unwrapped = 0;
   let i = 0;
   let copyFrom = 0;
   while (i < text.length) {
@@ -91,21 +95,32 @@ function stripOnce(text: string, nonce: string): { text: string; stripped: numbe
       i = copyFrom = lt + stray[0].length;
       continue;
     }
+    WRAP_TAG.lastIndex = lt;
+    const wrap = WRAP_TAG.exec(text);
+    if (wrap) {
+      out += text.slice(copyFrom, lt);
+      unwrapped++;
+      i = copyFrom = lt + wrap[0].length;
+      continue;
+    }
     i = lt + 1;
   }
   out += text.slice(copyFrom);
   const cleaned = removeNonce(out, nonce);
-  return { text: cleaned.text, stripped: stripped + cleaned.count };
+  return { text: cleaned.text, stripped: stripped + cleaned.count, unwrapped };
 }
 
 // Repeats until stable (at most MAX_PASSES): removing the nonce can rebuild a tag.
-export function stripEcho(text: string, nonce: string): { text: string; stripped: number } {
+// `stripped` counts echoes and nonces, `unwrapped` the wrapper tags.
+export function stripEcho(text: string, nonce: string): { text: string; stripped: number; unwrapped: number } {
   let total = 0;
+  let unwrapped = 0;
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const r = stripOnce(text, nonce);
     text = r.text;
     total += r.stripped;
-    if (r.stripped === 0) break;
+    unwrapped += r.unwrapped;
+    if (r.stripped === 0 && r.unwrapped === 0) break;
   }
-  return { text: text.trim(), stripped: total };
+  return { text: text.trim(), stripped: total, unwrapped };
 }

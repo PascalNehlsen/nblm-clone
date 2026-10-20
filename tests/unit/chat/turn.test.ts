@@ -457,6 +457,33 @@ describe("runTurn: echoed source blocks (ADR 0018)", () => {
   });
 });
 
+describe("runTurn: <antwort> wrapper", () => {
+  const WRAPPED = '<antwort>Text in Bonn [1: "sitzt in Bonn"].</antwort>';
+
+  for (const chars of [false, true]) {
+    it(`stores no tag, the citation validates, no streamed delta has the tag (${chars ? "one character" : "one"} delta)`, async () => {
+      const h = harness({ chat: { kind: "ok", deltas: chars ? WRAPPED.split("") : [WRAPPED] } });
+      const seen: string[] = [];
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?", onDelta: (t) => seen.push(t) });
+      const citations = [{ ordinal: 1, chunkId: "chunk-1", quote: "sitzt in Bonn" }];
+      expect(h.saveTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ answer: "Text in Bonn [1].", citations }),
+      );
+      expect(r).toEqual({
+        ok: true,
+        message: { id: ANSWER_ID, content: "Text in Bonn [1].", citations, abstained: false },
+      });
+      expect(JSON.stringify(h.saveTurn.mock.calls).toLowerCase()).not.toContain("antwort>");
+      const streamed = seen.join("");
+      expect(streamed.toLowerCase()).not.toContain("<antwort");
+      expect(streamed.toLowerCase()).not.toContain("</antwort");
+      expect(streamed).toContain("Text in Bonn");
+      for (const s of seen) expect(s.toLowerCase()).not.toContain("<antw");
+      expect(h.logs[0]).toMatchObject({ outcome: "ok", citations: 1, abstained: false });
+    });
+  }
+});
+
 describe("runTurn: folded citations", () => {
   const SS = String.fromCodePoint(0xdf);
   const FOLD_CHUNKS = [chunk(1, `${CHUNK_SENTINEL} Er sagte, da${SS} er morgen kommt.`)];

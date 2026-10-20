@@ -1,9 +1,9 @@
 import "server-only";
 
-import { CLOSE_TAG, OPEN_TAG, asciiLower } from "./echo";
+import { CLOSE_TAG, OPEN_TAG, WRAP_TAG, asciiLower } from "./echo";
 
 // The stream side of stripEcho (ADR 0018): echoed source or question blocks never reach the
-// live preview, and neither does the nonce. Text is emitted with a short delay: a "<" is held
+// live preview, and neither do the nonce and `<antwort>` wrapper tags. Text is emitted with a short delay: a "<" is held
 // while it could still become a tag (at most HOLD_MAX characters, which covers the longest tag
 // OPEN_TAG / CLOSE_TAG accept), and a trailing run of hex characters is held (the nonce is
 // hex), so a nonce split across deltas, or rebuilt around an inner one or an echoed block,
@@ -17,6 +17,38 @@ function couldBeTag(s: string): boolean {
   if (s.length > HOLD_MAX || s.includes(">")) return false;
   const lower = asciiLower(s);
   return PREFIXES.some((p) => (lower.length <= p.length ? p.startsWith(lower) : lower.startsWith(p)));
+}
+
+// Exact: true only while `s` (starting with "<", no ">") can still become a WRAP_TAG match, so
+// "<antworten" is released at its "e" instead of waiting for the hold to fill.
+function couldBeWrap(s: string): boolean {
+  const l = asciiLower(s);
+  let i = 1;
+  const close = l[i] === "/";
+  if (close) i++;
+  for (const ch of "antwort") {
+    if (i >= l.length) return true;
+    if (l[i++] !== ch) return false;
+  }
+  if (i >= l.length) return true;
+  if (l[i] === "-") {
+    i++;
+    let id = 0;
+    while (i < l.length && id < 32 && /[0-9a-z]/.test(l[i]!)) {
+      i++;
+      id++;
+    }
+    if (i >= l.length) return true;
+    if (id === 0) return false;
+  }
+  if (close) {
+    for (let spaces = 0; i < l.length && spaces < 8 && /\s/.test(l[i]!); spaces++) i++;
+    return i >= l.length;
+  }
+  if (!/\s/.test(l[i]!)) return false;
+  i++;
+  for (let attr = 0; i < l.length && attr < 24 && l[i] !== "<"; attr++) i++;
+  return i >= l.length;
 }
 
 const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
@@ -126,7 +158,13 @@ export function createEchoFilter(nonce: string, emit: (text: string) => void): {
         buffer = buffer.slice(stray[0].length);
         continue;
       }
-      if (!final && couldBeTag(buffer)) return; // wait for more text
+      WRAP_TAG.lastIndex = 0;
+      const wrap = WRAP_TAG.exec(buffer);
+      if (wrap) {
+        buffer = buffer.slice(wrap[0].length);
+        continue;
+      }
+      if (!final && (couldBeTag(buffer) || couldBeWrap(buffer))) return; // wait for more text
       addReady("<");
       buffer = buffer.slice(1);
     }
