@@ -425,6 +425,47 @@ test.describe("source rows and the upload form fit the narrow sources panel", ()
 
     await context.close();
   });
+
+  test("a chosen PDF with a 120-character file name shows its full name, wrapped inside the form", async ({
+    browser,
+  }) => {
+    const { context, page } = await ownerNotebook(browser, "sources-e2e-layout-longname");
+
+    const form = await pdfForm(page);
+    const input = form.getByLabel("PDF-Datei");
+    // No spaces or hyphens: the name has no natural break point, so it only fits if it wraps anywhere.
+    const fileName = `${"Flyer_A_sachlich_Druckerei_CMYK_".repeat(4)}Ende.pdf`;
+    expect(fileName.length).toBeGreaterThanOrEqual(120);
+    await input.setInputFiles({ name: fileName, mimeType: "application/pdf", buffer: buildMinimalPdf() });
+
+    // The input stays visible and labelled; the full name is shown in a separate element.
+    await expect(input).toBeVisible();
+    const nameElement = form.getByText(fileName, { exact: true });
+    await expect(nameElement).toBeVisible();
+
+    const formBox = (await form.boundingBox())!;
+    const nameBox = (await nameElement.boundingBox())!;
+    expect(formBox).toBeTruthy();
+    expect(nameBox).toBeTruthy();
+    expect(nameBox.x).toBeGreaterThanOrEqual(formBox.x - 1);
+    expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(formBox.x + formBox.width + 1);
+    // It wraps instead of truncating: more than one line high.
+    const lineHeight = await nameElement.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight) || 20);
+    expect(nameBox.height).toBeGreaterThan(lineHeight * 1.5);
+    // Not clipped by an ellipsis and no horizontal overflow of the form.
+    const style = await nameElement.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { textOverflow: s.textOverflow, whiteSpace: s.whiteSpace };
+    });
+    expect(style.textOverflow).not.toBe("ellipsis");
+    expect(style.whiteSpace).not.toBe("nowrap");
+    expect(await form.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+
+    const inputBox = (await input.boundingBox())!;
+    expect(inputBox.x + inputBox.width).toBeLessThanOrEqual(formBox.x + formBox.width + 1);
+
+    await context.close();
+  });
 });
 
 test.describe("an editor removes a source", () => {

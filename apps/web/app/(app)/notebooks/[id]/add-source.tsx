@@ -12,6 +12,8 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The chosen file's name in full: the native field would cut a long name down to "…".
+  const [fileName, setFileName] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,6 +37,7 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
       if (!upload.ok) setMessage("Das Hochladen hat nicht geklappt.");
       await ingestSourceAction({ notebookId, sourceId: created.sourceId });
       form.reset();
+      setFileName(null);
       router.refresh();
     } finally {
       setBusy(false);
@@ -44,8 +47,16 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
   return (
     <form onSubmit={onSubmit}>
       <label className="file">
-        PDF-Datei <input type="file" name="file" accept="application/pdf" required />
+        PDF-Datei{" "}
+        <input
+          type="file"
+          name="file"
+          accept="application/pdf"
+          required
+          onChange={(e) => setFileName(e.currentTarget.files?.[0]?.name ?? null)}
+        />
       </label>{" "}
+      {fileName ? <p className="file-name">{fileName}</p> : null}
       <label>
         Titel <input type="text" name="title" required maxLength={200} />
       </label>{" "}

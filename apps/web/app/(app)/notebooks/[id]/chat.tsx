@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useReducer, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type FormEvent } from "react";
 import type { HistoryCitation, HistoryEntry } from "@/lib/chat/history";
 import { readChatEvents } from "@/lib/chat/ndjson";
+import { spacerHeight } from "@/lib/chat/scroll";
 import { highlight } from "@/lib/chat/passage";
 import { CLIENT_DEADLINE_MS, INITIAL_TURN, turnReducer } from "@/lib/chat/turn-state";
 import { hueFor, splitRefs } from "@/lib/ui/source-hue";
@@ -196,15 +197,40 @@ setSource(
   }, [margin.item]); // eslint-disable-line react-hooks/exhaustive-deps
   const [question, setQuestion] = useState("");
   const [turn, dispatch] = useReducer(turnReducer, INITIAL_TURN);
-  // The chat follows the newest message: the thread and the live answer scroll to their end
-  // whenever the history, the asked question or the streamed text changes.
-  const thread = useRef<HTMLOListElement | null>(null);
-  const live = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    for (const el of [thread.current, live.current]) {
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-  }, [initialHistory.length, turn.asked, turn.pending, turn.checked, turn.busy]);
+  // One scroll container for the history and the live answer. It opens at the newest message.
+  // On send it scrolls once, so the new question sits at the top, and the answer is written
+  // below it without anything moving: the spacer keeps a window of room below the question
+  // (lib/chat/scroll.ts), also when the stored entry replaces the live answer. No following.
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const spacer = useRef<HTMLDivElement | null>(null);
+  const anchor = useRef<number | null>(null);
+  const [sent, setSent] = useState(0);
+  const fitSpacer = () => {
+    const el = scroller.current;
+    const pad = spacer.current;
+    if (!el || !pad) return;
+    const height = anchor.current === null ? 0 : spacerHeight(anchor.current, el.clientHeight, pad.offsetTop);
+    pad.style.height = `${height}px`;
+  };
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(fitSpacer);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(fitSpacer);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const asked = el?.querySelectorAll<HTMLElement>(".thread > .turn.q");
+    const question = asked?.[asked.length - 1];
+    if (!sent || !el || !question) return;
+    anchor.current = question.offsetTop;
+    fitSpacer();
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: anchor.current, behavior: still ? "auto" : "smooth" });
+  }, [sent]);
 
   // The checked answer stays until the server-rendered history contains it.
   useEffect(() => {
@@ -216,6 +242,7 @@ setSource(
     const text = question.trim();
     if (!text || turn.busy) return;
     dispatch({ type: "submit", question: text });
+    setSent((n) => n + 1);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CLIENT_DEADLINE_MS);
     try {
@@ -266,48 +293,51 @@ setSource(
             Fundstelle im Original.
           </p>
         ) : null}
-        <ol className="thread" ref={thread}>
-          {initialHistory.map((entry) => (
-            <Entry
-              key={entry.id}
-              entry={entry}
-              hues={hues}
-              opened={opened}
-              onToggle={(ordinal, chip) => {
-                margin.opener.current = chip;
-                setOpened(opened?.entryId === entry.id && opened.ordinal === ordinal ? null : { entryId: entry.id, ordinal });
-              }}
-            />
-          ))}
-          {turn.asked ? (
-            <li className="turn q">
-              <span className="who sr-only">Frage</span>
-              <p>{turn.asked}</p>
-            </li>
-          ) : null}
-        </ol>
-        {/* Always mounted, so screen readers announce the first streamed text too. */}
-        <div aria-live="polite" className="live" ref={live}>
-          {turn.busy && !turn.pending && !turn.checked ? (
-            <div className="thinking">
-              <span className="sr-only">Antwort wird geschrieben</span>
-              <i />
-              <i />
-              <i />
-            </div>
-          ) : null}
-          {turn.pending ? (
-            <div className="turn a pending">
-              <span className="who sr-only">Antwort</span>
-              <p className="body">{turn.pending}</p>
-            </div>
-          ) : null}
-          {turn.checked ? (
-            <div className="turn a arrived">
-              <span className="who sr-only">Antwort</span>
-              <p className="body">{turn.checked.content}</p>
-            </div>
-          ) : null}
+        <div className="history" ref={scroller} role="region" aria-label="Verlauf" tabIndex={0}>
+          <ol className="thread">
+            {initialHistory.map((entry) => (
+              <Entry
+                key={entry.id}
+                entry={entry}
+                hues={hues}
+                opened={opened}
+                onToggle={(ordinal, chip) => {
+                  margin.opener.current = chip;
+                  setOpened(opened?.entryId === entry.id && opened.ordinal === ordinal ? null : { entryId: entry.id, ordinal });
+                }}
+              />
+            ))}
+            {turn.asked ? (
+              <li className="turn q">
+                <span className="who sr-only">Frage</span>
+                <p>{turn.asked}</p>
+              </li>
+            ) : null}
+          </ol>
+          {/* Always mounted, so screen readers announce the first streamed text too. */}
+          <div aria-live="polite" className="live">
+            {turn.busy && !turn.pending && !turn.checked ? (
+              <div className="thinking">
+                <span className="sr-only">Antwort wird geschrieben</span>
+                <i />
+                <i />
+                <i />
+              </div>
+            ) : null}
+            {turn.pending ? (
+              <div className="turn a pending">
+                <span className="who sr-only">Antwort</span>
+                <p className="body">{turn.pending}</p>
+              </div>
+            ) : null}
+            {turn.checked ? (
+              <div className="turn a arrived">
+                <span className="who sr-only">Antwort</span>
+                <p className="body">{turn.checked.content}</p>
+              </div>
+            ) : null}
+          </div>
+          <div className="spacer" ref={spacer} aria-hidden="true" />
         </div>
         <form onSubmit={onSubmit} className="composer">
           <label>

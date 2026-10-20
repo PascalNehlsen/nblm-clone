@@ -27,22 +27,27 @@ describe("stripEcho: the real echo case", () => {
 
 describe("stripEcho: nothing to strip", () => {
   it("returns the trimmed input and 0", () => {
-    expect(stripEcho('  Antwort [1: "x"].  ', NONCE)).toEqual({ text: 'Antwort [1: "x"].', stripped: 0 });
+    expect(stripEcho('  Antwort [1: "x"].  ', NONCE)).toEqual({ text: 'Antwort [1: "x"].', stripped: 0, unwrapped: 0 });
   });
 
   it("leaves a plain less-than sign alone", () => {
-    expect(stripEcho("Es gilt a < b und c <d> e.", NONCE)).toEqual({ text: "Es gilt a < b und c <d> e.", stripped: 0 });
+    expect(stripEcho("Es gilt a < b und c <d> e.", NONCE)).toEqual({
+      text: "Es gilt a < b und c <d> e.",
+      stripped: 0,
+      unwrapped: 0,
+    });
   });
 
   it("leaves <quelle without a dash alone", () => {
     expect(stripEcho("Die <quelle ist gut und <quelle> auch.", NONCE)).toEqual({
       text: "Die <quelle ist gut und <quelle> auch.",
       stripped: 0,
+      unwrapped: 0,
     });
   });
 
   it("an empty string gives an empty string", () => {
-    expect(stripEcho("", NONCE)).toEqual({ text: "", stripped: 0 });
+    expect(stripEcho("", NONCE)).toEqual({ text: "", stripped: 0, unwrapped: 0 });
   });
 });
 
@@ -50,7 +55,7 @@ describe("stripEcho: blocks", () => {
   it("is case-insensitive for tags and nonce", () => {
     const up = NONCE.toUpperCase();
     const r = stripEcho(`<QUELLE-${up} NR="1">geheim</QUELLE-${up}> Antwort`, NONCE);
-    expect(r).toEqual({ text: "Antwort", stripped: 1 });
+    expect(r).toEqual({ text: "Antwort", stripped: 1, unwrapped: 0 });
   });
 
   it("removes a <frage-> block", () => {
@@ -279,5 +284,110 @@ describe("stripEcho: tag bounds", () => {
   it("an id of 33 characters is not a tag id", () => {
     const id = "a".repeat(33);
     expect(stripEcho(`Vor <quelle-${id}>x Nach`, NONCE).text).toBe(`Vor <quelle-${id}>x Nach`);
+  });
+});
+
+// The model sometimes wraps its answer in an invented <antwort> tag. Only the tag goes, the
+// text between stays (unlike echoed blocks, which go with their content). Counted in
+// `unwrapped`, never in `stripped`.
+describe("stripEcho: <antwort> wrapper", () => {
+  it("removes a plain wrapper and keeps the text and the citation marker", () => {
+    const r = stripEcho('<antwort>A [1: "x"].</antwort>', NONCE);
+    expect(r.text).toBe('A [1: "x"].');
+    expect(r.unwrapped).toBe(2);
+    expect(r.stripped).toBe(0);
+  });
+
+  it("removes case variants, an id with attributes and padded close tags", () => {
+    expect(stripEcho('<Antwort-ab12 lang="de">A [1: "x"].</ANTWORT >', NONCE).text).toBe('A [1: "x"].');
+    expect(stripEcho("<ANTWORT>A.</Antwort-ab12>", NONCE).text).toBe("A.");
+    expect(stripEcho(`<antwort>A.</antwort${" ".repeat(8)}>`, NONCE).text).toBe("A.");
+  });
+
+  it("removes a wrapper anywhere, not only around the whole text", () => {
+    const r = stripEcho("Davor <antwort>Mitte</antwort> danach <antwort-z9>Ende", NONCE);
+    expect(r.text).toBe("Davor Mitte danach Ende");
+    expect(r.unwrapped).toBe(3);
+  });
+
+  it("removes a stray close tag without an open one", () => {
+    const r = stripEcho("Text</antwort> weiter", NONCE);
+    expect(r.text).toBe("Text weiter");
+    expect(r.unwrapped).toBe(1);
+  });
+
+  it("an echoed block inside a wrapper still goes with its content", () => {
+    const text =
+      `<antwort><quelle-${NONCE} nr="1">geheim [1: "x"]</quelle-${NONCE}>Antwort [1: "Konsistenz"].</antwort>`;
+    const r = stripEcho(text, NONCE);
+    expect(r.text).toBe('Antwort [1: "Konsistenz"].');
+    expect(r.text).not.toContain("geheim");
+    expect(r.stripped).toBe(1);
+    expect(r.unwrapped).toBe(2);
+  });
+
+  it("an id of 1 to 32 characters and 24 attribute characters are a tag", () => {
+    expect(stripEcho(`<antwort-${"a".repeat(32)}>A</antwort-${"a".repeat(32)}>`, NONCE).text).toBe("A");
+    expect(stripEcho(`<antwort-ab ${"a".repeat(24)}>A</antwort>`, NONCE).text).toBe("A");
+  });
+
+  it("is not a tag: <antworten>, <antwort without >, antwort without <", () => {
+    for (const text of [
+      "Die <antworten> sind gut.",
+      "Die <antwort ist gut.",
+      "Die </antwortx> ist gut.",
+      "Eine antwort> ohne Anfang und /antwort> auch.",
+      "Eine antwort ohne Tag.",
+    ]) {
+      expect(stripEcho(text, NONCE), text).toEqual({ text, stripped: 0, unwrapped: 0 });
+    }
+  });
+
+  it("is not a tag: an over-long id, over-long attributes, a close padded with 9 spaces", () => {
+    const longId = `Vor <antwort-${"a".repeat(33)}>x Nach`;
+    expect(stripEcho(longId, NONCE).text).toBe(longId);
+    const longAttr = `Vor <antwort-ab ${"a".repeat(25)}>x Nach`;
+    expect(stripEcho(longAttr, NONCE).text).toBe(longAttr);
+    const padded = `Vor </antwort${" ".repeat(9)}> Nach`;
+    expect(stripEcho(padded, NONCE).text).toBe(padded);
+  });
+
+  it("a wrapper rebuilt around the nonce is removed in a later pass", () => {
+    const r = stripEcho(`A <antw${NONCE}ort>B</antw${NONCE}ort> C`, NONCE);
+    expect(r.text).toBe("A B C");
+    expect(r.text.toLowerCase()).not.toContain("<antw");
+    expect(r.text.toLowerCase()).not.toContain(NONCE);
+    expect(r.unwrapped).toBe(2);
+    expect(r.stripped).toBe(2);
+  });
+
+  it("unwrapped counts wrapper tags only, stripped counts echoes and nonces only", () => {
+    const text = `<antwort>${NONCE} A </antwort><antwort>B</antwort><quelle-${NONCE}>x</quelle-${NONCE}>`;
+    const r = stripEcho(text, NONCE);
+    expect(r.unwrapped).toBe(4);
+    expect(r.stripped).toBe(2);
+    expect(r.text).toBe("A B");
+  });
+
+  it("wrappers alone never change stripped", () => {
+    expect(stripEcho("<antwort>a</antwort>", NONCE).stripped).toBe(0);
+    expect(stripEcho("a", NONCE).unwrapped).toBe(0);
+  });
+
+  it("only a wrapper leaves an empty text", () => {
+    expect(stripEcho("<antwort></antwort>", NONCE)).toEqual({ text: "", stripped: 0, unwrapped: 2 });
+  });
+
+  it("is linear: 10k <antwort occurrences without a >, and 10k complete tags", () => {
+    const LIMIT_MS = 2000;
+    const time = (text: string): number => {
+      const t0 = performance.now();
+      stripEcho(text, NONCE);
+      return performance.now() - t0;
+    };
+    expect(time("<antwort".repeat(10_000))).toBeLessThan(LIMIT_MS);
+    expect(time("<antwort ".repeat(10_000))).toBeLessThan(LIMIT_MS);
+    expect(time("<antwort>x".repeat(10_000))).toBeLessThan(LIMIT_MS);
+    expect(time("</antwort>x".repeat(10_000))).toBeLessThan(LIMIT_MS);
   });
 });

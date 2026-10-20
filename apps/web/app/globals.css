@@ -722,14 +722,21 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 .tabs [role="tab"][aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
 .tabs [role="tab"]:hover { border: none; }
 [role="tabpanel"]:not([hidden]) { animation: rise 220ms var(--ease) backwards; }
+/* Only the button of the native field shows; the chosen name is shown in full below it
+   (.file-name), because the field itself cuts a long name down to "…". */
 input[type="file"] {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  color: transparent;
+}
+.file-name {
+  margin: 0;
+  font-size: 0.85rem;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 label.file { min-width: 0; }
 input[type="file"]::file-selector-button {
@@ -801,20 +808,29 @@ dialog.confirm .actions { display: flex; justify-content: flex-end; gap: var(--s
 .conversation > * { flex: none; }
 .conversation > h2 { font-size: 1.05rem; margin: 0; }
 
-.thread {
-  list-style: none;
-  padding: 0 var(--s1) 0 0;
-  margin: 0;
-  display: grid;
-  align-content: start;
-  gap: var(--s4);
+/* The only scroll container of the chat: history, live answer and the spacer that keeps the
+   asked question at the top while the answer is written (chat.tsx). Scrolls are set in code. */
+.history {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scroll-behavior: smooth;
+  display: grid;
+  align-content: start;
+  gap: var(--s4);
+  padding-right: var(--s1);
+  border-radius: var(--radius);
 }
-.conversation .live { max-height: 40%; overflow-y: auto; }
+.history:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.thread {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--s4);
+}
 .conversation .live:empty { display: none; }
 /* A chat: your questions as bubbles on the right, answers on the left with their evidence. */
 .turn { display: grid; gap: var(--s2); animation: rise 260ms var(--ease) backwards; }

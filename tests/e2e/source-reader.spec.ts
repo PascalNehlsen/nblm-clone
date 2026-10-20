@@ -257,7 +257,10 @@ test.describe("source reader", () => {
     await titleButton(page, READY_TITLE).click();
     await expect(sourceRegion(page, READY_TITLE)).toBeVisible();
     await expect(page.getByRole("region", { name: "Fundstelle [1]" })).toHaveCount(0);
-    await expect(page.getByRole("region")).toHaveCount(1);
+    // Only one margin panel (source or passage) is open; the chat's "Verlauf" region is outside the margin.
+    await expect(
+      page.getByRole("complementary", { name: "Fundstellen" }).getByRole("region"),
+    ).toHaveCount(1);
 
     await chip.click();
     await expect(page.getByRole("region", { name: "Fundstelle [1]" })).toBeVisible();
