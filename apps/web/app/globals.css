@@ -641,7 +641,8 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 .sources li {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
+  /* The title never gets squeezed below a readable width by a long status. */
+  grid-template-columns: minmax(6rem, 1fr) auto;
   gap: var(--s1) var(--s2);
   align-items: center;
   padding: var(--s2) var(--s2) var(--s2) var(--s4);
@@ -691,7 +692,8 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
   background: currentColor;
 }
 .status[data-state="ready"] { color: var(--ok); }
-.status[data-state="failed"] { color: var(--danger); white-space: normal; }
+/* A failure has a longer text: it gets its own line under the title. */
+.status[data-state="failed"] { color: var(--danger); white-space: normal; grid-column: 1 / -1; justify-self: start; }
 .status[data-state="processing"]::before,
 .status[data-state="pending"]::before { animation: pulse 1.2s ease-in-out infinite; }
 
@@ -720,7 +722,16 @@ main { animation: page-in 420ms var(--ease) backwards; width: 100%; }
 .tabs [role="tab"][aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
 .tabs [role="tab"]:hover { border: none; }
 [role="tabpanel"]:not([hidden]) { animation: rise 220ms var(--ease) backwards; }
-input[type="file"] { max-width: 100%; color: var(--ink-2); }
+input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+label.file { min-width: 0; }
 input[type="file"]::file-selector-button {
   font: inherit;
   font-weight: 600;

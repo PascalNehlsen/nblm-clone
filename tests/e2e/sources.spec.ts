@@ -31,7 +31,8 @@
 // scoped to the "Quellen" section specifically (a <section> containing the
 // "Quellen" heading), never the bare page.
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { seedLocalSession } from "./helpers/session";
+import { seedLocalSession, seedLocalSessionWithClient } from "./helpers/session";
+import { createSource, setSourceStatus } from "../rls/helpers/sources";
 
 /** A hand-written, minimal but valid single-page PDF containing the text
  * "Hello World" -- built (not hardcoded) so its xref byte offsets are always
@@ -364,6 +365,66 @@ test.describe("an editor imports an address the guard refuses", () => {
       await memberContext.close();
     });
   }
+});
+
+// Layout bugs seen at desktop width (1440x900, sources panel about 320px wide).
+test.describe("source rows and the upload form fit the narrow sources panel", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  async function ownerNotebook(browser: Browser, label: string) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const session = await seedLocalSessionWithClient(label);
+    await context.addCookies(session.cookies);
+    const page = await context.newPage();
+    const notebookUrl = await createNotebookViaUi(page, `${label} ${Date.now()}`);
+    const notebookId = new URL(notebookUrl).pathname.split("/").pop()!;
+    // Seeding helpers only use `client`; the token is not needed here.
+    const owner = { client: session.client, userId: session.userId, accessToken: "" };
+    return { context, page, notebookId, owner };
+  }
+
+  test("a failed source with a long status keeps its short title on one line", async ({ browser }) => {
+    const { context, page, notebookId, owner } = await ownerNotebook(browser, "sources-e2e-layout-title");
+    const sourceId = await createSource(owner, notebookId, { kind: "text", title: "Test" });
+    await setSourceStatus(owner, sourceId, "failed", "no_text");
+    await page.reload();
+
+    const row = sourcesSection(page).getByRole("listitem").filter({ hasText: "Kein Text gefunden" });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Fehlgeschlagen: Kein Text gefunden");
+    const status = row.locator(".status");
+    await expect(status).toBeVisible();
+
+    const title = row.locator(".title");
+    await expect(title).toHaveText("Test");
+    const box = await title.boundingBox();
+    expect(box).not.toBeNull();
+    // One line is about 20px; wrapping one letter per line gives 80px or more.
+    expect(box!.height).toBeLessThan(40);
+    expect(box!.width).toBeGreaterThanOrEqual(40);
+
+    await context.close();
+  });
+
+  test("a chosen PDF with a long file name does not push the file input out of the panel", async ({ browser }) => {
+    const { context, page } = await ownerNotebook(browser, "sources-e2e-layout-pdf");
+
+    const form = await pdfForm(page);
+    const input = form.getByLabel("PDF-Datei");
+    await input.setInputFiles({
+      name: "Flyer_A_sachlich_Druckerei_CMYK_mit_sehr_langem_Namen.pdf",
+      mimeType: "application/pdf",
+      buffer: buildMinimalPdf(),
+    });
+
+    const panelBox = await sourcesSection(page).boundingBox();
+    const inputBox = await input.boundingBox();
+    expect(panelBox).not.toBeNull();
+    expect(inputBox).not.toBeNull();
+    expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width);
+
+    await context.close();
+  });
 });
 
 test.describe("an editor removes a source", () => {
