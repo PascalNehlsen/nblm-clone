@@ -7,6 +7,8 @@ const MESSAGES: Record<string, string> = {
   titel: "Bitte gib einen Titel mit 1 bis 200 Zeichen ein.",
   eingabe: "Bitte gib eine gültige Nutzer-ID und eine Rolle an.",
   bestaetigung: "Bitte bestätige, dass du das Notizbuch endgültig löschen möchtest.",
+  bestaetigung_quelle: "Bitte bestätige, dass du die Quelle entfernen möchtest.",
+  bestaetigung_mitglied: "Bitte bestätige, dass du das Mitglied entfernen möchtest.",
   nicht_erlaubt: "Dafür hast du keine Berechtigung.",
   text: "Bitte füge einen Text mit 1 bis 100.000 Zeichen ein.",
   limit: "Dieses Notizbuch hat schon 50 Quellen.",
@@ -15,6 +17,7 @@ const MESSAGES: Record<string, string> = {
   dateien_uebrig: "Die Datei der Quelle konnte nicht entfernt werden.",
   loeschen: "Die Quelle konnte nicht gelöscht werden.",
   url: "Bitte gib eine http- oder https-Adresse ohne Zugangsdaten und ohne Port an.",
+  youtube: "YouTube-Videos werden noch nicht unterstützt. Füge stattdessen den Text oder ein Transkript ein.",
 };
 
 const GENERIC = "Das hat nicht geklappt. Bitte versuche es noch einmal.";

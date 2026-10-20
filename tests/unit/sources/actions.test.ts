@@ -379,6 +379,39 @@ describe("addUrlSourceAction (C2)", () => {
     expectNoWrite();
   });
 
+  const YOUTUBE_URLS = [
+    "https://youtube.com/watch?v=abc",
+    "https://www.youtube.com/watch?v=abc",
+    "https://m.youtube.com/watch?v=abc",
+    "https://music.youtube.com/watch?v=abc",
+    "https://youtu.be/abc",
+    "https://www.youtube-nocookie.com/embed/abc",
+    "https://youtube-nocookie.com/embed/abc",
+    "https://studio.youtube.com/",
+    "http://WWW.YOUTUBE.COM/watch?v=abc",
+    "  https://youtu.be/abc  ",
+  ];
+  it.each(YOUTUBE_URLS)("youtube url %j is redirected with fehler=youtube before any write or fetch", async (url) => {
+    await expect(addUrlSourceAction(urlForm({ url }))).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=youtube`,
+    });
+    expectNoWrite();
+  });
+
+  const LOOKALIKE_URLS = [
+    "https://notyoutube.com/watch",
+    "https://youtube.com.evil.example/watch",
+    "https://example.com/youtube.com/watch",
+    "https://example.com/?u=youtu.be",
+  ];
+  it.each(LOOKALIKE_URLS)("look-alike %j is not rejected as youtube", async (url) => {
+    await expect(addUrlSourceAction(urlForm({ url }))).rejects.toMatchObject({
+      url: `/notebooks/${VALID_NOTEBOOK_ID}`,
+    });
+    expect(createUrlSourceMock).toHaveBeenCalledTimes(1);
+    expect(runIngestionMock).toHaveBeenCalledTimes(1);
+  });
+
   it("a missing url field is redirected with fehler=url", async () => {
     const fd = new FormData();
     fd.set("notebookId", VALID_NOTEBOOK_ID);
@@ -463,17 +496,29 @@ describe("ingestSourceAction", () => {
 describe("deleteSourceAction", () => {
   it("calls deleteSource with the user's client and the sourceId, then redirects without fehler", async () => {
     await expect(
-      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+      deleteSourceAction(
+        textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID, confirm: "on" }),
+      ),
     ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}` });
 
     expect(deleteSourceMock).toHaveBeenCalledWith(expect.anything(), VALID_SOURCE_ID);
+  });
+
+  it("without the confirm field it redirects with fehler=bestaetigung_quelle and never calls deleteSource", async () => {
+    await expect(
+      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+    ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=bestaetigung_quelle` });
+
+    expect(deleteSourceMock).not.toHaveBeenCalled();
   });
 
   it("a nicht_erlaubt error redirects with fehler=nicht_erlaubt", async () => {
     deleteSourceMock.mockRejectedValue(Object.assign(new Error("not allowed"), { code: "nicht_erlaubt" }));
 
     await expect(
-      deleteSourceAction(textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID })),
+      deleteSourceAction(
+        textFormData({ notebookId: VALID_NOTEBOOK_ID, sourceId: VALID_SOURCE_ID, confirm: "on" }),
+      ),
     ).rejects.toMatchObject({ url: `/notebooks/${VALID_NOTEBOOK_ID}?fehler=nicht_erlaubt` });
   });
 });

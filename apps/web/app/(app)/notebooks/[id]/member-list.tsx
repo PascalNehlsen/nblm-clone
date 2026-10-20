@@ -1,6 +1,7 @@
 import { addMemberAction, changeRoleAction, removeMemberAction } from "../actions";
 import type { Member } from "@/lib/notebooks/members";
 import { ASSIGNABLE_ROLES, ROLE_LABELS, canManageMembers } from "@/lib/notebooks/roles";
+import { ConfirmAction } from "@/components/confirm-action";
 
 // Members and, for owners only, the share, role and remove controls. Rows of owners
 // (including co-owners) get no controls. Hiding them is
@@ -49,11 +50,15 @@ export function MemberList({
                     </label>
                     <button type="submit">Speichern</button>
                   </form>
-                  <form action={removeMemberAction}>
-                    <input type="hidden" name="notebookId" value={notebookId} />
-                    <input type="hidden" name="userId" value={member.userId} />
-                    <button type="submit">Entfernen</button>
-                  </form>
+                  <ConfirmAction
+                    action={removeMemberAction}
+                    fields={{ notebookId, userId: member.userId }}
+                    trigger="Entfernen"
+                    title="Mitglied entfernen?"
+                    confirmLabel="Endgültig entfernen"
+                  >
+                    Diese Person verliert den Zugriff auf das Notizbuch. Du kannst sie später wieder hinzufügen.
+                  </ConfirmAction>
                 </>
               ) : null}
             </li>

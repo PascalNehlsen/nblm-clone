@@ -12,10 +12,10 @@
 //   - "/notebooks/[id]" shows the title, the member list (MemberList), and
 //     for owners only: a "Nutzer-ID" field, a role <select> with accessible
 //     label "Rolle" offering Bearbeiter/Betrachter, a "Teilen" button, a
-//     per-member "Entfernen" button, and a "Notizbuch löschen" button guarded
-//     by a required confirmation checkbox labeled "Ich möchte dieses
-//     Notizbuch endgültig löschen" (reviewer finding: a destructive action
-//     needs an explicit, server-checked confirmation, not just a button).
+//     per-member "Entfernen" button, and a "Notizbuch löschen" button that
+//     opens a confirmation dialog (heading "Notizbuch löschen?", buttons
+//     "Abbrechen" and "Endgültig löschen"); a destructive action needs an
+//     explicit confirmation, not just a button. No "Deine Rolle:" header.
 //   - "/profil" shows the signed-in user's own id as visible text (a uuid),
 //     next to a copy button.
 //
@@ -219,6 +219,7 @@ test.describe("a viewer cannot write", () => {
     await expect(viewerPage.getByRole("button", { name: "Teilen" })).toHaveCount(0);
     await expect(viewerPage.getByRole("button", { name: "Entfernen" })).toHaveCount(0);
     await expect(viewerPage.getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
+    await expect(viewerPage.getByText("Deine Rolle:")).toHaveCount(0);
 
     await ownerContext.close();
     await viewerContext.close();
@@ -229,16 +230,16 @@ test.describe("a viewer cannot write", () => {
   }) => {
     const { ownerContext, viewerContext, ownerPage, notebookUrl, title } = await setUpSharedNotebook(browser);
 
-    // The delete form requires a checked confirmation checkbox (see the
-    // "requires explicit confirmation" describe below) -- checked here so
-    // the captured request is exactly what a real, intentional delete looks
-    // like. Capture only, aborted before it reaches the server: the owner's
-    // own notebook must not be deleted by this step.
+    // The delete goes through a confirmation dialog (see the "requires
+    // explicit confirmation" describe below) -- confirmed here so the captured
+    // request is exactly what a real, intentional delete looks like. Capture
+    // only, aborted before it reaches the server: the owner's own notebook
+    // must not be deleted by this step.
     const captured = await captureServerActionRequest(
       ownerPage,
       async () => {
-        await ownerPage.getByLabel("Ich möchte dieses Notizbuch endgültig löschen").check();
         await ownerPage.getByRole("button", { name: "Notizbuch löschen" }).click();
+        await ownerPage.getByRole("dialog").getByRole("button", { name: "Endgültig löschen" }).click();
       },
       { abort: true },
     );
@@ -256,7 +257,7 @@ test.describe("a viewer cannot write", () => {
     expect(viewerRedirect.searchParams.get("fehler")).toBe("42501");
 
     await ownerPage.reload();
-    await expect(ownerPage.getByText(title)).toBeVisible();
+    await expect(ownerPage.getByRole("heading", { level: 1, name: title })).toBeVisible();
 
     // Positive control: the exact same captured request, replayed with the
     // OWNER's still-valid cookies, must really delete the notebook -- this
@@ -279,39 +280,183 @@ test.describe("a viewer cannot write", () => {
 });
 
 test.describe("deleting a notebook requires explicit confirmation", () => {
-  test("submitting the delete form with the confirmation checkbox left unchecked does not delete, and redirects with fehler=bestaetigung", async ({
+  test("clicking Notizbuch löschen only opens a dialog, there is no confirmation checkbox, and Abbrechen deletes nothing", async ({
     context,
   }) => {
-    // Deliberately does not depend on the server action's raw field names
-    // (Next's production build prefixes them, e.g. "_1_confirm", unlike the
-    // dev build): this submits through the real page with the real button,
-    // and only bypasses the checkbox's `required` HTML attribute -- the one
-    // thing that would otherwise stop an unchecked submission from ever
-    // reaching the network at all -- so what is actually under test is the
-    // server action's own confirmation check, not the browser's.
-    await context.addCookies(await seedLocalSession("notebooks-e2e-confirm"));
+    await context.addCookies(await seedLocalSession("notebooks-e2e-confirm-cancel"));
     const page = await context.newPage();
-    const title = `Bestaetigung-Test ${Date.now()}`;
+    const title = `Abbrechen-Test ${Date.now()}`;
     const notebookUrl = await createNotebookViaUi(page, title);
 
-    const checkbox = page.getByLabel("Ich möchte dieses Notizbuch endgültig löschen");
-    await checkbox.evaluate((input: HTMLInputElement) => input.removeAttribute("required"));
-    await expect(checkbox).not.toBeChecked();
+    await expect(page.getByLabel("Ich möchte dieses Notizbuch endgültig löschen")).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Notizbuch löschen" }).click();
-    // The page is already on the notebook path before the click, so wait for the
-    // server action's redirect to add an error, not just for the path.
-    await page.waitForURL(
-      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
-    );
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Notizbuch löschen?" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Endgültig löschen" })).toBeVisible();
 
-    const redirectedUrl = new URL(page.url());
-    expect(redirectedUrl.searchParams.get("fehler")).toBe("bestaetigung");
+    await expect(dialog).toHaveAccessibleDescription(/endgültig gelöscht/);
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe(new URL(notebookUrl).pathname);
 
     // Still there: a fresh navigation shows the title, not a not-found page.
     const response = await page.goto(notebookUrl);
     expect(response?.status()).not.toBe(404);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  });
+
+  test("the server rejects a delete whose hidden confirmation input was removed (fehler=bestaetigung), the notebook survives", async ({
+    context,
+  }) => {
+    // The hidden input is located by type and value, not by name: production builds prefix
+    // server-action field names.
+    await context.addCookies(await seedLocalSession("notebooks-e2e-confirm-guard"));
+    const page = await context.newPage();
+    const title = `Bestaetigung-Test ${Date.now()}`;
+    const notebookUrl = await createNotebookViaUi(page, title);
+
+    await page.getByRole("button", { name: "Notizbuch löschen" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const hidden = page.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig löschen" }).click();
+    await page.waitForURL(
+      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
+    );
+    expect(new URL(page.url()).searchParams.get("fehler")).toBe("bestaetigung");
+
+    const response = await page.goto(notebookUrl);
+    expect(response?.status()).not.toBe(404);
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+  });
+
+  test("Endgültig löschen in the dialog deletes the notebook and lands on the list with a status", async ({
+    context,
+  }) => {
+    await context.addCookies(await seedLocalSession("notebooks-e2e-confirm-delete"));
+    const page = await context.newPage();
+    const title = `Loeschen-Test ${Date.now()}`;
+    const notebookUrl = await createNotebookViaUi(page, title);
+
+    await page.getByRole("button", { name: "Notizbuch löschen" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Endgültig löschen" }).click();
+
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.getByText("Das Notizbuch wurde gelöscht.")).toBeVisible();
+    await expect(page.getByText(title)).toHaveCount(0);
+
+    const response = await page.goto(notebookUrl);
+    expect(response?.status()).toBe(404);
+  });
+});
+
+test.describe("removing a member requires explicit confirmation", () => {
+  async function shareWithViewer(browser: Browser, label: string) {
+    const ownerContext = await browser.newContext();
+    const viewerContext = await browser.newContext();
+    await ownerContext.addCookies(await seedLocalSession(`${label}-owner`));
+    await viewerContext.addCookies(await seedLocalSession(`${label}-viewer`));
+    const ownerPage = await ownerContext.newPage();
+    const viewerPage = await viewerContext.newPage();
+
+    await viewerPage.goto("/profil");
+    const viewerId = extractUuid(await viewerPage.getByTestId("nutzer-id").innerText());
+
+    const notebookUrl = await createNotebookViaUi(ownerPage, `Mitglied-Test ${Date.now()}`);
+    await ownerPage.getByLabel("Nutzer-ID").fill(viewerId);
+    await ownerPage.getByLabel("Rolle").selectOption({ label: "Betrachter" });
+    await ownerPage.getByRole("button", { name: "Teilen" }).click();
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    const memberRow = ownerPage.getByRole("listitem").filter({ hasText: viewerId.slice(0, 8) });
+    return { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow };
+  }
+
+  test("Entfernen only opens a dialog, and Abbrechen keeps the member", async ({ browser }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerId, memberRow } = await shareWithViewer(
+      browser,
+      "notebooks-e2e-member-cancel",
+    );
+    await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = ownerPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Mitglied entfernen?" })).toBeVisible();
+    await expect(dialog).toHaveAccessibleDescription(/Zugriff/);
+    await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Endgültig entfernen" })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(ownerPage.getByRole("dialog")).toHaveCount(0);
+
+    await ownerPage.reload();
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
+
+  test("the server rejects a member removal whose hidden confirmation input was removed (fehler=bestaetigung_mitglied), the member stays", async ({
+    browser,
+  }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerId, notebookUrl, memberRow } = await shareWithViewer(
+      browser,
+      "notebooks-e2e-member-guard",
+    );
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = ownerPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const hidden = ownerPage.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
+    await ownerPage.waitForURL(
+      (url) => url.pathname === new URL(notebookUrl).pathname && url.searchParams.has("fehler"),
+    );
+    expect(new URL(ownerPage.url()).searchParams.get("fehler")).toBe("bestaetigung_mitglied");
+
+    await ownerPage.goto(notebookUrl);
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toBeVisible();
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
+
+  test("Endgültig entfernen removes the member, who then loses access", async ({ browser }) => {
+    const { ownerContext, viewerContext, ownerPage, viewerPage, viewerId, notebookUrl, memberRow } =
+      await shareWithViewer(browser, "notebooks-e2e-member-remove");
+
+    await memberRow.getByRole("button", { name: "Entfernen" }).click();
+    await ownerPage.getByRole("dialog").getByRole("button", { name: "Endgültig entfernen" }).click();
+
+    await expect(ownerPage.getByText(viewerId.slice(0, 8))).toHaveCount(0);
+    const response = await viewerPage.goto(notebookUrl);
+    expect(response?.status()).toBe(404);
+
+    await ownerContext.close();
+    await viewerContext.close();
+  });
+});
+
+test.describe("the notebook header", () => {
+  test("does not show 'Deine Rolle:', while the member list still shows the role", async ({ context }) => {
+    await context.addCookies(await seedLocalSession("notebooks-e2e-no-role-header"));
+    const page = await context.newPage();
+    await createNotebookViaUi(page, `Rollen-Test ${Date.now()}`);
+
+    await expect(page.getByText("Deine Rolle:")).toHaveCount(0);
+    await expect(page.getByRole("listitem").filter({ hasText: "Eigentümer" })).toHaveCount(1);
   });
 });
 

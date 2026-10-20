@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/logo";
+import { FormValidation } from "@/components/form-validation";
+import { PointerLight } from "@/components/pointer-light";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,10 +27,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
         <header className="topbar">
           <Link href="/" className="brand">
-            <Logo /> nblm <small>Lesesaal</small>
+            <Logo /> nblm
           </Link>
         </header>
         {children}
+        <footer className="site-footer">
+          <Link href="/impressum">Impressum</Link>
+          <Link href="/datenschutz">Datenschutz</Link>
+        </footer>
+        <PointerLight />
+        <FormValidation />
       </body>
     </html>
   );

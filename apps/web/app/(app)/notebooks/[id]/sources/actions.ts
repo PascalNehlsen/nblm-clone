@@ -15,6 +15,7 @@ import {
   uploadTextObject,
 } from "@/lib/sources/sources";
 import { createClient } from "@/lib/supabase/server";
+import { mergeByPage } from "@/lib/sources/merge";
 
 // Every action checks the session with getUser() itself (ADR 0005). Writes go through
 // the user's client, so RLS decides; these checks only refuse early and give a message.
@@ -120,6 +121,17 @@ export async function addTextSourceAction(formData: FormData): Promise<void> {
 
 // A web page as source (C2). The URL rules run here before any insert, so a refused URL
 // leaves no row; the fetch itself runs through the SSRF guard during ingestion.
+function isYouTubeHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host.endsWith(".youtube.com") ||
+    host === "youtube-nocookie.com" ||
+    host.endsWith(".youtube-nocookie.com")
+  );
+}
+
 export async function addUrlSourceAction(formData: FormData): Promise<void> {
   const { supabase, user } = await signedInClient();
   const notebookId = formData.get("notebookId");
@@ -130,6 +142,9 @@ export async function addUrlSourceAction(formData: FormData): Promise<void> {
   const raw = formData.get("url");
   const parsed = parseImportUrl(typeof raw === "string" ? raw.trim() : "");
   if (!parsed.ok) redirect(notebookPath(notebookId, "url"));
+  // A YouTube page has almost no text in its HTML (video and captions load by script), so it
+  // would only produce an empty or broken source. Refused before any fetch.
+  if (isYouTubeHost(parsed.url.hostname)) redirect(notebookPath(notebookId, "youtube"));
 
   let source: { id: string; storagePath: string };
   try {
@@ -147,6 +162,8 @@ export async function deleteSourceAction(formData: FormData): Promise<void> {
   const sourceId = formData.get("sourceId");
   if (!isUuid(notebookId)) redirect("/");
   if (!isUuid(sourceId)) redirect(notebookPath(notebookId, "eingabe"));
+  // Irreversible: the form requires an explicit confirmation (the dialog in source-list.tsx).
+  if (formData.get("confirm") !== "on") redirect(notebookPath(notebookId, "bestaetigung_quelle"));
   try {
     await deleteSource(supabase, sourceId);
   } catch (error) {
@@ -163,4 +180,55 @@ export async function retrySourceAction(formData: FormData): Promise<void> {
   if (!isUuid(sourceId)) redirect(notebookPath(notebookId, "eingabe"));
   await runIngestion(supabase, sourceId);
   redirect(notebookPath(notebookId));
+}
+
+// Reading a whole source (the margin's source view). The user's own client, so RLS decides;
+// both ids must match, so a source of another notebook is never returned.
+const READ_CHUNK_LIMIT = 400;
+
+export async function readSourceAction(input: {
+  notebookId: unknown;
+  sourceId: unknown;
+}): Promise<
+  | {
+      ok: true;
+      title: string;
+      kind: "text" | "pdf" | "url";
+      url: string | null;
+      sections: { page: number | null; text: string }[];
+      truncated: boolean;
+    }
+  | { ok: false }
+> {
+  const { notebookId, sourceId } = input;
+  if (!isUuid(notebookId) || !isUuid(sourceId)) return { ok: false };
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return { ok: false };
+  const { data: source } = await supabase
+    .from("sources")
+    .select("title, kind, source_url")
+    .eq("notebook_id", notebookId)
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (!source) return { ok: false };
+  const { data: chunks, error } = await supabase
+    .from("chunks")
+    .select("content, page, ordinal")
+    .eq("notebook_id", notebookId)
+    .eq("source_id", sourceId)
+    .order("ordinal", { ascending: true })
+    .limit(READ_CHUNK_LIMIT + 1);
+  if (error || !chunks) return { ok: false };
+  const truncated = chunks.length > READ_CHUNK_LIMIT;
+  // Chunks overlap; merged per page so the reader shows each passage once.
+  const sections = mergeByPage(
+    chunks.slice(0, READ_CHUNK_LIMIT).map((c) => ({
+      page: typeof c.page === "number" ? c.page : null,
+      content: String(c.content),
+    })),
+  );
+  const kind = source.kind === "pdf" || source.kind === "url" ? source.kind : "text";
+  const url = kind === "url" && typeof source.source_url === "string" ? source.source_url : null;
+  return { ok: true, title: String(source.title), kind, url, sections, truncated };
 }

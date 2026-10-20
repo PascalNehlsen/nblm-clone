@@ -92,26 +92,41 @@ function sourcesSection(page: Page) {
   return page.locator("section").filter({ has: page.getByRole("heading", { name: "Quellen" }) });
 }
 
-/** The PDF upload form, identified by its "PDF-Datei" file input -- not by
- * position, since the C1 contract only fixes the two forms' own fields. */
-function pdfForm(page: Page) {
-  return sourcesSection(page)
-    .locator("form")
-    .filter({ has: page.getByLabel("PDF-Datei") });
+/** The add-source area is a tab switcher: tablist "Art der Quelle" with the tabs
+ * "Text", "PDF" and "Webseite", each controlling one tabpanel with its form. Only
+ * the selected panel is visible (the others carry `hidden`), so these helpers click
+ * the tab first and return the form inside the one visible panel. Playwright's
+ * getByRole skips hidden elements, which keeps "Titel" unambiguous. */
+async function openSourceForm(page: Page, tabName: "Text" | "PDF" | "Webseite") {
+  const tab = sourcesSection(page)
+    .getByRole("tablist", { name: "Art der Quelle" })
+    .getByRole("tab", { name: tabName, exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const form = sourcesSection(page).getByRole("tabpanel").locator("form");
+  await expect(form).toHaveCount(1);
+  return form;
 }
 
-/** The add-text form, identified by its "Text" textarea. */
-function textForm(page: Page) {
-  return sourcesSection(page)
-    .locator("form")
-    .filter({ has: page.getByLabel("Text", { exact: true }) });
+/** The PDF upload form ("PDF-Datei", "Titel", "Hochladen"). */
+async function pdfForm(page: Page) {
+  const form = await openSourceForm(page, "PDF");
+  await expect(form.getByLabel("PDF-Datei")).toBeVisible();
+  return form;
 }
 
-/** The add-URL form (C2), identified by its "Webadresse" field. */
-function urlForm(page: Page) {
-  return sourcesSection(page)
-    .locator("form")
-    .filter({ has: page.getByLabel("Webadresse") });
+/** The add-text form ("Titel", "Text", "Text hinzufügen"). */
+async function textForm(page: Page) {
+  const form = await openSourceForm(page, "Text");
+  await expect(form.getByRole("button", { name: "Text hinzufügen" })).toBeVisible();
+  return form;
+}
+
+/** The add-URL form (C2) ("Titel", "Webadresse", "Seite hinzufügen"). */
+async function urlForm(page: Page) {
+  const form = await openSourceForm(page, "Webseite");
+  await expect(form.getByLabel("Webadresse")).toBeVisible();
+  return form;
 }
 
 /** Shares `notebookUrl` (created by `owner`) with a fresh user as `role`
@@ -162,6 +177,64 @@ test.describe("a viewer sees the sources list but no way to add sources", () => 
   });
 });
 
+test.describe("the add-source area is a tab switcher", () => {
+  test("Text is selected by default, PDF and Webseite stay hidden until clicked, one form at a time", async ({
+    browser,
+  }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-tabs",
+      "Bearbeiter",
+    );
+    const section = sourcesSection(memberPage);
+    const tablist = section.getByRole("tablist", { name: "Art der Quelle" });
+    await expect(tablist).toBeVisible();
+    await expect(tablist.getByRole("tab")).toHaveCount(3);
+    const textTab = tablist.getByRole("tab", { name: "Text", exact: true });
+    const pdfTab = tablist.getByRole("tab", { name: "PDF", exact: true });
+    const urlTab = tablist.getByRole("tab", { name: "Webseite", exact: true });
+
+    // Default: Text selected, the others not; exactly one visible panel and form.
+    await expect(textTab).toHaveAttribute("aria-selected", "true");
+    await expect(pdfTab).toHaveAttribute("aria-selected", "false");
+    await expect(urlTab).toHaveAttribute("aria-selected", "false");
+    await expect(section.locator('[role="tabpanel"]')).toHaveCount(3);
+    await expect(section.locator('[role="tabpanel"][hidden]')).toHaveCount(2);
+    await expect(section.getByRole("tabpanel")).toHaveCount(1);
+    await expect(section.locator("form:visible")).toHaveCount(1);
+    await expect(section.getByRole("button", { name: "Text hinzufügen" })).toBeVisible();
+    // getByLabel does not skip hidden elements, so assert hidden, not absent.
+    await expect(section.getByLabel("PDF-Datei")).toBeHidden();
+    await expect(section.getByLabel("Webadresse")).toBeHidden();
+
+    // Each tab controls its own panel.
+    const textPanelId = await textTab.getAttribute("aria-controls");
+    expect(textPanelId).toBeTruthy();
+
+    await pdfTab.click();
+    await expect(pdfTab).toHaveAttribute("aria-selected", "true");
+    await expect(textTab).toHaveAttribute("aria-selected", "false");
+    await expect(section.getByRole("tabpanel")).toHaveCount(1);
+    await expect(section.locator("form:visible")).toHaveCount(1);
+    await expect(section.getByLabel("PDF-Datei")).toBeVisible();
+    await expect(section.getByRole("button", { name: "Hochladen" })).toBeVisible();
+    await expect(section.getByRole("button", { name: "Text hinzufügen" })).toHaveCount(0);
+    await expect(memberPage.locator(`#${textPanelId}`)).toHaveAttribute("hidden", /.*/);
+
+    await urlTab.click();
+    await expect(urlTab).toHaveAttribute("aria-selected", "true");
+    await expect(pdfTab).toHaveAttribute("aria-selected", "false");
+    await expect(section.getByRole("tabpanel")).toHaveCount(1);
+    await expect(section.locator("form:visible")).toHaveCount(1);
+    await expect(section.getByLabel("Webadresse")).toBeVisible();
+    await expect(section.getByRole("button", { name: "Seite hinzufügen" })).toBeVisible();
+    await expect(section.getByLabel("PDF-Datei")).toBeHidden();
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+});
+
 test.describe("an editor uploads a PDF source", () => {
   test("the source appears in the list and ends up Fehlgeschlagen: Modell nicht konfiguriert", async ({
     browser,
@@ -174,7 +247,7 @@ test.describe("an editor uploads a PDF source", () => {
     );
     const title = `Test-PDF ${Date.now()}`;
 
-    const form = pdfForm(memberPage);
+    const form = await pdfForm(memberPage);
     await form.getByLabel("PDF-Datei").setInputFiles({
       name: "test.pdf",
       mimeType: "application/pdf",
@@ -203,7 +276,7 @@ test.describe("an editor adds a text source", () => {
     );
     const title = `Test-Text ${Date.now()}`;
 
-    const form = textForm(memberPage);
+    const form = await textForm(memberPage);
     await form.getByLabel("Titel").fill(title);
     await form.getByLabel("Text", { exact: true }).fill("Hallo, dies ist ein Testtext für die Ingestion.");
     await form.getByRole("button", { name: "Text hinzufügen" }).click();
@@ -249,7 +322,7 @@ test.describe("an editor sees the URL form", () => {
       "Bearbeiter",
     );
 
-    const form = urlForm(memberPage);
+    const form = await urlForm(memberPage);
     await expect(form.getByLabel("Titel")).toBeVisible();
     await expect(form.getByLabel("Webadresse")).toHaveAttribute("type", "url");
     await expect(form.getByLabel("Webadresse")).toHaveAttribute("maxlength", "2048");
@@ -278,7 +351,7 @@ test.describe("an editor imports an address the guard refuses", () => {
       );
       const title = `Test-URL ${Date.now()}`;
 
-      const form = urlForm(memberPage);
+      const form = await urlForm(memberPage);
       await form.getByLabel("Titel").fill(title);
       await form.getByLabel("Webadresse").fill(address);
       await form.getByRole("button", { name: "Seite hinzufügen" }).click();
@@ -302,7 +375,7 @@ test.describe("an editor removes a source", () => {
     );
     const title = `Zu entfernen ${Date.now()}`;
 
-    const form = textForm(memberPage);
+    const form = await textForm(memberPage);
     await form.getByLabel("Titel").fill(title);
     await form.getByLabel("Text", { exact: true }).fill("Wird gleich wieder entfernt.");
     await form.getByRole("button", { name: "Text hinzufügen" }).click();
@@ -311,7 +384,89 @@ test.describe("an editor removes a source", () => {
     await expect(row).toBeVisible();
 
     await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
     await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
+    // The dialog closes with the submit, it does not stay open over the page.
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+
+  test("Entfernen only opens a confirmation dialog, and Abbrechen keeps the source", async ({ browser }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-remove-cancel",
+      "Bearbeiter",
+    );
+    const title = `Bleibt ${Date.now()}`;
+
+    const form = await textForm(memberPage);
+    await form.getByLabel("Titel").fill(title);
+    await form.getByLabel("Text", { exact: true }).fill("Bleibt nach Abbrechen erhalten.");
+    await form.getByRole("button", { name: "Text hinzufügen" }).click();
+
+    const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
+    await expect(row).toBeVisible();
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+
+    await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Quelle entfernen?" })).toBeVisible();
+    await expect(dialog).toHaveAccessibleDescription(new RegExp(title));
+    await expect(dialog).toHaveAccessibleDescription(/wird mit ihren Abschnitten aus dem Notizbuch entfernt/);
+    await expect(dialog.getByRole("button", { name: "Abbrechen" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Endgültig entfernen" })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(memberPage.getByRole("dialog")).toHaveCount(0);
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
+
+    await memberPage.reload();
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
+
+    await ownerContext.close();
+    await memberContext.close();
+  });
+
+  test("the server rejects a removal whose hidden confirmation input was removed (fehler=bestaetigung_quelle), the source stays", async ({
+    browser,
+  }) => {
+    const { ownerContext, memberContext, memberPage } = await shareWithFreshMember(
+      browser,
+      "sources-e2e-remove-guard",
+      "Bearbeiter",
+    );
+    const title = `Geschuetzt ${Date.now()}`;
+
+    const form = await textForm(memberPage);
+    await form.getByLabel("Titel").fill(title);
+    await form.getByLabel("Text", { exact: true }).fill("Darf ohne Bestätigung nicht verschwinden.");
+    await form.getByRole("button", { name: "Text hinzufügen" }).click();
+
+    const row = sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title });
+    await expect(row).toBeVisible();
+    const notebookPath = new URL(memberPage.url()).pathname;
+
+    await row.getByRole("button", { name: "Entfernen" }).click();
+    const dialog = memberPage.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // Located by type and value, not by name: production builds prefix server-action field names.
+    const hidden = memberPage.getByRole("dialog").locator("form input[type=hidden][value=on]");
+    await expect(hidden).toHaveCount(1);
+    await hidden.evaluate((input) => input.remove());
+
+    await dialog.getByRole("button", { name: "Endgültig entfernen" }).click();
+    await memberPage.waitForURL(
+      (url) => url.pathname === notebookPath && url.searchParams.has("fehler"),
+    );
+    expect(new URL(memberPage.url()).searchParams.get("fehler")).toBe("bestaetigung_quelle");
+
+    await memberPage.goto(notebookPath);
+    await expect(sourcesSection(memberPage).getByRole("listitem").filter({ hasText: title })).toHaveCount(1);
 
     await ownerContext.close();
     await memberContext.close();

@@ -63,6 +63,7 @@ export async function removeMemberAction(formData: FormData): Promise<void> {
   const userId = formData.get("userId");
   if (!isUuid(notebookId)) redirect("/");
   if (!isUuid(userId)) redirect(notebookPath(notebookId, "eingabe"));
+  if (formData.get("confirm") !== "on") redirect(notebookPath(notebookId, "bestaetigung_mitglied"));
   const result = await removeMember(supabase, notebookId, userId);
   redirect(notebookPath(notebookId, result.ok ? undefined : result.code));
 }

@@ -23,9 +23,13 @@ test.describe("demo login", () => {
     await expect(page.locator('script[src*="challenges.cloudflare.com"]')).toHaveCount(0);
   });
 
-  test("Demo starten lands on the copied template notebook with its two ready sources", async ({ page }) => {
+  test("Demo starten lands on the notebook list, and the copied notebook has its two ready sources", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.getByRole("heading", { name: "Deine Notizbücher" })).toBeVisible();
+
+    await page.getByRole("link", { name: /Demo: Beispielquellen/ }).click();
     await page.waitForURL(NOTEBOOK_URL);
 
     await expect(page.getByRole("heading", { name: "Demo: Beispielquellen" })).toBeVisible();
@@ -41,16 +45,52 @@ test.describe("demo login", () => {
     await expect(page.getByText("Beispiel: Noch in Arbeit.txt")).toHaveCount(0);
   });
 
-  test("the notebook shows the 24 hour note and no source controls, but the chat form", async ({ page }) => {
+  test("an anonymous demo user cannot create more notebooks from the list", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
-    await page.waitForURL(NOTEBOOK_URL);
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.getByRole("heading", { name: "Deine Notizbücher" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Neues Notizbuch" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Anlegen" })).toHaveCount(0);
+  });
 
-    await expect(
-      page
-        .getByRole("note")
-        .filter({ hasText: "Demo: Dieses Notizbuch und dein Demo-Zugang werden nach 24 Stunden gelöscht." }),
-    ).toBeVisible();
+  test("the notebook card tilts in 3D on hover (computed transform is a non-identity matrix3d)", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+
+    const card = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: /Demo: Beispielquellen/ }) });
+    await expect(card).toHaveCount(1);
+    await card.hover();
+    const box = await card.boundingBox();
+    if (!box) throw new Error("card has no bounding box");
+    await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.15);
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.2);
+    // A real 3D tilt: the computed transform is a non-identity matrix3d. "none" and the
+    // 2D identity matrix (what broken CSS yields) must both fail.
+    await expect
+      .poll(() =>
+        card.evaluate((el) => {
+          const t = getComputedStyle(el).transform;
+          if (t === "none") return false;
+          const m = new DOMMatrixReadOnly(t);
+          return !m.isIdentity && m.is2D === false;
+        }),
+      )
+      .toBe(true);
+  });
+
+  test("the notebook has no 24 hour note, no delete button, no source controls, but the chat form", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Demo starten (ohne Anmeldung)" }).click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await page.getByRole("link", { name: /Demo: Beispielquellen/ }).click();
+    await page.waitForURL(NOTEBOOK_URL);
+    await expect(page.getByRole("heading", { name: "Demo: Beispielquellen" })).toBeVisible();
+
+    await expect(page.getByRole("note")).toHaveCount(0);
+    await expect(page.getByText("werden nach 24 Stunden gelöscht")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Notizbuch löschen" })).toHaveCount(0);
 
     await expect(page.getByText("Quelle hinzufügen")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Quelle hinzufügen" })).toHaveCount(0);
@@ -62,6 +102,7 @@ test.describe("demo login", () => {
 
     const chat = page.locator("section").filter({ has: page.getByRole("heading", { name: "Fragen", exact: true }) });
     await expect(chat.getByLabel("Frage")).toBeVisible();
+    await chat.getByLabel("Frage").fill("Worum geht es?");
     await expect(chat.getByRole("button", { name: "Fragen", exact: true })).toBeEnabled();
   });
 });

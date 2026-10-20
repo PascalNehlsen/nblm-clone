@@ -168,6 +168,41 @@ test.describe("chat history", () => {
   });
 });
 
+test.describe("chat layout", () => {
+  test("the question is a right-aligned bubble and the answer sits on the left", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-layout");
+    const chunkId = await seedChunk(owner, id);
+    await seedPair(owner, id, "Wann wurde die Firma gegründet?", "Sie wurde 1999 gegründet [1].", [
+      { chunkId, quote: QUOTE },
+    ]);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const list = section.getByRole("list");
+    const question = section.getByRole("listitem").filter({ hasText: "Wann wurde die Firma gegründet?" });
+    const answer = section.getByRole("listitem").filter({ hasText: "Sie wurde 1999 gegründet" });
+    await expect(question).toHaveCount(1);
+    await expect(answer).toHaveCount(1);
+
+    const listBox = (await list.first().boundingBox())!;
+    const questionBox = (await question.boundingBox())!;
+    const answerBox = (await answer.boundingBox())!;
+    expect(listBox).toBeTruthy();
+    expect(questionBox).toBeTruthy();
+    expect(answerBox).toBeTruthy();
+
+    const listRight = listBox.x + listBox.width;
+    // Question: right edge flush with the list, and a bubble (not full width).
+    expect(Math.abs(questionBox.x + questionBox.width - listRight)).toBeLessThanOrEqual(4);
+    expect(questionBox.x - listBox.x).toBeGreaterThan(listBox.width * 0.15);
+    // Answer: left edge flush with the list.
+    expect(Math.abs(answerBox.x - listBox.x)).toBeLessThanOrEqual(4);
+
+    await context.close();
+  });
+});
+
 test.describe("asking a question", () => {
   test("without a configured model the alert says Modell nicht konfiguriert and no pending text remains", async ({
     browser,
@@ -251,6 +286,53 @@ test.describe("composer keyboard", () => {
     const section = chatSection(page);
     await expect(section.getByText(COMPOSER_HINT)).toBeVisible();
     await expect(section.getByLabel("Frage")).toHaveAccessibleDescription(COMPOSER_HINT);
+
+    await context.close();
+  });
+});
+
+test.describe("composer without field validation", () => {
+  test("the textarea is not required and the Fragen button follows the text", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-empty-disabled");
+    await seedChunk(owner, id);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const textarea = section.getByLabel("Frage");
+    const send = section.getByRole("button", { name: "Fragen", exact: true });
+
+    await expect(textarea).not.toHaveAttribute("required", /.*/);
+    await expect(send).toBeDisabled();
+
+    await textarea.fill("   \n  ");
+    await expect(send).toBeDisabled();
+
+    await textarea.fill("Wie viele Personen arbeiten dort?");
+    await expect(send).toBeEnabled();
+
+    await textarea.fill("");
+    await expect(send).toBeDisabled();
+
+    await context.close();
+  });
+
+  test("Enter on an empty or whitespace-only field does nothing and shows no message", async ({ browser }) => {
+    const { context, page, owner, id, url } = await ownerWithNotebook(browser, "chat-e2e-empty-enter");
+    await seedChunk(owner, id);
+    await page.goto(url);
+
+    const section = chatSection(page);
+    const textarea = section.getByLabel("Frage");
+    await textarea.click();
+    await textarea.press("Enter");
+    await textarea.fill("   ");
+    await textarea.press("Enter");
+
+    await expect(section.getByRole("listitem")).toHaveCount(0);
+    await expect(section.getByRole("alert")).toHaveCount(0);
+    await expect(section.getByRole("button", { name: "Fragen", exact: true })).toBeDisabled();
+    // No native validation bubble state either: the field is not flagged invalid.
+    expect(await textarea.evaluate((el) => (el as HTMLTextAreaElement).validity.valueMissing)).toBe(false);
 
     await context.close();
   });
@@ -340,6 +422,7 @@ test.describe("a viewer", () => {
     await viewerPage.goto(url);
     const section = chatSection(viewerPage);
     await expect(section.getByLabel("Frage")).toBeVisible();
+    await section.getByLabel("Frage").fill("Worum geht es?");
     await expect(section.getByRole("button", { name: "Fragen", exact: true })).toBeEnabled();
     // Messages are visible only to their author (RLS, ADR 0004): the viewer never sees the owner's history.
     await expect(viewerPage.getByText("Frage des Besitzers?")).toHaveCount(0);

@@ -16,8 +16,16 @@ export default async function LoginPage({
 
   return (
     <main id="inhalt" className="login">
+      <div className="constellation" aria-hidden="true">
+        {[0, 1, 2, 3, 5, 6].map((hue, i) => (
+          <span key={hue} className={`floater f${i}`} data-hue={hue}>
+            <i />
+            <i />
+            <i />
+          </span>
+        ))}
+      </div>
       <div className="login-hero">
-        <p className="eyebrow">Dein Lesesaal für Quellen</p>
         <p className="statement">
           Frag deine Quellen. <em>Jede Antwort zeigt, wo es steht.</em>
         </p>
@@ -26,15 +34,18 @@ export default async function LoginPage({
           Quelle, ein Klick zeigt die markierte Fundstelle im Original.
         </p>
         <p className="sr-only">Beispiel: eine Aussage mit Beleg und der markierten Fundstelle aus der Quelle.</p>
-        <div className="specimen" data-hue="0" aria-hidden="true">
-          <p>
-            Die Hexe lockte die Kinder mit einem Häuschen aus Brot
+        <div className="specimen" data-hue="0" data-tilt="5" aria-hidden="true">
+          <p className="q">Womit lockte die Hexe Hänsel und Gretel an?</p>
+          <p className="a">
+            Mit einem Häuschen aus Brot
             <span className="ref">1</span>.
           </p>
-          <p className="passage-line">… sahen sie, daß das Häuslein aus Brot gebaut war und mit Kuchen gedeckt …</p>
+          <p className="passage-line">
+            … sahen sie, daß <mark>das Häuslein aus Brot gebaut war</mark> und mit Kuchen gedeckt …
+          </p>
         </div>
       </div>
-      <div className="login-card">
+      <div className="login-card" data-tilt="3">
         <h1>Anmelden</h1>
         {message ? <p role="status">{message}</p> : null}
         <form action={signInWithGitHub}>

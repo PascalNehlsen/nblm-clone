@@ -49,42 +49,35 @@ describe("startDemoCore: who may start", () => {
 describe("startDemoCore: notebook lookup and creation", () => {
   it("an existing notebook is reused and nothing is created", async () => {
     const deps = makeDeps({ firstNotebookId: vi.fn(async () => OTHER_ID) });
-    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: `/notebooks/${OTHER_ID}` });
+    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
     expect(deps.createNotebook).not.toHaveBeenCalled();
   });
 
-  it("without a notebook it creates one with the demo title and goes to it", async () => {
+  it("without a notebook it creates one with the demo title and goes to the list", async () => {
     const deps = makeDeps();
-    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: `/notebooks/${NOTEBOOK_ID}` });
+    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
     expect(deps.createNotebook).toHaveBeenCalledTimes(1);
     expect(deps.createNotebook).toHaveBeenCalledWith("Demo: Beispielquellen");
   });
 
-  it("demo_notebook_exists looks the notebook up again and goes there", async () => {
-    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null).mockResolvedValueOnce(OTHER_ID);
+  it("demo_notebook_exists goes to the list", async () => {
+    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null);
     const deps = makeDeps({
       firstNotebookId,
       createNotebook: vi.fn(async () => ({ error: "demo_notebook_exists" })),
     });
-    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: `/notebooks/${OTHER_ID}` });
-    expect(firstNotebookId).toHaveBeenCalledTimes(2);
+    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
+    expect(firstNotebookId).toHaveBeenCalledTimes(1);
   });
 
   it("demo_notebook_exists inside a longer Postgres message is still recognised", async () => {
-    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null).mockResolvedValueOnce(OTHER_ID);
+    const firstNotebookId = vi.fn<() => Promise<string | null>>().mockResolvedValueOnce(null);
     const deps = makeDeps({
       firstNotebookId,
       createNotebook: vi.fn(async () => ({ error: "P0001: demo_notebook_exists (context)" })),
     });
-    await expect(startDemoCore(deps)).resolves.toEqual({ redirect: `/notebooks/${OTHER_ID}` });
-  });
-
-  it("demo_notebook_exists with no notebook on the second lookup goes to /", async () => {
-    const deps = makeDeps({
-      firstNotebookId: vi.fn(async () => null),
-      createNotebook: vi.fn(async () => ({ error: "demo_notebook_exists" })),
-    });
     await expect(startDemoCore(deps)).resolves.toEqual({ redirect: "/" });
+    expect(firstNotebookId).toHaveBeenCalledTimes(1);
   });
 });
 
