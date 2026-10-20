@@ -66,8 +66,9 @@ export interface TurnMessage {
 
 export type TurnResult = { ok: true; message: TurnMessage } | { ok: false; reason: string };
 
-// Caseless, single spaces, no trailing period: "keine antwort" still counts as the sentence.
-const loose = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase().replace(/[.!]+$/, "");
+// Caseless, single spaces, no trailing period or space: "keine antwort" still counts as the
+// sentence, also when a removed marker sat before the period ("Antwort [1].").
+const loose = (s: string) => s.replace(/\s+/g, " ").toLowerCase().replace(/[\s.!]+$/, "").trim();
 const SENTENCE = loose(ABSTENTION);
 
 // `checked` is the answer after the citation check, valid markers renumbered to [k].

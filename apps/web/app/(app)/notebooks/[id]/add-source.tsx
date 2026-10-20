@@ -61,8 +61,9 @@ function PdfUploadForm({ notebookId }: { notebookId: string }) {
         () => false,
       );
       // Nothing reached Storage. Ingestion still runs once: it finds no file and marks the
-      // source failed (upload_missing), so no row is left waiting forever. The dialog stays
-      // open with the message; the failed row can be removed from the list.
+      // source failed (upload_missing), so the row does not keep waiting; only if that call
+      // fails too does it stay pending. The dialog stays open with the message; the failed
+      // row can be removed from the list.
       if (!uploaded) {
         setMessage("Das Hochladen hat nicht geklappt.");
         await ingestSourceAction({ notebookId, sourceId: created.sourceId }).catch(() => undefined);

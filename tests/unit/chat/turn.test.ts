@@ -219,6 +219,29 @@ describe("runTurn: model call", () => {
     expect(h.logs[0]).toMatchObject({ abstained: true, abstention: "model", citations: 0 });
   });
 
+  it("the abstention sentence without its period, a valid marker, then the punctuation is still the abstention (model)", async () => {
+    const base = ABSTENTION.slice(0, -1);
+    const marker = '[1: "sitzt in Bonn"]';
+    const variants = [
+      `${base} ${marker}.`,
+      `${base} ${marker}!`,
+      `${base}${marker}.`,
+      `${base}  ${marker} .`,
+      ` ${base} ${marker} . `,
+      `${base} ${marker} !`,
+    ];
+    for (const text of variants) {
+      const h = harness({ chat: { kind: "ok", deltas: [text] } });
+      const r = await runTurn(h.deps, { notebookId: NOTEBOOK_ID, question: "Wo?" });
+      expect(h.saveTurn, text).toHaveBeenCalledWith(expect.objectContaining({ answer: ABSTENTION, citations: [] }));
+      expect(r, text).toEqual({
+        ok: true,
+        message: { id: ANSWER_ID, content: ABSTENTION, citations: [], abstained: true, abstention: "model" },
+      });
+      expect(h.logs[0], text).toMatchObject({ abstained: true, abstention: "model", citations: 0 });
+    }
+  });
+
   it("a near-miss abstention without a marker (no final period, lower case, upper case) is model, not no_marker", async () => {
     const base = ABSTENTION.replace(/\.$/, "");
     for (const text of [base, ABSTENTION.toLowerCase(), ABSTENTION.toUpperCase(), base.toLowerCase(), base.toUpperCase()]) {
