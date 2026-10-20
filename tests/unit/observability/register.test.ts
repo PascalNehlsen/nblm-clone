@@ -77,16 +77,19 @@ describe("instrumentation register()", () => {
     expect(options.dsn).toBe(EU_DSN);
     expect(options.environment).toBe("production");
     expect(options.sendDefaultPii).toBe(false);
-    expect(options.tracesSampleRate).toBe(0);
+    expect(options.tracesSampleRate).toBeUndefined();
+    expect("tracesSampleRate" in options).toBe(false);
+    expect(options.sendClientReports).toBe(false);
     expect(options.tracePropagationTargets).toEqual([]);
     expect(options.beforeSend).toBeTypeOf("function");
     expect(options.beforeSendTransaction({})).toBeNull();
     expect(options.beforeBreadcrumb({ category: "console" })).toBeNull();
-    if (Array.isArray(options.integrations)) {
-      for (const i of options.integrations) {
-        expect(String((i as { name?: string }).name)).not.toMatch(/replay|feedback|console/i);
-      }
-    }
+    expect(options.integrations).toBeTypeOf("function");
+    const integrations = options.integrations as (d: { name: string }[]) => { name: string }[];
+    const kept = integrations(
+      ["BrowserSession", "ProcessSession", "BrowserTracing", "Console", "LinkedErrors"].map((name) => ({ name })),
+    ).map((i) => i.name);
+    expect(kept).toEqual(["LinkedErrors"]);
   });
 
   it("falls back to environment 'development' without NEXT_PUBLIC_VERCEL_ENV", async () => {

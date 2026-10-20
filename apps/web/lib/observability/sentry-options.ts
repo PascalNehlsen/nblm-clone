@@ -33,11 +33,18 @@ function pick(source: unknown, keys: readonly string[]): Json | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+// Inline or eval code reports the page URL as its filename: keep it without query or fragment.
+const withoutQuery = (value: string) => value.replace(/[?#].*$/s, "");
+
 function frames(stacktrace: unknown): Json | undefined {
   if (!isObject(stacktrace) || !Array.isArray(stacktrace.frames)) return undefined;
   return {
     frames: stacktrace.frames
-      .map((f) => pick(f, ["filename", "function", "lineno", "colno", "in_app", "module"]))
+      .map((f) => {
+        const frame = pick(f, ["filename", "function", "lineno", "colno", "in_app", "module"]);
+        if (frame && typeof frame.filename === "string") frame.filename = withoutQuery(frame.filename);
+        return frame;
+      })
       .filter((f): f is Json => f !== undefined),
   };
 }
@@ -98,6 +105,29 @@ export function dropBreadcrumb(): null {
 }
 
 
+// The only default integrations that stay: error capture, error chains, deduplication and
+// Next.js frame normalization. Everything else, also anything a future SDK adds, is off:
+// sessions (sent per page view), tracing, breadcrumbs, console, request data, source lines,
+// local variables, modules. Those would send data on page views or carry user text.
+const INTEGRATIONS = new Set([
+  "EventFilters",
+  "InboundFilters",
+  "FunctionToString",
+  "LinkedErrors",
+  "Dedupe",
+  "GlobalHandlers",
+  "BrowserApiErrors",
+  "OnUncaughtException",
+  "OnUnhandledRejection",
+  "Context",
+  "NodeSystemError",
+]);
+const NEXTJS_FRAMES = /^(Nextjs[A-Za-z]*|[A-Za-z]*RewriteFrames|DistDir[A-Za-z]*)$/;
+
+export function keepIntegration(name: string): boolean {
+  return INTEGRATIONS.has(name) || NEXTJS_FRAMES.test(name);
+}
+
 export function buildSentryOptions(env: { dsn?: string; environment?: string; release?: string }) {
   if (!env.dsn || sentryDsnOrigin(env.dsn) === null) return null;
   return {
@@ -106,10 +136,10 @@ export function buildSentryOptions(env: { dsn?: string; environment?: string; re
     ...(env.release ? { release: env.release } : {}),
     sendDefaultPii: false,
     sampleRate: 1,
-    tracesSampleRate: 0,
+    // Tracing stays off by leaving the traces sample rate unset: in Sentry v10 even 0 turns it on.
     tracePropagationTargets: [],
-    // Console capture and breadcrumbs could carry user text; errors need neither.
-    integrations: (defaults: { name: string }[]) => defaults.filter((i) => !/console|breadcrumbs/i.test(i.name)),
+    sendClientReports: false,
+    integrations: (defaults: { name: string }[]) => defaults.filter((i) => keepIntegration(i.name)),
     beforeBreadcrumb: dropBreadcrumb,
     beforeSend: scrubEvent,
     beforeSendTransaction: () => null,

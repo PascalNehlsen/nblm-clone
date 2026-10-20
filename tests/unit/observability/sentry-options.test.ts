@@ -16,6 +16,7 @@ interface Options {
   tracesSampleRate?: number;
   sampleRate?: number;
   tracePropagationTargets?: unknown[];
+  sendClientReports?: boolean;
   integrations?: unknown;
   beforeBreadcrumb?: (b: Record<string, unknown>) => unknown;
   beforeSend?: unknown;
@@ -87,23 +88,50 @@ describe("buildSentryOptions", () => {
     expect(options!.release).toBe("sha123");
   });
 
-  it("switches off PII, tracing and propagation, and samples every error", async () => {
+  it("switches off PII, tracing, propagation and client reports, and samples every error", async () => {
     const { buildSentryOptions } = await load();
     const options = buildSentryOptions({ dsn: EU_DSN, environment: "production" })!;
     expect(options.sendDefaultPii).toBe(false);
-    expect(options.tracesSampleRate).toBe(0);
+    // In Sentry v10 any tracesSampleRate (even 0) enables tracing; only an absent key disables it.
+    expect("tracesSampleRate" in options).toBe(false);
+    expect("tracesSampler" in options).toBe(false);
+    expect(options.sendClientReports).toBe(false);
     expect(options.tracePropagationTargets).toEqual([]);
     expect(options.sampleRate).toBe(1);
   });
 
-  it("has no replay, feedback or console-capture integration", async () => {
+  it("keeps only allowlisted default integrations (exact set)", async () => {
     const { buildSentryOptions } = await load();
     const options = buildSentryOptions({ dsn: EU_DSN })!;
-    const list = Array.isArray(options.integrations) ? options.integrations : [];
-    for (const integration of list) {
-      const name = String((integration as { name?: unknown }).name ?? "");
-      expect(name).not.toMatch(/replay|feedback|captureconsole|console/i);
-    }
+    expect(options.integrations).toBeTypeOf("function");
+    const integrations = options.integrations as (d: { name: string }[]) => { name: string }[];
+    const names = [
+      "BrowserSession", "BrowserTracing", "Breadcrumbs", "Console", "ProcessSession", "ContextLines",
+      "LocalVariables", "RequestData", "Modules", "Http", "NodeFetch", "ChildProcess", "HttpContext",
+      "Replay", "Feedback", "CaptureConsole", "LinkedErrors", "Dedupe", "GlobalHandlers",
+      "InboundFilters", "FunctionToString", "OnUncaughtException", "OnUnhandledRejection", "Context",
+      "NodeSystemError", "NextjsClientStackFrameNormalization", "DistDirRewriteFrames", "SomethingNew",
+    ];
+    const kept = integrations(names.map((name) => ({ name }))).map((i) => i.name);
+    expect([...kept].sort()).toEqual(
+      [
+        "LinkedErrors", "Dedupe", "GlobalHandlers", "InboundFilters", "FunctionToString",
+        "OnUncaughtException", "OnUnhandledRejection", "Context", "NodeSystemError",
+        "NextjsClientStackFrameNormalization", "DistDirRewriteFrames",
+      ].sort(),
+    );
+    expect(kept).not.toContain("SomethingNew");
+  });
+
+  it("keeps EventFilters and BrowserApiErrors, and drops lookalikes", async () => {
+    const { buildSentryOptions } = await load();
+    const integrations = buildSentryOptions({ dsn: EU_DSN })!.integrations as (
+      d: { name: string }[],
+    ) => { name: string }[];
+    const kept = integrations(
+      ["EventFilters", "BrowserApiErrors", "Dedupe2", "MyLinkedErrors", "ReplayCanvas"].map((name) => ({ name })),
+    ).map((i) => i.name);
+    expect(kept.sort()).toEqual(["BrowserApiErrors", "EventFilters"]);
   });
 
   it("drops every transaction", async () => {

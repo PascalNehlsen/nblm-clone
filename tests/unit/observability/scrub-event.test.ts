@@ -161,6 +161,38 @@ describe("scrubEvent: nothing user-supplied survives", () => {
   });
 });
 
+describe("scrubEvent: frame filenames and chained exceptions", () => {
+  it("strips query and fragment from a frame filename, keeping the path", async () => {
+    const { scrubEvent } = await load();
+    const event = dirtyEvent();
+    const frame = (event.exception as { values: { stacktrace: { frames: Ev[] } }[] }).values[0]!
+      .stacktrace.frames[0]!;
+    frame.filename = `https://host/p?q=${S}#${S}`;
+    const out = scrubEvent(event) as { exception: { values: { stacktrace: { frames: Ev[] } }[] } };
+    expect(JSON.stringify(out)).not.toContain(S);
+    const kept = out.exception.values[0]!.stacktrace.frames[0]!;
+    expect(kept.filename).toBe("https://host/p");
+    expect(kept).not.toHaveProperty("abs_path");
+    expect(kept.module).toBe("app/page");
+  });
+
+  it("redacts every value of a chained exception and keeps both types", async () => {
+    const { scrubEvent } = await load();
+    const event: Ev = {
+      exception: {
+        values: [
+          { type: "Error", value: "first" },
+          { type: "TypeError", value: `second ${S}` },
+        ],
+      },
+    };
+    const out = scrubEvent(event) as { exception: { values: { type: string; value: string }[] } };
+    expect(JSON.stringify(out)).not.toContain(S);
+    expect(out.exception.values.map((v) => v.value)).toEqual(["redacted", "redacted"]);
+    expect(out.exception.values.map((v) => v.type)).toEqual(["Error", "TypeError"]);
+  });
+});
+
 describe("scrubEvent: positive control (technical data survives)", () => {
   it("keeps ids, level, platform, release and environment", async () => {
     const { scrubEvent } = await load();

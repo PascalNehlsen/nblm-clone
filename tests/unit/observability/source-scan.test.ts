@@ -103,13 +103,13 @@ describe("no optional Sentry data channel anywhere in apps/web", () => {
     });
   }
 
-  it("every tracesSampleRate is 0", () => {
-    const bad: string[] = [];
-    for (const f of files()) {
-      for (const m of f.content.matchAll(/tracesSampleRate\s*:\s*([^,}\n]+)/g)) {
-        if (m[1]!.trim() !== "0") bad.push(`${f.rel}: ${m[0]}`);
-      }
-    }
+  // The expectation flipped with the approved fix: in Sentry v10 any tracesSampleRate, even 0,
+  // enables tracing (pageload spans sent on every page view). Tracing stays off only while the
+  // key is absent, so neither it nor tracesSampler may appear anywhere in apps/web.
+  it("no tracesSampleRate or tracesSampler anywhere in apps/web", () => {
+    const bad = files()
+      .filter((f) => /tracesSampleRate|tracesSampler/.test(f.content))
+      .map((f) => f.rel);
     expect(bad).toEqual([]);
   });
 
