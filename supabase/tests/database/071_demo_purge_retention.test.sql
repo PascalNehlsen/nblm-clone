@@ -204,8 +204,8 @@ select pg_temp.act_throws(
 -- ---------------------------------------------------------------------------
 
 select pg_temp.safe_ok(
-  $sql$ select count(*) = 3 from cron.job where left(jobname, 5) = 'nblm-' $sql$,
-  'cron.job holds exactly the three nblm- demo and retention jobs (other jobs are ignored)'
+  $sql$ select count(*) = 4 from cron.job where left(jobname, 5) = 'nblm-' $sql$,
+  'cron.job holds exactly the four nblm- jobs: the three demo and retention jobs and nblm-forget-deleted-users (other jobs are ignored)'
 );
 select pg_temp.safe_ok(
   $sql$ select count(*) = 1 from cron.job

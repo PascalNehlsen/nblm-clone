@@ -23,6 +23,19 @@ const ADMIN_IMPORTS_EXCEPT_USAGE = {
   message: "Only lib/server/admin/usage may be imported here (ADR 0006).",
 };
 
+// lib/server/account/delete-account.ts is the one importer of the admin accounts module
+// (account deletion, ADR 0021), and of nothing else under admin.
+const ADMIN_IMPORTS_EXCEPT_ACCOUNTS = {
+  regex: "(^|/)admin(/(?!accounts$)|$)",
+  message: "Only lib/server/admin/accounts may be imported here (ADR 0021).",
+};
+
+// The admin modules (usage, accounts) stay separate: neither imports the other.
+const ADMIN_SIBLINGS = {
+  regex: "^\\./(usage|accounts)(\\.[cm]?[jt]sx?)?$",
+  message: "The admin modules stay separate (ADR 0006, ADR 0021).",
+};
+
 // The model-call engine is imported only by call.ts (production wiring) and testing.ts.
 const CALL_CORE_IMPORTS = {
   regex: "(^|/)call-core(\\.[cm]?[jt]sx?)?$",
@@ -129,8 +142,9 @@ export default defineConfig([
       ],
     },
   },
-  // The admin usage module is the one place that builds a service_role client, so it may
-  // import @supabase/supabase-js (ADR 0006). Every other @supabase package stays banned.
+  // The admin usage module builds the service_role client, so it may import
+  // @supabase/supabase-js (ADR 0006). Every other @supabase package stays banned, and the two
+  // admin modules may not import each other.
   {
     files: ["apps/web/lib/server/admin/usage.ts"],
     rules: {
@@ -144,6 +158,47 @@ export default defineConfig([
             BEDROCK_IMPORTS,
             BEDROCK_SDK_IMPORTS,
             { ...SUPABASE_IMPORTS, group: [...SUPABASE_IMPORTS.group, "!@supabase/supabase-js"] },
+            ADMIN_SIBLINGS,
+          ],
+        },
+      ],
+    },
+  },
+  // The admin accounts module calls the Auth admin API with fetch: no Supabase SDK at all.
+  {
+    files: ["apps/web/lib/server/admin/accounts.ts"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ADMIN_IMPORTS,
+            CALL_CORE_IMPORTS,
+            TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
+            SUPABASE_IMPORTS,
+            ADMIN_SIBLINGS,
+          ],
+        },
+      ],
+    },
+  },
+  // Account deletion may import the admin accounts module (and nothing else under admin).
+  // The Supabase client is injected: only type imports of @supabase stay allowed.
+  {
+    files: ["apps/web/lib/server/account/delete-account.ts"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ADMIN_IMPORTS_EXCEPT_ACCOUNTS,
+            CALL_CORE_IMPORTS,
+            TESTING_IMPORTS,
+            BEDROCK_IMPORTS,
+            BEDROCK_SDK_IMPORTS,
+            SUPABASE_IMPORTS,
           ],
         },
       ],
