@@ -37,6 +37,15 @@ export default defineConfig({
           testTimeout: 30_000,
           hookTimeout: 60_000,
         },
+        // Server modules the RLS tests drive directly (account deletion) start with
+        // `import "server-only"`; resolve it like Next does on the server, as for "unit".
+        resolve: {
+          alias: {
+            "server-only": fileURLToPath(
+              new URL("./apps/web/node_modules/server-only/empty.js", import.meta.url),
+            ),
+          },
+        },
       },
     ],
   },

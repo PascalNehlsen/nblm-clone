@@ -94,7 +94,7 @@ export default function DatenschutzPage() {
         <li>Demo-Konten mit allen Inhalten: 24 Stunden, spätestens 24 Stunden und 15 Minuten.</li>
         <li>
           Quellen und ihre Abschnitte: bis du die Quelle oder das Notizbuch löschst. Fragen und Antworten: bis das
-          Notizbuch gelöscht wird. Auf Anfrage löschen wir dein Konto mit allen Inhalten.
+          Notizbuch gelöscht wird. Dein Konto kannst du jederzeit im Profil selbst löschen: Notizbücher, die nur dir gehören, werden mit allen Quellen, Abschnitten, Fragen und Dateien gelöscht, deine Fragen in fremden Notizbüchern ebenso. Quellen, die du in fremde Notizbücher hochgeladen hast, bleiben dort, ohne Bezug zu dir.
         </li>
         <li>Protokoll der Rollenänderungen: 90 Tage.</li>
         <li>Verbrauchsdaten: 90 Tage mit Bezug zu Konto und Notizbuch, danach ohne diesen Bezug.</li>
@@ -106,8 +106,8 @@ export default function DatenschutzPage() {
       <p>
         Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit und
         Widerspruch gegen Verarbeitungen auf Grundlage berechtigter Interessen (Art. 15 bis 21 DSGVO). Quellen,
-        Notizbücher und Freigaben kannst du in der Anwendung selbst löschen. Um dein Konto vollständig löschen zu lassen,
-        schreib eine E-Mail an <a href="mailto:mail@software-mit-pascal.de">mail@software-mit-pascal.de</a>.
+        Notizbücher, Freigaben und dein Konto kannst du in der Anwendung selbst löschen (Profil, „Konto löschen“). Für alle
+        anderen Anliegen schreib eine E-Mail an <a href="mailto:mail@software-mit-pascal.de">mail@software-mit-pascal.de</a>.
       </p>
       <p>
         Du kannst dich bei einer Datenschutz-Aufsichtsbehörde beschweren. Für uns zuständig ist: Landesbeauftragte für
