@@ -8,13 +8,13 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1146.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1148.0",
     "@aws-sdk/credential-provider-web-identity": "3.972.78",
     "@sentry/nextjs": "10.76.2",
     "@supabase/ssr": "0.12.7",
-    "@supabase/supabase-js": "2.117.2",
+    "@supabase/supabase-js": "2.117.3",
     "@vercel/functions": "3.9.11",
-    "next": "16.3.8",
+    "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "0.0.1",
