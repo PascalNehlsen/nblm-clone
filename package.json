@@ -35,7 +35,7 @@
     "supabase": "2.119.0",
     "typescript": "6.0.3",
     "unpdf": "1.8.1",
-    "vercel": "62.2.0",
+    "vercel": "63.1.0",
     "vitest": "5.0.3"
   }
 }
