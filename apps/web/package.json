@@ -8,17 +8,17 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1146.0",
-    "@aws-sdk/credential-provider-web-identity": "3.972.78",
+    "@aws-sdk/client-bedrock-runtime": "3.1152.0",
+    "@aws-sdk/credential-provider-web-identity": "3.972.80",
     "@sentry/nextjs": "10.76.2",
     "@supabase/ssr": "0.12.7",
-    "@supabase/supabase-js": "2.117.2",
-    "@vercel/functions": "3.9.11",
-    "next": "16.3.8",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "@supabase/supabase-js": "2.118.0",
+    "@vercel/functions": "3.10.1",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "server-only": "0.0.1",
-    "unpdf": "1.8.1"
+    "unpdf": "1.9.0"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

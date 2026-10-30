@@ -18,24 +18,24 @@
     "db:stop": "supabase stop"
   },
   "devDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1146.0",
-    "@aws-sdk/credential-provider-web-identity": "3.972.78",
-    "@playwright/test": "1.63.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1152.0",
+    "@aws-sdk/credential-provider-web-identity": "3.972.80",
+    "@playwright/test": "1.64.1",
     "@supabase/ssr": "0.12.7",
-    "@supabase/supabase-js": "2.117.2",
+    "@supabase/supabase-js": "2.118.0",
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@vercel/functions": "3.9.11",
+    "@vercel/functions": "3.10.1",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.8",
-    "next": "16.3.8",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "supabase": "2.119.0",
+    "eslint-config-next": "16.4.2",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "supabase": "2.121.0",
     "typescript": "6.0.3",
-    "unpdf": "1.8.1",
+    "unpdf": "1.9.0",
     "vercel": "62.2.0",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }
