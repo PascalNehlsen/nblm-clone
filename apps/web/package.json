@@ -10,7 +10,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1152.0",
     "@aws-sdk/credential-provider-web-identity": "3.972.80",
-    "@sentry/nextjs": "10.76.2",
+    "@sentry/nextjs": "11.9.0",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.118.0",
     "@vercel/functions": "3.10.1",
